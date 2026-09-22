@@ -1,0 +1,42 @@
+'use client'
+import { ArrowUpDown, Barcode, Building2, CalendarCheck, CalendarDays, CircleCheck, CircleMinus, Clock3, Coins, Layers, List, Package, PackageSearch, Tag, Warehouse, ChartColumn } from 'lucide-react'
+import { ReportStudioPage, type StudioConfig } from './report-studio'
+
+const rows=[
+ {sku:'P001',name:'Panadol 500mg',cls:'Medicines',co:'GSK',wh:'Main Warehouse',qty:1250,cost:12.5,value:15625},
+ {sku:'P002',name:'Brufen 400mg',cls:'Medicines',co:'Abbott',wh:'Main Warehouse',qty:850,cost:18,value:15300},
+ {sku:'P003',name:'Disprin 300mg',cls:'Medicines',co:'Bayer',wh:'Shop A',qty:420,cost:15,value:6300},
+ {sku:'P004',name:'Nexium 40mg',cls:'Medicines',co:'AstraZeneca',wh:'Main Warehouse',qty:210,cost:95,value:19950},
+ {sku:'P005',name:'Cetaphil Face Wash',cls:'Cosmetics',co:'Galderma',wh:'Shop B',qty:180,cost:1250,value:225000},
+ {sku:'P006',name:'Dove Soap',cls:'Personal Care',co:'Unilever',wh:'Main Warehouse',qty:2400,cost:85,value:204000},
+ {sku:'P007',name:'Colgate Toothpaste',cls:'Personal Care',co:'Colgate',wh:'Shop A',qty:1980,cost:110,value:217800},
+ {sku:'P008',name:'Dettol Soap',cls:'Personal Care',co:'Reckitt',wh:'Main Warehouse',qty:950,cost:95,value:90250},
+ {sku:'P009',name:'Ensure Powder',cls:'Nutrition',co:'Abbott',wh:'Main Warehouse',qty:300,cost:2450,value:735000},
+ {sku:'P010',name:'Bournvita',cls:'Nutrition',co:'Mondelez',wh:'Shop B',qty:620,cost:1150,value:713000},
+]
+
+const config:StudioConfig={
+ module:'Inventory',crumb:'Report Studio',title:'Inventory Report Studio',description:'Select a report, set your options and generate professional reports',tagline:'From Data to Decisions',
+ tabs:[
+  {key:'current',label:'Current Stock',icon:Package},{key:'asOn',label:'Stock As On Date',icon:CalendarCheck},{key:'over',label:'Over Stock',icon:ChartColumn},{key:'list',label:'Stock List',icon:List},
+  {key:'minus',label:'Minus Stock',icon:CircleMinus},{key:'checking',label:'Checking',icon:CircleCheck},{key:'value',label:'Value',icon:Coins},{key:'previous',label:'Previous',icon:Clock3},
+ ],
+ filters:[
+  {kind:'date',label:'Date',icon:CalendarDays,options:['As On Date','Date Range','Month to Date'],date:'14 Sep 2026'},
+  {kind:'select',label:'Company',icon:Building2,options:['All Companies','GSK','Abbott','Bayer','Unilever']},
+  {kind:'select',label:'Warehouse',icon:Warehouse,options:['All Warehouses','Main Warehouse','Shop A','Shop B']},
+  {kind:'radio',label:'Report Scope',icon:Tag,options:['All Items','Product Class','Product','Stock Type']},
+  {kind:'toggle',label:'Overstock Rules',icon:Layers,text:'Show only overstock items'},
+  {kind:'radio',label:'Stock Basis',icon:Layers,options:['Cost Base','Sale Base']},
+  {kind:'select',label:'Group By',icon:PackageSearch,options:['Product Class','Company','Warehouse','None']},
+  {kind:'sort',label:'Sort By',icon:ArrowUpDown,options:['Product Name','SKU','Quantity','Total Value']},
+ ],
+ stats:[{label:'Total Products',value:'1,245',icon:Package},{label:'Total Stock Quantity',value:'48,320',icon:Barcode},{label:'Total Stock Value',value:'PKR 12,845,600',icon:Coins}],
+ columns:[{key:'sku',label:'SKU'},{key:'name',label:'Product Name'},{key:'cls',label:'Class'},{key:'co',label:'Company'},{key:'wh',label:'Warehouse'},{key:'qty',label:'Qty',num:true},{key:'cost',label:'Unit Cost',num:true},{key:'value',label:'Total Value',num:true}],
+ rows,reportName:'Inventory Report',
+ summary:[['Total Products','1,245'],['Total Quantity','48,320'],['Total Stock Value','PKR 12,845,600']],
+ criteria:[['Date','14 Sep 2026'],['Company','All Companies'],['Warehouse','All Warehouses'],['Stock Basis','Cost Base'],['Sorted By','Product Name (Ascending)']],
+ presets:[{name:'Default Current Stock',sub:'Current Stock · All Companies'},{name:'Overstock - All Warehouses',sub:'Over Stock · All Warehouses',starred:true},{name:'Shop Stock - Cost Base',sub:'Shop Stock · Cost Base'},{name:'Warehouse Stock - Detail',sub:'Warehouse Stock · Detailed'}],
+}
+
+export function InventoryReports(){return <ReportStudioPage config={config}/>}

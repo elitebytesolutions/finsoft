@@ -1,0 +1,61 @@
+/* Colour tokens — docs/design-system/01-foundations.md §1
+ * Derived from ui-prototype/src/styles.css :root. The prototype aliases at the
+ * bottom carry their original literal values, so the computed result is
+ * byte-identical to the prototype. Do not "tidy" them into the brand ramp. */
+:root{
+  /* §1.1 Brand & accent */
+  --brand-050:#E9F7ED;
+  --brand-100:#DCF0E2;
+  --brand-500:#1D9C52;
+  --brand-600:#15803D;
+  --brand-700:#14783C;
+  --brand-800:#0A6B36;
+
+  /* §1.2 Neutrals */
+  --bg-app:#F3F7FA;
+  --surface:#fff;
+  --surface-sunken:#F9FBFA;
+  --line:#E4E9EF;
+  --line-soft:#EDF1EF;
+  --ink:#1e293b;
+  --ink-2:#475569;
+  --muted:#64748B;
+  --muted-2:#8A9691;
+
+  /* §1.3 Financial semantics — fixed meaning, never decorative */
+  --money-debit:#0F6B3A;
+  --money-debit-bg:#E7F3EC;
+  --money-credit:#B45309;
+  --money-credit-bg:#FFF4DE;
+  --money-balance:#2C6C77;
+  --money-negative:#C6535C;
+  --money-zero:#8A9691;
+
+  /* §1.4 Status tones */
+  --tone-good:#35915B;          --tone-good-bg:#E8F7EC;
+  --tone-warn:#AE7724;          --tone-warn-bg:#FFF4DE;
+  --tone-danger:#C6535C;        --tone-danger-bg:#FEEAEC;
+  --tone-info:#347282;          --tone-info-bg:#E8F2F5;
+  --tone-neutral:#6E7A76;       --tone-neutral-bg:#F1F4F3;
+
+  /* §1.5 Accent wells */
+  --well-green:#EAF7EE;   --well-green-ink:#15803D;
+  --well-teal:#E5F2F4;    --well-teal-ink:#2F7B88;
+  --well-blue:#EAF0F8;    --well-blue-ink:#547CA9;
+  --well-yellow:#FFF5DF;  --well-yellow-ink:#C48B2E;
+  --well-red:#FFF0F1;     --well-red-ink:#D35F69;
+  --well-violet:#F1EEFD;  --well-violet-ink:#7258B4;
+
+  /* §1.6 Dark surfaces — dashboard hero band and report summary strip only */
+  --hero-band:linear-gradient(120deg,#131A2A 0%,#1B2A44 70%,#21406B 130%);
+  --hero-eyebrow:#8FB3E8;
+
+  /* Prototype aliases — the values kit.css actually consumes. Verbatim. */
+  --green:#67c987;
+  --green-dark:#26745f;
+  --mint:#e9f7ed;
+  --teal:#347b87;
+  --warning:#efbc61;
+  --danger:#dd6c73;
+  --shadow:0 10px 32px rgba(31,67,55,.07);
+}

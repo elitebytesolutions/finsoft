@@ -1,0 +1,387 @@
+[
+  {
+    "pattern": "/",
+    "path": "/",
+    "dynamic": false
+  },
+  {
+    "pattern": "/accounts",
+    "path": "/accounts",
+    "dynamic": false
+  },
+  {
+    "pattern": "/admin",
+    "path": "/admin",
+    "dynamic": false
+  },
+  {
+    "pattern": "/admin-audit",
+    "path": "/admin-audit",
+    "dynamic": false
+  },
+  {
+    "pattern": "/admin-roles",
+    "path": "/admin-roles",
+    "dynamic": false
+  },
+  {
+    "pattern": "/admin/users/[id]",
+    "path": "/admin/users/USR-001",
+    "dynamic": true
+  },
+  {
+    "pattern": "/approvals",
+    "path": "/approvals",
+    "dynamic": false
+  },
+  {
+    "pattern": "/bank-accounts",
+    "path": "/bank-accounts",
+    "dynamic": false
+  },
+  {
+    "pattern": "/bank-book",
+    "path": "/bank-book",
+    "dynamic": false
+  },
+  {
+    "pattern": "/bank-transactions",
+    "path": "/bank-transactions",
+    "dynamic": false
+  },
+  {
+    "pattern": "/cash-book",
+    "path": "/cash-book",
+    "dynamic": false
+  },
+  {
+    "pattern": "/cash-transactions",
+    "path": "/cash-transactions",
+    "dynamic": false
+  },
+  {
+    "pattern": "/cheque-actions",
+    "path": "/cheque-actions",
+    "dynamic": false
+  },
+  {
+    "pattern": "/cheque-clearing",
+    "path": "/cheque-clearing",
+    "dynamic": false
+  },
+  {
+    "pattern": "/cheque-posting",
+    "path": "/cheque-posting",
+    "dynamic": false
+  },
+  {
+    "pattern": "/cheque-voucher",
+    "path": "/cheque-voucher",
+    "dynamic": false
+  },
+  {
+    "pattern": "/companies",
+    "path": "/companies",
+    "dynamic": false
+  },
+  {
+    "pattern": "/credit-limits",
+    "path": "/credit-limits",
+    "dynamic": false
+  },
+  {
+    "pattern": "/customers",
+    "path": "/customers",
+    "dynamic": false
+  },
+  {
+    "pattern": "/customers/[code]",
+    "path": "/customers/CUS-2201",
+    "dynamic": true
+  },
+  {
+    "pattern": "/dashboard",
+    "path": "/dashboard",
+    "dynamic": false
+  },
+  {
+    "pattern": "/field-sales",
+    "path": "/field-sales",
+    "dynamic": false
+  },
+  {
+    "pattern": "/finance",
+    "path": "/finance",
+    "dynamic": false
+  },
+  {
+    "pattern": "/finance/accounts/[code]",
+    "path": "/finance/accounts/1110-01",
+    "dynamic": true
+  },
+  {
+    "pattern": "/hr",
+    "path": "/hr",
+    "dynamic": false
+  },
+  {
+    "pattern": "/hr/attendance",
+    "path": "/hr/attendance",
+    "dynamic": false
+  },
+  {
+    "pattern": "/hr/attendance/entry",
+    "path": "/hr/attendance/entry",
+    "dynamic": false
+  },
+  {
+    "pattern": "/hr/employees/[id]",
+    "path": "/hr/employees/BT-001",
+    "dynamic": true
+  },
+  {
+    "pattern": "/hr/payroll",
+    "path": "/hr/payroll",
+    "dynamic": false
+  },
+  {
+    "pattern": "/inventory",
+    "path": "/inventory",
+    "dynamic": false
+  },
+  {
+    "pattern": "/inventory-reports",
+    "path": "/inventory-reports",
+    "dynamic": false
+  },
+  {
+    "pattern": "/inventory/as-of",
+    "path": "/inventory/as-of",
+    "dynamic": false
+  },
+  {
+    "pattern": "/inventory/batches",
+    "path": "/inventory/batches",
+    "dynamic": false
+  },
+  {
+    "pattern": "/inventory/breakage",
+    "path": "/inventory/breakage",
+    "dynamic": false
+  },
+  {
+    "pattern": "/inventory/count",
+    "path": "/inventory/count",
+    "dynamic": false
+  },
+  {
+    "pattern": "/inventory/issue",
+    "path": "/inventory/issue",
+    "dynamic": false
+  },
+  {
+    "pattern": "/inventory/movements",
+    "path": "/inventory/movements",
+    "dynamic": false
+  },
+  {
+    "pattern": "/inventory/movements/history",
+    "path": "/inventory/movements/history",
+    "dynamic": false
+  },
+  {
+    "pattern": "/inventory/stock-in",
+    "path": "/inventory/stock-in",
+    "dynamic": false
+  },
+  {
+    "pattern": "/inventory/transfer",
+    "path": "/inventory/transfer",
+    "dynamic": false
+  },
+  {
+    "pattern": "/ledgers",
+    "path": "/ledgers",
+    "dynamic": false
+  },
+  {
+    "pattern": "/masters",
+    "path": "/masters",
+    "dynamic": false
+  },
+  {
+    "pattern": "/masters/[code]",
+    "path": "/masters/1110-01",
+    "dynamic": true
+  },
+  {
+    "pattern": "/payables",
+    "path": "/payables",
+    "dynamic": false
+  },
+  {
+    "pattern": "/payments",
+    "path": "/payments",
+    "dynamic": false
+  },
+  {
+    "pattern": "/period-close",
+    "path": "/period-close",
+    "dynamic": false
+  },
+  {
+    "pattern": "/po",
+    "path": "/po",
+    "dynamic": false
+  },
+  {
+    "pattern": "/procurement",
+    "path": "/procurement",
+    "dynamic": false
+  },
+  {
+    "pattern": "/product-classes",
+    "path": "/product-classes",
+    "dynamic": false
+  },
+  {
+    "pattern": "/product-reports",
+    "path": "/product-reports",
+    "dynamic": false
+  },
+  {
+    "pattern": "/products",
+    "path": "/products",
+    "dynamic": false
+  },
+  {
+    "pattern": "/products/[id]",
+    "path": "/products/MED-1001",
+    "dynamic": true
+  },
+  {
+    "pattern": "/products/legacy",
+    "path": "/products/legacy",
+    "dynamic": false
+  },
+  {
+    "pattern": "/purchases/[id]",
+    "path": "/purchases/PUR-2026-0184",
+    "dynamic": true
+  },
+  {
+    "pattern": "/purchasing",
+    "path": "/purchasing",
+    "dynamic": false
+  },
+  {
+    "pattern": "/purchasing/print",
+    "path": "/purchasing/print",
+    "dynamic": false
+  },
+  {
+    "pattern": "/purchasing/returns",
+    "path": "/purchasing/returns",
+    "dynamic": false
+  },
+  {
+    "pattern": "/purchasing/voucher",
+    "path": "/purchasing/voucher",
+    "dynamic": false
+  },
+  {
+    "pattern": "/receivables",
+    "path": "/receivables",
+    "dynamic": false
+  },
+  {
+    "pattern": "/recurring",
+    "path": "/recurring",
+    "dynamic": false
+  },
+  {
+    "pattern": "/reports",
+    "path": "/reports",
+    "dynamic": false
+  },
+  {
+    "pattern": "/reports/[id]",
+    "path": "/reports/trial-balance",
+    "dynamic": true
+  },
+  {
+    "pattern": "/reports/analytics",
+    "path": "/reports/analytics",
+    "dynamic": false
+  },
+  {
+    "pattern": "/reports/studio",
+    "path": "/reports/studio",
+    "dynamic": false
+  },
+  {
+    "pattern": "/reports/templates",
+    "path": "/reports/templates",
+    "dynamic": false
+  },
+  {
+    "pattern": "/sales",
+    "path": "/sales",
+    "dynamic": false
+  },
+  {
+    "pattern": "/sales-returns",
+    "path": "/sales-returns",
+    "dynamic": false
+  },
+  {
+    "pattern": "/sales/[id]",
+    "path": "/sales/INV-26814",
+    "dynamic": true
+  },
+  {
+    "pattern": "/sales/voucher",
+    "path": "/sales/voucher",
+    "dynamic": false
+  },
+  {
+    "pattern": "/settings",
+    "path": "/settings",
+    "dynamic": false
+  },
+  {
+    "pattern": "/today",
+    "path": "/today",
+    "dynamic": false
+  },
+  {
+    "pattern": "/unauthorized",
+    "path": "/unauthorized",
+    "dynamic": false
+  },
+  {
+    "pattern": "/vendors",
+    "path": "/vendors",
+    "dynamic": false
+  },
+  {
+    "pattern": "/vendors/[code]",
+    "path": "/vendors/SUP-1004",
+    "dynamic": true
+  },
+  {
+    "pattern": "/vouchers",
+    "path": "/vouchers",
+    "dynamic": false
+  },
+  {
+    "pattern": "/vouchers/[id]",
+    "path": "/vouchers/JV-2026-0409",
+    "dynamic": true
+  },
+  {
+    "pattern": "/vouchers/new",
+    "path": "/vouchers/new",
+    "dynamic": false
+  }
+]

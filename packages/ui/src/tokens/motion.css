@@ -1,0 +1,10 @@
+/* Motion tokens — docs/design-system/01-foundations.md §6
+ * No motion on a figure: a number never animates, counts up or slides in. */
+:root{
+  --m-fast:180ms ease;
+  --m-base:250ms ease;
+  --m-lift:translateY(-2px);
+}
+@media (prefers-reduced-motion: reduce){
+  :root{ --m-fast:0ms; --m-base:0ms; --m-lift:none; }
+}

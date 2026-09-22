@@ -1,0 +1,2620 @@
+[
+  {
+    "pattern": "/",
+    "path": "/",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1271,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1271,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2033600,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1271
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1271
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/accounts",
+    "path": "/accounts",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1429,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1429,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2286400,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1429
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1429
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/admin",
+    "path": "/admin",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1600000,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1000
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1000
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/admin-audit",
+    "path": "/admin-audit",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1600000,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1000
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1000
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/admin-roles",
+    "path": "/admin-roles",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1600000,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1000
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1000
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/admin/users/[id]",
+    "path": "/admin/users/USR-001",
+    "dynamic": true,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1600000,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1000
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1000
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/approvals",
+    "path": "/approvals",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1083,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1083,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1732800,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1083
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1083
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/bank-accounts",
+    "path": "/bank-accounts",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1444,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1444,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2310400,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1444
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1444
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/bank-book",
+    "path": "/bank-book",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1462,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1462,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2339200,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1462
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1462
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/bank-transactions",
+    "path": "/bank-transactions",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1493,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1493,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2388800,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1493
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1493
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/cash-book",
+    "path": "/cash-book",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1098,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1098,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1756800,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1098
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1098
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/cash-transactions",
+    "path": "/cash-transactions",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1510,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1510,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2416000,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1510
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1510
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/cheque-actions",
+    "path": "/cheque-actions",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1409,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1409,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2254400,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1409
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1409
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/cheque-clearing",
+    "path": "/cheque-clearing",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1600000,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1000
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1000
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/cheque-posting",
+    "path": "/cheque-posting",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1231,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1231,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1969600,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1231
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1231
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/cheque-voucher",
+    "path": "/cheque-voucher",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1339,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1339,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2142400,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1339
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1339
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/companies",
+    "path": "/companies",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1529,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1529,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2446400,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1529
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1529
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/credit-limits",
+    "path": "/credit-limits",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1600000,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1000
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1000
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/customers",
+    "path": "/customers",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1515,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1515,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2424000,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1515
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1515
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/customers/[code]",
+    "path": "/customers/CUS-2201",
+    "dynamic": true,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1806,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1806,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2889600,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1806
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1806
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/dashboard",
+    "path": "/dashboard",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1271,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1271,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2033600,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1271
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1271
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/field-sales",
+    "path": "/field-sales",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1600000,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1000
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1000
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/finance",
+    "path": "/finance",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1429,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1429,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2286400,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1429
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1429
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/finance/accounts/[code]",
+    "path": "/finance/accounts/1110-01",
+    "dynamic": true,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1453,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1453,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2324800,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1453
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1453
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/hr",
+    "path": "/hr",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1073,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1073,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1716800,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1073
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1073
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/hr/attendance",
+    "path": "/hr/attendance",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1423,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1423,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 3,
+    "totalPixels": 2276800,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1423
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1423
+    },
+    "pct": 0.00013176387912860153,
+    "verdict": "NEGLIGIBLE"
+  },
+  {
+    "pattern": "/hr/attendance/entry",
+    "path": "/hr/attendance/entry",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1375,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1375,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2200000,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1375
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1375
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/hr/employees/[id]",
+    "path": "/hr/employees/BT-001",
+    "dynamic": true,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1141,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1141,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1825600,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1141
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1141
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/hr/payroll",
+    "path": "/hr/payroll",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1319,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1319,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2110400,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1319
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1319
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/inventory",
+    "path": "/inventory",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1147,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1147,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1835200,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1147
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1147
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/inventory-reports",
+    "path": "/inventory-reports",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1506,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1506,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2409600,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1506
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1506
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/inventory/as-of",
+    "path": "/inventory/as-of",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1022,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1022,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1635200,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1022
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1022
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/inventory/batches",
+    "path": "/inventory/batches",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1249,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1249,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1998400,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1249
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1249
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/inventory/breakage",
+    "path": "/inventory/breakage",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1725,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1725,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2760000,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1725
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1725
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/inventory/count",
+    "path": "/inventory/count",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1201,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1201,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1921600,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1201
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1201
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/inventory/issue",
+    "path": "/inventory/issue",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1600000,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1000
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1000
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/inventory/movements",
+    "path": "/inventory/movements",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1781,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1781,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2849600,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1781
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1781
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/inventory/movements/history",
+    "path": "/inventory/movements/history",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1098,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1098,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1756800,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1098
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1098
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/inventory/stock-in",
+    "path": "/inventory/stock-in",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1781,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1781,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2849600,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1781
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1781
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/inventory/transfer",
+    "path": "/inventory/transfer",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1492,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1492,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2387200,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1492
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1492
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/ledgers",
+    "path": "/ledgers",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1753,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1753,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2804800,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1753
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1753
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/masters",
+    "path": "/masters",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 3983,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 3983,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 6372800,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 3983
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 3983
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/masters/[code]",
+    "path": "/masters/1110-01",
+    "dynamic": true,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1298,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1298,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2076800,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1298
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1298
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/payables",
+    "path": "/payables",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1122,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1122,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1795200,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1122
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1122
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/payments",
+    "path": "/payments",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1359,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1359,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2174400,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1359
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1359
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/period-close",
+    "path": "/period-close",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1600000,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1000
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1000
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/po",
+    "path": "/po",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1326,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1326,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2121600,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1326
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1326
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/procurement",
+    "path": "/procurement",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1600000,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1000
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1000
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/product-classes",
+    "path": "/product-classes",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1202,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1202,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1923200,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1202
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1202
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/product-reports",
+    "path": "/product-reports",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1520,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1520,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2432000,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1520
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1520
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/products",
+    "path": "/products",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1123,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1123,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1796800,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1123
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1123
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/products/[id]",
+    "path": "/products/MED-1001",
+    "dynamic": true,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1103,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1103,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1764800,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1103
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1103
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/products/legacy",
+    "path": "/products/legacy",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1600000,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1000
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1000
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/purchases/[id]",
+    "path": "/purchases/PUR-2026-0184",
+    "dynamic": true,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1023,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1023,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1636800,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1023
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1023
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/purchasing",
+    "path": "/purchasing",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1600000,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1000
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1000
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/purchasing/print",
+    "path": "/purchasing/print",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1311,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1311,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2097600,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1311
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1311
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/purchasing/returns",
+    "path": "/purchasing/returns",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1482,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1482,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2371200,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1482
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1482
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/purchasing/voucher",
+    "path": "/purchasing/voucher",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1523,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1523,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2436800,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1523
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1523
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/receivables",
+    "path": "/receivables",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1600000,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1000
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1000
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/recurring",
+    "path": "/recurring",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1058,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1058,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1692800,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1058
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1058
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/reports",
+    "path": "/reports",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1813,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1813,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2900800,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1813
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1813
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/reports/[id]",
+    "path": "/reports/trial-balance",
+    "dynamic": true,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1314,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1314,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2102400,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1314
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1314
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/reports/analytics",
+    "path": "/reports/analytics",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1488,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1488,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2380800,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1488
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1488
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/reports/studio",
+    "path": "/reports/studio",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1600000,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1000
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1000
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/reports/templates",
+    "path": "/reports/templates",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1600000,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1000
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1000
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/sales",
+    "path": "/sales",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1600000,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1000
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1000
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/sales-returns",
+    "path": "/sales-returns",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1600000,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1000
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1000
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/sales/[id]",
+    "path": "/sales/INV-26814",
+    "dynamic": true,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1020,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1020,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1632000,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1020
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1020
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/sales/voucher",
+    "path": "/sales/voucher",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1277,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1277,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2043200,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1277
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1277
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/settings",
+    "path": "/settings",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1000,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1600000,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1000
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1000
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/today",
+    "path": "/today",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1374,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1374,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2198400,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1374
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1374
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/unauthorized",
+    "path": "/unauthorized",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1084,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1084,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1734400,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1084
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1084
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/vendors",
+    "path": "/vendors",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1281,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1281,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2049600,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1281
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1281
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/vendors/[code]",
+    "path": "/vendors/SUP-1004",
+    "dynamic": true,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1603,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1603,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2564800,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1603
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1603
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/vouchers",
+    "path": "/vouchers",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 3143,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 3143,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 5028800,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 3143
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 3143
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/vouchers/[id]",
+    "path": "/vouchers/JV-2026-0409",
+    "dynamic": true,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1058,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1058,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 1692800,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1058
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1058
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  },
+  {
+    "pattern": "/vouchers/new",
+    "path": "/vouchers/new",
+    "dynamic": false,
+    "protoOk": true,
+    "nextOk": true,
+    "protoError": null,
+    "nextError": null,
+    "protoDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1277,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "nextDims": {
+      "scrollWidth": 1600,
+      "scrollHeight": 1277,
+      "clientWidth": 1600,
+      "innerWidth": 1600
+    },
+    "diffPixels": 0,
+    "totalPixels": 2043200,
+    "sizeMismatch": false,
+    "dimsA": {
+      "width": 1600,
+      "height": 1277
+    },
+    "dimsB": {
+      "width": 1600,
+      "height": 1277
+    },
+    "pct": 0,
+    "verdict": "IDENTICAL"
+  }
+]

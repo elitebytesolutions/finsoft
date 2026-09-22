@@ -1,0 +1,11 @@
+/* Elevation tokens — docs/design-system/01-foundations.md §5 */
+:root{
+  --e-0:none;
+  --e-1:0 6px 22px rgba(31,67,55,.035);
+  --e-2:0 10px 30px rgba(31,67,55,.06);
+  --e-3:0 18px 50px rgba(27,64,52,.15);
+  --e-4:0 24px 80px rgba(16,45,35,.28);
+  --e-hero:0 16px 40px rgba(19,26,42,.25);
+  --scrim:rgba(14,31,26,.48);
+  --scrim-blur:blur(3px);
+}

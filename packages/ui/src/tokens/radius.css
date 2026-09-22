@@ -1,0 +1,9 @@
+/* Radius tokens — docs/design-system/01-foundations.md §4 */
+:root{
+  --r-xs:7px;
+  --r-sm:10px;
+  --r-md:13px;
+  --r-lg:18px;
+  --r-xl:20px;
+  --r-pill:999px;
+}

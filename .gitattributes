@@ -1,0 +1,16 @@
+# Normalise line endings. Authoring happens on Windows; build, CI and both
+# deployment targets are Linux containers. LF in the repo, always.
+* text=auto eol=lf
+
+# Binary assets - never normalise, never diff
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.pdf   binary
+*.woff  binary
+*.woff2 binary
+
+# Generated - collapse in diffs and reviews
+package-lock.json linguist-generated=true -diff

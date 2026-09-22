@@ -1,0 +1,47 @@
+# ---- dependencies ----
+node_modules/
+
+# ---- build output ----
+.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+next-env.d.ts
+
+# ---- test & tooling artifacts ----
+coverage/
+playwright-report/
+test-results/
+tools/parity/out/
+
+# ---- secrets & local config ----
+# .env.example IS committed - it is the documented contract (FND-005)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ---- local agent / editor state ----
+.claude/settings.local.json
+.rtk/
+.vscode/
+.idea/
+
+# ---- os / misc ----
+.DS_Store
+Thumbs.db
+*.log
+npm-debug.log*
+
+# ---- frozen prototype: superseded by apps/web ----
+# The Next.js app in apps/web is now the UI. The Vite prototype is kept on
+# disk as a local historical artifact only - not versioned, not built, not
+# imported (verified: zero imports from apps/* or packages/*).
+ui-prototype/
+
+# ---- ad-hoc scratch scripts ----
+# One-off debugging harnesses pinned to local dev servers. Real tooling
+# lives in tools/ and is reviewed; these are not.
+/.*.mjs
