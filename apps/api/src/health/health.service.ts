@@ -26,7 +26,7 @@ import { withGlobal } from '@finsoft/database'
  * silently — while the running container still needs no access to the
  * migration files.
  */
-export const REQUIRED_SCHEMA_VERSION = 2
+export const REQUIRED_SCHEMA_VERSION = 3
 
 /**
  * A readiness probe must answer quickly or it is useless: an orchestrator

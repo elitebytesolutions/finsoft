@@ -140,6 +140,51 @@ describe('database roles', () => {
     }
   })
 
+  it('makes the migration ledger read-only to every role but the migrator (003)', async () => {
+    /*
+     * schema_migrations holds the checksums the runner compares each file
+     * against. A role that can UPDATE a row here can make an edited migration
+     * look untouched, and ADR-0013's immutability guarantee becomes
+     * decoration — the same shape of failure as RLS without FORCE.
+     *
+     * finsoft_app held INSERT and UPDATE until 003. Nothing was exploited to
+     * get them: the runner creates the table as finsoft_migration, so it
+     * inherited the ALTER DEFAULT PRIVILEGES meant for ordinary application
+     * tables. That default cannot exclude one table, so the runner now also
+     * sets these grants at creation time; this asserts the outcome of both.
+     *
+     * SELECT is retained deliberately — the API's readiness probe reads this
+     * table as finsoft_app to verify the schema version.
+     */
+    const writes = ['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE'] as const
+
+    for (const grantee of ['finsoft_app', 'readonly_support', 'public'] as const) {
+      for (const privilege of writes) {
+        const granted = await withGlobal((tx) =>
+          scalarOn<boolean>(tx, 'select has_table_privilege($1, $2, $3)', [
+            grantee,
+            'schema_migrations',
+            privilege,
+          ]),
+        )
+        expect(
+          granted,
+          `${grantee} holds ${privilege} on schema_migrations. Only finsoft_migration may ` +
+            'write the ledger; anything else can forge a checksum and defeat ADR-0013.',
+        ).toBe(false)
+      }
+    }
+
+    // The read the readiness probe depends on must survive the lockdown.
+    const canRead = await withGlobal((tx) =>
+      scalarOn<boolean>(
+        tx,
+        "select has_table_privilege('finsoft_app', 'schema_migrations', 'SELECT')",
+      ),
+    )
+    expect(canRead, 'the API readiness probe reads schema_migrations as finsoft_app').toBe(true)
+  })
+
   it('gives finsoft_app no CREATE on the public schema', async () => {
     const canCreate = await withGlobal((tx) =>
       scalarOn<boolean>(tx, "select has_schema_privilege('finsoft_app', 'public', 'CREATE')"),

@@ -28,6 +28,43 @@ const SCHEMA_MIGRATIONS_DDL = `
 `
 
 /**
+ * Lock the ledger down at the moment it is created.
+ *
+ * This table is created by finsoft_migration, so it inherits the
+ * ALTER DEFAULT PRIVILEGES that FND-005 set for ordinary application tables —
+ * SELECT, INSERT, UPDATE to finsoft_app. That is correct for a table the
+ * application owns rows in, and wrong for the ledger the application must
+ * never write: a role that can UPDATE a checksum here can make an edited
+ * migration look untouched, which is precisely the guarantee ADR-0013 rests on.
+ *
+ * Migration 003 fixes clusters where the table already exists. This closes the
+ * window on every cluster built from now on, because a default privilege
+ * cannot be made to exclude one table and the grant would otherwise be
+ * re-applied before 003 could run.
+ *
+ * SELECT is retained: the API's readiness probe reads this table as
+ * finsoft_app to check the schema is at the version the build requires.
+ *
+ * Idempotent, and tolerant of roles that do not exist — a developer may run
+ * the runner against a cluster provisioned differently.
+ */
+const SCHEMA_MIGRATIONS_GRANTS = `
+  DO $$
+  BEGIN
+    EXECUTE 'REVOKE ALL ON TABLE schema_migrations FROM PUBLIC';
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'finsoft_app') THEN
+      EXECUTE 'REVOKE ALL ON TABLE schema_migrations FROM finsoft_app';
+      EXECUTE 'GRANT SELECT ON TABLE schema_migrations TO finsoft_app';
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'readonly_support') THEN
+      EXECUTE 'REVOKE ALL ON TABLE schema_migrations FROM readonly_support';
+      EXECUTE 'GRANT SELECT ON TABLE schema_migrations TO readonly_support';
+    END IF;
+  END
+  $$;
+`
+
+/**
  * Two deploy replicas starting at once must not both migrate. The lock is
  * session-scoped and released when the connection closes, including on crash.
  * hashtext is deterministic, so every deployer computes the same key.
@@ -103,6 +140,7 @@ export async function migrate(options: { dryRun?: boolean } = {}): Promise<Migra
   try {
     await client.query(LOCK)
     await client.query(SCHEMA_MIGRATIONS_DDL)
+    await client.query(SCHEMA_MIGRATIONS_GRANTS)
 
     const { rows } = await client.query<AppliedRow>(
       'SELECT version, filename, checksum FROM schema_migrations ORDER BY version',
@@ -165,6 +203,7 @@ export async function status(): Promise<{ applied: AppliedRow[]; pending: Migrat
   await client.connect()
   try {
     await client.query(SCHEMA_MIGRATIONS_DDL)
+    await client.query(SCHEMA_MIGRATIONS_GRANTS)
     const { rows } = await client.query<AppliedRow>(
       'SELECT version, filename, checksum FROM schema_migrations ORDER BY version',
     )
