@@ -115,7 +115,43 @@ module.exports = {
         'module internal, never the database. Business logic lives in the backend domain layer.',
       from: { path: '^apps/web/' },
       to: {
-        path: '^(packages/(accounting-kernel|inventory-kernel|database|auth|permissions|reporting)|modules)/',
+        path: '^(packages/(accounting-kernel|inventory-kernel|database|auth|permissions|reporting|observability)|modules)/',
+      },
+    },
+
+    /* ------------------------------------------------------------------ *
+     * Observability. ADR-0016.
+     *
+     * The kernel import rule above already blocks a kernel from importing
+     * @finsoft/observability, because that rule is an allow-list of three
+     * packages. These add the two boundaries it does NOT cover.
+     * ------------------------------------------------------------------ */
+    {
+      name: 'domain-does-not-log',
+      severity: 'error',
+      comment:
+        'ADR-0016: a pure domain layer does not log. It returns a result or throws, and the ' +
+        'application layer that called it decides what is worth a log line. A logger in the ' +
+        'domain is an I/O dependency in the one layer ARCHITECTURE.md §2 keeps free of them.',
+      from: { path: '^modules/[^/]+/domain/' },
+      to: { path: '^packages/observability/' },
+    },
+    {
+      name: 'observability-imports-almost-nothing',
+      severity: 'error',
+      comment:
+        'ADR-0016: the logger sits beneath everything that logs, so it imports nothing from ' +
+        'this repo except shared-types. A dependency here would be reachable from every ' +
+        'layer that logs, and would make the logger a back door into it.',
+      from: { path: '^packages/observability/' },
+      to: {
+        /*
+         * `node:async_hooks` carries the correlation context and `node:crypto`
+         * mints the ids, so core modules are exempt. The point of the rule is
+         * that no FIRST-PARTY package is reachable from here.
+         */
+        dependencyTypesNot: ['core'],
+        pathNot: ['^packages/(observability|shared-types)/', '^node_modules/'],
       },
     },
 

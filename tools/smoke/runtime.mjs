@@ -31,6 +31,7 @@ const ENTRYPOINTS = [
   ['migration runner', 'packages/database/src/migrate/apply.ts'],
   ['migration verifier', 'packages/database/src/migrate/verify.ts'],
   ['codegen guard', 'packages/database/src/generate/cli.ts'],
+  ['@finsoft/observability', 'packages/observability/src/index.ts'],
 ]
 
 /** CLIs, executed rather than imported: their argument handling counts too. */

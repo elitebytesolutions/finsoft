@@ -81,6 +81,7 @@ finsoft/
 │   ├── validation/          Shared schemas (zod), money/date/decimal primitives
 │   ├── ui/                  Financial UI Kit — design system components
 │   ├── reporting/           Report definitions, query builders, exporters
+│   ├── observability/       Structured logging, correlation context, redaction (ADR-0016)
 │   └── shared-types/        DTOs and contracts shared by web/api/worker
 │
 ├── modules/
