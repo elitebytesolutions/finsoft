@@ -33,7 +33,10 @@
     "db:codegen": "node --env-file-if-exists=.env packages/database/src/generate/cli.ts",
     "db:migrate:test": "node --env-file-if-exists=.env packages/database/src/testing/cli.ts migrate",
     "test:accounting": "vitest run --dir tests/accounting",
-    "smoke": "node tools/smoke/runtime.mjs"
+    "smoke": "node tools/smoke/runtime.mjs",
+    "hooks:install": "node tools/hooks/install.mjs",
+    "hooks:verify": "node tools/hooks/verify.mjs",
+    "prepare": "node tools/hooks/install.mjs"
   },
   "engines": {
     "node": ">=24.17.0"
