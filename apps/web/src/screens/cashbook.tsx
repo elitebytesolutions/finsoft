@@ -20,7 +20,6 @@ export function CashBook({data}:{data:AppData}){
  const [entries,setEntries]=useState<Entry[]>([])
  const [fin,setFin]=useState({...emptyForm,party:'Walk-in Customer',category:'Sales Revenue'})
  const [fout,setFout]=useState({...emptyForm,party:'Office Mart Sdn Bhd',category:'Office Supplies'})
- const [inDragOver,setInDragOver]=useState(false)
  const base={drawer:12480,bank:24300,petty:2700}
  const delta=(acct:string)=>entries.filter(e=>e.account===acct).reduce((a,e)=>a+(e.kind==='In'?e.amount:-e.amount),0)
  const drawer=base.drawer+delta('Main Cash Drawer'), bank=base.bank+delta('Bank Account'), petty=base.petty+delta('Petty Cash')
