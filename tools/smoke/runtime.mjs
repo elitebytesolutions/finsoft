@@ -32,6 +32,13 @@ const ENTRYPOINTS = [
   ['migration verifier', 'packages/database/src/migrate/verify.ts'],
   ['codegen guard', 'packages/database/src/generate/cli.ts'],
   ['@finsoft/observability', 'packages/observability/src/index.ts'],
+  /*
+   * The worker's side-effect-free modules. NOT main.ts: importing it starts
+   * the worker and connects to Redis, and this check must never need a
+   * dependency. `runner.ts` transitively pulls in queue.ts and config.ts.
+   */
+  ['worker: runner', 'apps/worker/src/runner.ts'],
+  ['worker: health', 'apps/worker/src/health.ts'],
 ]
 
 /** CLIs, executed rather than imported: their argument handling counts too. */

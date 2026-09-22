@@ -494,5 +494,37 @@ export default tseslint.config(
     rules: { 'no-console': 'off' },
   },
 
+  /* ---------------------------------------------------------------- *
+   * Long-running services log through @finsoft/observability, never
+   * through console. ADR-0016, INFRASTRUCTURE.md §8.
+   *
+   * The global rule allows console.warn and console.error. That is right
+   * for scripts and wrong here: a bare console.error writes UNSTRUCTURED
+   * text to the same stdout the JSON log pipeline reads, so the
+   * aggregator gets a line it cannot parse, with no level, no
+   * correlation id and no redaction. The one thing it is guaranteed to
+   * carry is whatever the developer interpolated into it — which is how
+   * rule 20 gets broken by someone who was only debugging.
+   *
+   * No allowances, so the sole escape is a scoped disable with a stated
+   * reason. There is exactly one legitimate case: a startup failure
+   * before initLogger() has run, where the alternative is a process that
+   * exits silently into a crash loop.
+   * ---------------------------------------------------------------- */
+  {
+    files: ['apps/api/src/**/*.ts', 'apps/worker/src/**/*.ts', 'modules/**/*.ts'],
+    /*
+     * The full array, not the bare severity. Passing `'error'` alone raises
+     * the severity and KEEPS the options from the earlier block, so
+     * `allow: ['warn', 'error']` survives and console.error stays legal —
+     * the rule reads as tightened and enforces nothing new.
+     *
+     * `{}` rather than `{ allow: [] }`: the rule's own schema requires
+     * `allow` to have at least one item, so an empty array is rejected
+     * outright. An empty options OBJECT is what clears the inherited ones.
+     */
+    rules: { 'no-console': ['error', {}] },
+  },
+
   prettier,
 )

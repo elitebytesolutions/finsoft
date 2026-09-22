@@ -1,0 +1,11 @@
+{
+  // The worker is plain Node with no decorators and no DI, so unlike apps/api
+  // it needs no SWC build and runs directly under Node's type stripping —
+  // which is why it extends the packages base and inherits erasableSyntaxOnly.
+  "extends": "../../tsconfig.packages.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"]
+}

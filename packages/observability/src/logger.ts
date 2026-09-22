@@ -15,7 +15,7 @@
  * there for why that is three layers and not one.
  */
 
-import { pino, type Logger as PinoLogger, type LoggerOptions } from 'pino'
+import { pino, type DestinationStream, type Logger as PinoLogger, type LoggerOptions } from 'pino'
 
 import { getCorrelation } from './context.ts'
 import { redact } from './redact.ts'
@@ -42,6 +42,16 @@ export interface LoggerConfig {
   readonly service: string
   readonly level?: LogLevel
   readonly version?: string
+  /*
+   * Where the lines go. Defaults to stdout, which is the only correct answer
+   * in a container (INFRASTRUCTURE §8).
+   *
+   * Overridden only by tests, and only so they can assert on the REAL output
+   * rather than on `redact()` in isolation — a configuration change that
+   * bypassed the redaction choke point would pass a unit test of `redact` and
+   * fail this one. That is worth a seam.
+   */
+  readonly destination?: DestinationStream
 }
 
 export const baseOptions = (config: LoggerConfig): LoggerOptions => ({
@@ -107,7 +117,9 @@ let root: Logger | undefined
  * a debugging session that goes in circles.
  */
 export function initLogger(config: LoggerConfig): Logger {
-  root ??= pino(baseOptions(config))
+  root ??= config.destination
+    ? pino(baseOptions(config), config.destination)
+    : pino(baseOptions(config))
   return root
 }
 

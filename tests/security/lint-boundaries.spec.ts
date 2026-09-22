@@ -188,3 +188,54 @@ describe('packages/** must stay loadable by Node type stripping', () => {
     expect(matching(messages, 'strip-only mode cannot load a parameter property')).toEqual([])
   })
 })
+
+describe('services log through the logger, not console (ADR-0016)', () => {
+  /*
+   * The global rule allows console.warn and console.error, which is right for
+   * scripts and wrong for a long-running service: a bare console.error writes
+   * UNSTRUCTURED text to the same stdout the JSON pipeline reads. The
+   * aggregator gets a line with no level, no correlation id and no redaction —
+   * carrying whatever the developer interpolated into it.
+   *
+   * These also pin the flat-config trap that made the first attempt useless:
+   * raising the severity alone KEEPS the inherited `allow` list, so the rule
+   * reads as tightened and enforces nothing new. If someone rewrites the block
+   * as `'no-console': 'error'`, the console.error cases below go green again.
+   */
+  it.each(['apps/api/src/thing.ts', 'apps/worker/src/thing.ts', 'modules/sales/api/thing.ts'])(
+    'bans console.error in %s',
+    async (filePath) => {
+      const messages = await messagesFor(filePath, `export const f = () => console.error('x')`)
+      expect(matching(messages, 'Unexpected console statement')).toHaveLength(1)
+    },
+  )
+
+  it('bans console.log and console.warn in a service too', async () => {
+    for (const method of ['log', 'warn', 'info', 'debug']) {
+      const messages = await messagesFor(
+        'apps/worker/src/thing.ts',
+        `export const f = () => console.${method}('x')`,
+      )
+      expect(
+        matching(messages, 'Unexpected console statement'),
+        `console.${method} must be banned in a service`,
+      ).toHaveLength(1)
+    }
+  })
+
+  it('still allows console in a CLI, which legitimately owns stdout', async () => {
+    const messages = await messagesFor(
+      'packages/database/src/migrate/cli.ts',
+      `export const f = () => console.log('applied')`,
+    )
+    expect(matching(messages, 'Unexpected console statement')).toHaveLength(0)
+  })
+
+  it('leaves apps/web alone, where console is a browser concern', async () => {
+    const messages = await messagesFor(
+      'apps/web/src/thing.ts',
+      `export const f = () => console.error('x')`,
+    )
+    expect(matching(messages, 'Unexpected console statement')).toHaveLength(0)
+  })
+})
