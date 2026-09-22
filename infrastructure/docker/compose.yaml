@@ -136,6 +136,36 @@ services:
       timeout: 5s
       retries: 20
 
+  # ---------------------------------------------------------------- #
+  # Adminer — a browser UI for the development database.
+  #
+  # Local convenience only. It is behind the `tools` profile so it never
+  # starts in CI or anywhere that does not explicitly ask for it; .env sets
+  # COMPOSE_PROFILES=tools so it comes up with a plain `docker compose up`
+  # on a developer machine and nowhere else.
+  #
+  # It reaches postgres over the compose network by service name, so it is
+  # unaffected by the client-side SSL and SCRAM configuration that a desktop
+  # client has to get right.
+  #
+  # It is pointed at the DEVELOPMENT database. postgres-test is deliberately
+  # not the default: a browser tab left open on the test database is a good
+  # way to be confused by a suite that resets it underneath you.
+  # ---------------------------------------------------------------- #
+  adminer:
+    image: ${ADMINER_IMAGE:-adminer:5-standalone}
+    container_name: ${COMPOSE_PROJECT_NAME:-finsoft}-adminer
+    profiles: ['tools']
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+      ADMINER_DEFAULT_DRIVER: pgsql
+      TZ: UTC
+    ports:
+      - '${ADMINER_PORT:-8088}:8080'
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   postgres-data:
   postgres-test-data:
