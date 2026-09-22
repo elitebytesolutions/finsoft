@@ -10,5 +10,9 @@
     "./tokens.css": "./src/tokens/index.css",
     "./kit.css": "./src/styles/kit.css"
   },
-  "peerDependencies": { "react": "^19", "react-dom": "^19", "lucide-react": "*" }
+  "peerDependencies": {
+    "react": "^19",
+    "react-dom": "^19",
+    "lucide-react": "*"
+  }
 }

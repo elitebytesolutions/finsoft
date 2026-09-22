@@ -9,16 +9,28 @@
   "scripts": {
     "dev": "npm run dev --workspace @finsoft/web",
     "build": "npm run build --workspace @finsoft/web",
-    "lint": "npm run lint --workspace @finsoft/web",
     "typecheck": "npm run typecheck --workspace @finsoft/web",
-    "test": "npm run test --workspace @finsoft/web"
+    "test": "npm run test --workspace @finsoft/web",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "depcruise": "depcruise apps packages --config .dependency-cruiser.cjs",
+    "verify": "npm run typecheck && npm run lint && npm run depcruise && npm run format:check && npm test"
   },
   "engines": {
     "node": ">=24.17.0"
   },
   "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "dependency-cruiser": "18.4.0",
+    "eslint": "10.11.0",
+    "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-react-hooks": "7.1.1",
     "pixelmatch": "^7.2.0",
     "playwright": "^1.63.0",
-    "pngjs": "^7.0.0"
+    "pngjs": "^7.0.0",
+    "prettier": "3.9.8",
+    "typescript-eslint": "8.70.1"
   }
 }

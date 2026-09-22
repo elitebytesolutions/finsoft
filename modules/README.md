@@ -18,3 +18,11 @@ tables — cross-module traffic goes through a published application-layer
 interface or a domain event. Modules never construct journal lines
 (`postingEngine.post`) and never write `stock_movements`
 (`inventoryKernel.postMovement`). Enforced by dependency-cruiser in CI.
+
+---
+
+**When the first module lands:** add `modules` to the `depcruise` script in the
+root `package.json`. The boundary rules in `.dependency-cruiser.cjs` are already
+written against `^modules/` paths — cross-module imports, domain purity, layer
+direction — but they only fire on directories that are actually scanned, and
+dependency-cruiser cannot scan an empty one.
