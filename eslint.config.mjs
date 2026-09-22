@@ -51,9 +51,18 @@ const invariantSyntax = [
     message: "ADR-0013: Kysely's Migrator is not used. Migrations are numbered .sql files.",
   },
   {
-    // ADR-0014. The configured constructor is frozen; reconfiguring it is retroactive and invisible.
+    /*
+     * ADR-0014. The configured constructor is frozen; reconfiguring it is
+     * retroactive and invisible.
+     *
+     * This name list is the second line of defence, not the first. The first
+     * is the import ban below plus the dependency-cruiser rule: a decimal
+     * constructor binding cannot exist outside packages/validation at all.
+     * Keep FinDecimal here — it is the name the real binding uses, and an
+     * earlier version of this list omitted it.
+     */
     selector:
-      "CallExpression[callee.property.name='set'][callee.object.name=/^(Decimal|Money|Big|BigNumber|D|M)$/]",
+      "CallExpression[callee.property.name='set'][callee.object.name=/^(FinDecimal|Decimal|Big|BigNumber|D|M)$/]",
     message:
       'ADR-0014: decimal configuration exists at exactly one frozen clone site in packages/validation.',
   },

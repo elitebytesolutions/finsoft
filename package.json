@@ -9,8 +9,8 @@
   "scripts": {
     "dev": "npm run dev --workspace @finsoft/web",
     "build": "npm run build --workspace @finsoft/web",
-    "typecheck": "npm run typecheck --workspace @finsoft/web",
-    "test": "npm run test --workspace @finsoft/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
