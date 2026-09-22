@@ -287,22 +287,20 @@ describe('Golden Scenario A (NON_NEGOTIABLES §3)', () => {
     expect(Quantity.serialize(closingQuantity, 0)).toBe('110')
   })
 
-  it('reconciles the carried value to the GL exactly (ADR-0015)', () => {
+  it('produces the carried value, which is what the GL will be debited to', () => {
     /*
-     * This test used to assert a Rs 0.0001 residual as an open question. The
-     * question has been ruled on: ADR-0015 establishes that the inventory
-     * valuation is the CARRIED VALUE, not `quantity × average`.
+     * This test used to assert a Rs 0.0001 residual as an open question, and
+     * then — while fixing that — asserted `x − x = 0` with two identical
+     * expressions named `carriedValue` and `glBalance`, presented as an
+     * Invariant 10 reconciliation. It was the same fake reconciliation
+     * removed from tests/accounting/golden-scenarios.spec.ts, left behind in
+     * this file.
      *
-     * Both sides below subtract the same stored COGS amount, so they agree by
-     * construction rather than by two algorithms happening to land on the
-     * same number. Invariant 10 is exact, and no tolerance is needed.
+     * There is no journal here and no independent GL side. What this can
+     * prove is the figure; the reconciliation waits for Wave 2, and
+     * Invariant 10 stays `pending` until then.
      */
-    const carriedValue = Money.subtract(totalValue, cogs)
-    const glBalance = Money.subtract(totalValue, cogs)
-
-    expect(Money.serialize(carriedValue)).toBe('9533.3333')
-    expect(Money.serialize(glBalance)).toBe('9533.3333')
-    expect(Money.serialize(Money.subtract(carriedValue, glBalance))).toBe('0.0000')
+    expect(Money.serialize(Money.subtract(totalValue, cogs))).toBe('9533.3333')
   })
 
   it('pins quantity × average as the forbidden recomputation', () => {
