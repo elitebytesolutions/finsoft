@@ -83,6 +83,18 @@ describe('rounding (the golden boundary table)', () => {
     ['1.0005', 3, '1.001'],
     ['1234.56785', 4, '1234.5679'],
     ['-1234.56785', 4, '-1234.5679'],
+    /*
+     * Scale 6 — the costing scale. This is the precision the weighted average
+     * is stored at (ADR-0011), the number Golden Scenario A turns on, and the
+     * one the inventory valuation ruling is about. The table covered 0, 2, 3
+     * and 4 and stopped short of the scale that actually decides a COGS
+     * figure.
+     */
+    ['86.6666665', 6, '86.666667'],
+    ['-86.6666665', 6, '-86.666667'],
+    ['0.0000005', 6, '0.000001'],
+    ['-0.0000005', 6, '-0.000001'],
+    ['86.6666664', 6, '86.666666'],
   ]
 
   it.each(cases)(
@@ -172,6 +184,36 @@ describe('kinds carry their own scale (ADR-0011)', () => {
     const body = JSON.stringify({ total: Money.from('10000.10') })
     expect(body).toBe('{"total":"10000.1000"}')
     expect(JSON.parse(body).total).toBeTypeOf('string')
+  })
+
+  it('refuses to serialise an unrounded intermediate rather than rounding it', () => {
+    /*
+     * The asymmetry this closes: Money.from('260.000001') THROWS because the
+     * value carries more decimal places than the scale, yet toJSON would
+     * happily have emitted "260.0000" for the same number — performing a
+     * rounding nobody wrote and no document names as a boundary.
+     *
+     * Arithmetic returns full precision deliberately, so every product in the
+     * system was one accidental JSON.stringify away from an undeclared
+     * rounding boundary. That is the "rounded twice" failure ADR-0011 forbids.
+     */
+    const unrounded = Money.multiply(Quantity.from('3'), UnitCost.from('86.666667'))
+    expect(unrounded.value.toFixed(6)).toBe('260.000001')
+
+    expect(() => JSON.stringify({ total: unrounded })).toThrow(AmountError)
+    expect(() => unrounded.toString()).toThrow(/Rounding once, explicitly, is the rule/)
+  })
+
+  it('serialises once the caller has rounded explicitly', () => {
+    const unrounded = Money.multiply(Quantity.from('3'), UnitCost.from('86.666667'))
+    expect(JSON.stringify({ total: Money.round(unrounded) })).toBe('{"total":"260.0000"}')
+  })
+
+  it('still rounds when a scale is asked for explicitly', () => {
+    // An explicitly requested scale IS a documented boundary —
+    // Money.serialize(total, 2) says what it does.
+    const unrounded = Money.multiply(Quantity.from('3'), UnitCost.from('86.666667'))
+    expect(Money.serialize(unrounded, 2)).toBe('260.00')
   })
 })
 

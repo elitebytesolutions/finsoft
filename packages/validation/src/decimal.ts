@@ -46,6 +46,26 @@ export const FinDecimal = Decimal.clone({
 
 Object.freeze(FinDecimal)
 
+/*
+ * Protect the one prototype method the serialisation rule depends on.
+ *
+ * Object.freeze(FinDecimal) stops .set() repointing the configuration but
+ * leaves the prototype writable, so FinDecimal.prototype.toFixed can be
+ * reassigned — and toFixed is what every money value is serialised through.
+ *
+ * Object.freeze(FinDecimal.prototype) would be the obvious fix and it does
+ * not work: decimal.js assigns "x.constructor = Decimal" on every instance
+ * it builds, and that assignment throws against a frozen prototype. Verified
+ * — it breaks Money.from outright with "Cannot assign to read only property
+ * 'constructor'". So the method is pinned individually and the prototype
+ * stays otherwise writable.
+ */
+Object.defineProperty(FinDecimal.prototype, 'toFixed', {
+  value: FinDecimal.prototype.toFixed,
+  writable: false,
+  configurable: false,
+})
+
 export type Dec = InstanceType<typeof FinDecimal>
 
 /** Rounding modes permitted in FinSoft. Half-up is the default everywhere. */

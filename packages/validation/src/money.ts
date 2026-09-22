@@ -54,12 +54,43 @@ export class Amount<K extends Kind> {
     Object.freeze(this)
   }
 
-  /** ADR-0014: money crosses every boundary as a fixed-scale string. */
+  /*
+   * ADR-0014: money crosses every boundary as a fixed-scale string.
+   *
+   * Both of these REFUSE a value carrying more decimal places than its scale,
+   * rather than quietly rounding it.
+   *
+   * Arithmetic here returns full precision on purpose — `Money.multiply`
+   * gives 260.000001 for 3 × 86.666667 — and rounding is meant to happen
+   * once, explicitly, at a documented boundary. An implicit `toFixed` on the
+   * way out is a second, undeclared boundary: it would mean a value that
+   * `Money.from` REFUSES to accept ("carries 6 decimal places but the scale
+   * is 4") is one that `JSON.stringify` emits happily, having rounded it.
+   * That asymmetry is the "rounded twice" failure ADR-0011 forbids, and every
+   * product in the system would have been one accidental serialisation away
+   * from it.
+   *
+   * `serialize(amount, scale)` still rounds, because an explicitly requested
+   * scale IS a documented boundary — `Money.serialize(total, 2)` for
+   * presentation says what it does.
+   */
   toJSON(): string {
-    return this.value.toFixed(this.scale)
+    return this.fixedOrThrow('toJSON')
   }
 
   toString(): string {
+    return this.fixedOrThrow('toString')
+  }
+
+  private fixedOrThrow(via: string): string {
+    if (this.value.decimalPlaces() > this.scale) {
+      throw new AmountError(
+        `${this.kind}.${via}() refused: the value carries ${this.value.decimalPlaces()} decimal ` +
+          `places but the scale is ${this.scale}. Rounding once, explicitly, is the rule — ` +
+          `call ${this.kind}.round() first, or ${this.kind}.serialize(value, scale) if you ` +
+          'mean to round for presentation.',
+      )
+    }
     return this.value.toFixed(this.scale)
   }
 }
