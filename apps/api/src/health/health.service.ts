@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common'
-import { withGlobal } from '@finsoft/database'
+import { readSchemaHealth } from '@finsoft/database'
 
 /*
  * Liveness and readiness are different questions and are answered separately.
@@ -88,32 +88,28 @@ export class HealthService {
    */
   private async checkDatabase(): Promise<CheckResult> {
     try {
-      const { applied, readable } = await withTimeout(
-        withGlobal(async (tx) => {
-          const version = await tx
-            .selectFrom('schema_migrations')
-            .select(({ fn }) => fn.max('version').as('applied'))
-            .executeTakeFirst()
-
-          // Proves an actual table can be read, not just that
-          // schema_migrations has rows in it.
-          await tx.selectFrom('tenants').select('id').limit(1).execute()
-
-          return { applied: Number(version?.applied ?? 0), readable: true }
-        }),
-        PROBE_TIMEOUT_MS,
-      )
+      /*
+       * The query lives in packages/database. ADR-0013 confines query
+       * construction and apps/** is not on the list — receiving a transaction
+       * handle through a callback does not make a controller the data layer.
+       * This service decides what a failure MEANS for readiness and what may
+       * be said about it; it does not build the query.
+       */
+      const { appliedVersion, readable } = await withTimeout(readSchemaHealth(), PROBE_TIMEOUT_MS)
 
       if (!readable) return { status: 'down', detail: 'schema not readable' }
 
-      if (applied < REQUIRED_SCHEMA_VERSION) {
+      if (appliedVersion < REQUIRED_SCHEMA_VERSION) {
         return {
           status: 'down',
-          detail: `schema at ${applied}, this build requires ${REQUIRED_SCHEMA_VERSION}`,
+          detail: `schema at ${appliedVersion}, this build requires ${REQUIRED_SCHEMA_VERSION}`,
         }
       }
 
-      return { status: 'up', detail: `schema ${applied}, requires ${REQUIRED_SCHEMA_VERSION}` }
+      return {
+        status: 'up',
+        detail: `schema ${appliedVersion}, requires ${REQUIRED_SCHEMA_VERSION}`,
+      }
     } catch (error) {
       /*
        * The detail is deliberately generic. A connection error from `pg`

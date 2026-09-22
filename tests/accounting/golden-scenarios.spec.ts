@@ -108,9 +108,23 @@ describe(`Golden Scenario ${scenarioA.id}: ${scenarioA.name}`, () => {
   const grossProfit = Money.subtract(revenue, cogs)
 
   const quantityAfter = Quantity.subtract(quantityOnHand, sold)
-  // The subledger subtracts the SAME stored number the GL is debited.
+
+  /*
+   * The subledger subtracts the SAME stored number the GL is debited — which
+   * is ADR-0015's whole point, and also why the two expressions below are
+   * identical.
+   *
+   * BE HONEST ABOUT WHAT THAT MEANS FOR THESE TESTS. There is no posting
+   * engine yet, so no journal is modelled and there is no independent GL
+   * side. Asserting `valueAfter === valueAfter` here would be asserting
+   * `x − x = 0`, which is a tautology dressed as a reconciliation.
+   *
+   * So these cases assert what they can actually prove: that the specified
+   * values are produced, and that the recomputation DIFFERS from them. The
+   * GL side is specified, not observed. Invariant 10 stays `pending` in
+   * invariants.ts until Wave 2 posts a real journal to reconcile against.
+   */
   const valueAfter = Money.subtract(valueOnHand, cogs)
-  const glAfter = Money.subtract(valueOnHand, cogs)
 
   it('accumulates value and quantity before the sale', () => {
     expect(Money.serialize(valueOnHand, 2)).toBe(expected.totalValueBeforeSale)
@@ -137,14 +151,19 @@ describe(`Golden Scenario ${scenarioA.id}: ${scenarioA.name}`, () => {
     expect(Money.serialize(valueAfter, 4)).toBe(expectedAtStorageScale.valueOnHand)
   })
 
-  it('satisfies Invariant 10 exactly, with no tolerance', () => {
-    // The subledger valuation and the GL balance are equal BY CONSTRUCTION:
-    // both are 13000.0000 − 3466.6667. That identity is what ADR-0015 makes
-    // structural, and it is why no tolerance is needed or permitted.
-    expect(Money.serialize(glAfter, 4)).toBe(expectedAtStorageScale.inventoryGlBalance)
-    expect(Money.serialize(Money.subtract(valueAfter, glAfter), 4)).toBe(
-      expectedAtStorageScale.invariant10Residual,
-    )
+  it('produces the specified carried value (the GL side is specified, not observed)', () => {
+    /*
+     * The carried value IS what the GL balance will be, because the posting
+     * engine will debit the same stored `cogs` this subtracts. That identity
+     * is what ADR-0015 makes structural.
+     *
+     * What this test can prove today is that the figure matches the value the
+     * golden file specifies for the GL. It cannot prove the reconciliation —
+     * there is no journal yet. An assertion comparing the value to itself
+     * would look like a reconciliation and be worth nothing, so there isn't
+     * one; Invariant 10 stays `pending` until Wave 2 provides the other side.
+     */
+    expect(Money.serialize(valueAfter, 4)).toBe(expectedAtStorageScale.inventoryGlBalance)
   })
 
   it('pins quantity × average as the FORBIDDEN figure, not the valuation', () => {
@@ -183,7 +202,7 @@ describe(`Golden Scenario ${scenarioA.id}: ${scenarioA.name}`, () => {
     it('leaves the inventory GL at exactly zero, never negative', () => {
       // Under the superseded rule this ended at −0.0001 with zero stock
       // behind it: an asset account with a credit balance.
-      const glEnd = Money.add(glAfter, inventoryDelta)
+      const glEnd = Money.add(valueAfter, inventoryDelta)
       expect(Money.serialize(glEnd, 4)).toBe(sellOut.inventoryGlAfter)
       expect(Money.isNegative(glEnd)).toBe(false)
     })
@@ -253,22 +272,26 @@ describe(`Golden Scenario ${scenarioA.id}: ${scenarioA.name}`, () => {
       expect(Money.serialize(Money.subtract(total, cogs), 4)).toBe(splitTransactions.difference)
     })
 
-    it('reconciles to the GL exactly on BOTH paths', () => {
-      // The point of A4. Each of the ten roundings is independently correct,
-      // so the totals differ — but value_on_hand equals the GL in both cases,
-      // because both subtract the same stored deltas. Invariant 10 does not
-      // care which path was taken.
+    it('produces a carried value on both paths, and the paths genuinely differ', () => {
+      /*
+       * The point of A4. Each of the ten roundings is independently correct,
+       * so the totals differ — and the carried value on each path is still
+       * what the GL balance will be, because both subtract the same stored
+       * deltas. Invariant 10 does not care which path was taken.
+       *
+       * A GL side computed here would be the same expression as the subledger
+       * side, so comparing them would assert x = x. The real content is that
+       * the two PATHS differ while each remains internally consistent, which
+       * is what these two assertions check.
+       */
       const each = Money.round(Money.multiply(Quantity.from('4'), average))
       let splitValue = valueOnHand
-      let splitGl = valueOnHand
       for (let i = 0; i < 10; i++) {
         splitValue = Money.subtract(splitValue, each)
-        splitGl = Money.subtract(splitGl, each)
       }
 
-      expect(Money.equals(splitValue, splitGl)).toBe(true)
-      expect(Money.equals(valueAfter, glAfter)).toBe(true)
-      // And the two paths genuinely differ, so this is not a vacuous pair.
+      expect(Money.serialize(splitValue, 4)).toBe(splitTransactions.tenSalesOf4.valueOnHandAfter)
+      // The paths genuinely differ, so neither assertion above is vacuous.
       expect(Money.equals(splitValue, valueAfter)).toBe(false)
     })
   })

@@ -42,9 +42,45 @@ const invariantSyntax = [
     message: 'ADR-0013: sql.raw does not parameterise. Use the sql tag, or an allowlisted helper.',
   },
   {
-    // ADR-0013. DDL lives in database/migrations/*.sql, never in TypeScript.
-    selector: "MemberExpression[object.name=/^(db|tx|trx|kysely)$/][property.name='schema']",
+    /*
+     * ADR-0013. DDL lives in database/migrations/*.sql, never in TypeScript.
+     *
+     * Matched on the DDL method rather than on the receiver's name. An
+     * earlier version keyed on identifiers called db/tx/trx/kysely, which
+     * `fullDb().schema.createTable(...)` walks straight past.
+     */
+    selector:
+      "MemberExpression[object.property.name='schema'][property.name=/^(createTable|alterTable|dropTable|createIndex|dropIndex|createType|dropType|createView|dropView|createSchema|dropSchema)$/]",
     message: 'ADR-0013: DDL belongs in database/migrations/*.sql, not in a Kysely schema builder.',
+  },
+  {
+    /*
+     * Kysely's `sql` tag parameterises; these three do not, and all three are
+     * reachable through the tag the lint rule blesses.
+     */
+    selector: "CallExpression[callee.object.name='sql'][callee.property.name=/^(lit|id)$/]",
+    message:
+      'ADR-0013: sql.lit and sql.id do not parameterise. Allowlist-only, and they need review.',
+  },
+  {
+    /*
+     * ADR-0013 + ADR-0004:140. clearWhere strips the predicates the base
+     * repository just added. On scopedUpdate that is the tenant predicate AND
+     * the id and version predicates, producing an unbounded tenant-wide
+     * UPDATE with the optimistic lock removed. RLS backstops the tenant half;
+     * nothing backstops the rest.
+     */
+    selector: 'CallExpression[callee.property.name=/^(clearWhere|clearSelect|clearLimit)$/]',
+    message:
+      'Stripping a query clause discards the tenant, id and version predicates the base ' +
+      'repository added. Build a new query instead.',
+  },
+  {
+    // ADR-0013: the bare-call form, which the receiver-based rule below misses.
+    selector: "CallExpression[callee.name='setTypeParser']",
+    message:
+      'ADR-0013: type parser overrides are forbidden in any import form. numeric and int8 ' +
+      'must reach TypeScript as strings.',
   },
   {
     selector: "NewExpression[callee.name='Migrator']",
@@ -81,6 +117,42 @@ const invariantSyntax = [
     // .only silently reduces a suite to one case while still reporting success.
     selector: "MemberExpression[object.name=/^(it|test|describe)$/][property.name='only']",
     message: '.only silently skips the rest of the suite. Remove it before committing.',
+  },
+]
+
+/**
+ * Connection ownership. ADR-0013, and ADR-0004's Compliance section.
+ *
+ * Held separately from `invariantSyntax` because ESLint REPLACES a rule's
+ * configuration rather than merging it: a later block setting
+ * no-restricted-syntax silently drops every selector an earlier block
+ * declared. Both the "outside packages/database" block and the "apps/**"
+ * block need these, so they are composed into each rather than written twice
+ * and drifting apart.
+ */
+const connectionOwnershipSyntax = [
+  {
+    selector: 'CallExpression[callee.property.name=/^(transaction|startTransaction|connection)$/]',
+    message:
+      'ADR-0013: transactions are opened only in packages/database. Use withTenant or ' +
+      'withGlobal — a bare transaction has no app.tenant_id set, and RLS will refuse it.',
+  },
+  {
+    /*
+     * ADR-0004's Compliance section requires this and it did not exist. The
+     * wrapper in packages/database is the only code that may set the tenant,
+     * and it takes it from the verified JWT claim — never from a request.
+     */
+    selector: 'Literal[value=/app\\.tenant_id/]',
+    message:
+      'ADR-0004: packages/database is the only code that sets app.tenant_id. Setting it ' +
+      'elsewhere is how a tenant ends up taken from a request instead of a verified claim.',
+  },
+  {
+    selector: 'TSAsExpression[typeAnnotation.typeName.name=/^(TenantTx|GlobalTx)$/]',
+    message:
+      'ADR-0013: a brand is forgeable with `as`. Obtain the handle from withTenant or ' +
+      'withGlobal — they are the only issuers, and the runtime registry checks it.',
   },
 ]
 
@@ -166,6 +238,76 @@ export default tseslint.config(
         {
           selector: 'TSModuleDeclaration[kind="namespace"]',
           message: 'Node strip-only mode cannot load a namespace. Use a module.',
+        },
+      ],
+    },
+  },
+
+  /* ---------------------------------------------------------------- *
+   * Connection ownership. ADR-0013 and ADR-0004's Compliance section.
+   *
+   * ADR-0004 is Accepted and LEVEL 1, and it requires that
+   * set_config('app.tenant_id', …) appear only in packages/database —
+   * "anywhere else fails the build". That rule did not exist. Neither did
+   * ADR-0013's rules confining transaction creation and forbidding a type
+   * assertion to the branded handle.
+   *
+   * The branded handle plus the runtime WeakSet registry catch a forged
+   * handle at the moment it is used; these catch it at build time, which is
+   * where a boundary violation should be caught.
+   * ---------------------------------------------------------------- */
+  {
+    files: ['**/*.ts', '**/*.tsx'],
+    ignores: [
+      'packages/database/**',
+      /*
+       * The suites that exist to VERIFY these controls have to be able to
+       * name them. tests/security asserts that a reused connection carries no
+       * app.tenant_id, and deliberately forges a handle with `as TenantTx` to
+       * prove the runtime registry rejects it; database/tests reads the GUC
+       * from the catalog. A rule that forbade its own verification would be
+       * weakened rather than obeyed.
+       *
+       * Both directories contain tests only, so this exempts no production
+       * code. The narrower alternative — an inline disable on each of the
+       * twelve occurrences — buries the reasoning in twelve places.
+       */
+      'tests/security/**',
+      'database/tests/**',
+    ],
+    rules: {
+      'no-restricted-syntax': ['error', ...invariantSyntax, ...connectionOwnershipSyntax],
+    },
+  },
+
+  /* ---------------------------------------------------------------- *
+   * apps/** build no queries. ADR-0013's "two import boundaries".
+   *
+   * dependency-cruiser watches the module graph, and a transaction handle
+   * arrives through a CALLBACK rather than an import — so `tx.selectFrom(…)`
+   * inside a controller reads as ordinary application code and nothing
+   * objected. That is exactly how the readiness probe came to build queries
+   * in the HTTP layer.
+   *
+   * A health check is the most copied file in a codebase. Left alone it would
+   * have given every Wave 1 controller a worked example of the thing the
+   * boundary exists to prevent.
+   * ---------------------------------------------------------------- */
+  {
+    files: ['apps/**/*.ts', 'apps/**/*.tsx'],
+    ignores: ['apps/**/*.spec.ts', 'apps/**/*.test.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        ...invariantSyntax,
+        ...connectionOwnershipSyntax,
+        {
+          selector:
+            'CallExpression[callee.property.name=/^(selectFrom|insertInto|updateTable|deleteFrom|replaceInto|with)$/]',
+          message:
+            'ARCHITECTURE §5 / ADR-0013: apps/** contains no query construction. Receiving a ' +
+            'transaction handle through a callback does not make this the data layer. Put the ' +
+            'query behind a named export in packages/database and call that.',
         },
       ],
     },

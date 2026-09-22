@@ -89,7 +89,7 @@ export const INVARIANTS: readonly Invariant[] = [
     note:
       'Needs the inventory ledger and the inventory GL account. Wave 5. Ruled on by ADR-0015: ' +
       'valuation is the carried value, not quantity x average, so reconciliation is exact and no ' +
-      'tolerance is involved. Golden Scenario A asserts the identity today.',
+      'tolerance is involved. Golden Scenario A specifies the identity; it cannot yet observe it, because no journal exists to reconcile against until Wave 2.',
   },
 ]
 

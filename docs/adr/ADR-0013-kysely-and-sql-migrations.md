@@ -33,6 +33,10 @@ This split is required by documents already in force. [ADR-0005](ADR-0005-centra
 
 Everything else is forbidden: all of `modules/*/domain/**`, `modules/*/application/**`, `modules/*/api/**`, and all of `apps/*`. A module's `domain/` layer never sees a Kysely instance, a transaction handle, or a generated row type — it sees domain objects.
 
+**Receiving a handle does not make the receiver the data layer.** Calling `selectFrom`, `insertInto`, `updateTable` or `deleteFrom` on a `TenantTx` or `GlobalTx` obtained from a callback *is* query construction, and is forbidden wherever query construction is forbidden.
+
+This needs stating because the import-based rules cannot see it. A handle arrives as a parameter, so `dependency-cruiser` finds no edge and the file reads as ordinary application code. The readiness probe in `apps/api` was written exactly this way and passed every check in the repository — an ESLint rule scoped to `apps/**` now catches it, and `tests/security/lint-boundaries.spec.ts` asserts that it does.
+
 ### The schema is hand-written SQL
 
 ```
@@ -43,7 +47,7 @@ database/migrations/001_create_tenants.sql
 
 - Migrations are plain `.sql`, numbered, forward-only, and immutable once applied. Kysely's TypeScript migration API is not used.
 - **One transaction per migration file.** A file either applies whole or not at all; a failure does not leave the schema half-migrated.
-- `CREATE INDEX CONCURRENTLY` cannot run inside a transaction. A migration needing it carries the marker `-- kysely:no-transaction` on its first line, and the runner applies that file outside a transaction. This is the only exemption, and it is visible in the file.
+- `CREATE INDEX CONCURRENTLY` cannot run inside a transaction. A migration needing it carries the marker `-- finsoft:no-transaction` on its first line, and the runner applies that file outside a transaction. This is the only exemption, and it is visible in the file.
 - Rollback is a new forward migration, never an edit and never a `down`. This matches [ADR-0006](ADR-0006-immutable-posted-transactions.md)'s posture towards the data the schema holds.
 - RLS policies, grants, `CHECK` constraints and triggers live in these files. They are the enforcement surface for rules 1, 4, 5, 6, 7, 9 and 12, so they are reviewed as SQL by the Database Guardian, not generated.
 - Filenames are three-digit and strictly sequential. Two parallel worktrees ([IMPLEMENTATION.md §3](../IMPLEMENTATION.md)) both writing `047_*.sql` will collide at merge. That is deliberate: migrations serialise through review rather than interleaving silently.
@@ -73,7 +77,11 @@ The runner lives in `packages/database` as a **separate CLI entrypoint**. It nev
 insertInto('journal_lines').values({ debit_amount: 0.1 + 0.2 })   // writes 0.30000000000000004
 ```
 
-That passes lint and passes any read-side round-trip test, and it defeats rule 6 through the one path this ADR exists to close. Generation is therefore pinned: `numericParser: "string"`, with a type override rendering `numeric` and `int8` as `ColumnType<string, string, string>` — carrying the branded `Money` / `UnitCost` / `Quantity` types from `packages/validation` where the column's role is known. A JS `number` assigned to a money column must not compile.
+That passes lint and passes any read-side round-trip test, and it defeats rule 6 through the one path this ADR exists to close. Generation is therefore pinned with `--type-mapping`, rendering `numeric` and `int8` as `ColumnType<string, string, string>`. A JS `number` assigned to a money column must not compile.
+
+Note what does **not** close this. `--numeric-parser string` is already kysely-codegen's default and governs only the *read* side, so setting it changes nothing — a reviewer who set it and stopped would have shipped the hole intact. `--type-mapping` is the flag that replaces the whole `ColumnType`.
+
+Branding is not achievable at generation either. `--type-mapping` is keyed by PostgreSQL type, not by column, so it cannot know which `numeric` is a `Money` and which is a `Quantity`. The branded types from `packages/validation` are applied at the repository and mapper boundary, where the column's role is known.
 
 Money leaves the driver as a string and is parsed only by `Money.from` ([ADR-0014](ADR-0014-decimal-js.md)). There is no other path in or out of a `numeric` column.
 
@@ -95,7 +103,9 @@ SELECT set_config('app.tenant_id', $1, true)
 
 parameterised, exactly as [ADR-0004](ADR-0004-postgresql-row-level-security.md) specifies. (`SET LOCAL` takes no bind parameters, so spelling it that way would require interpolating the tenant id as literal SQL — an injection surface on the one value that decides tenancy.) The `true` makes it transaction-scoped, so a pooled connection cannot carry a tenant id to the next checkout.
 
-The handle it yields is a **branded** `TenantTx`, constructible only inside `withTenant`. A branded type alone is forgeable with `as`, so three mechanisms hold the line together: the brand; a rule confining `.transaction()` and `.startTransaction()` to `packages/database`; and a lint rule forbidding type assertions to `TenantTx`. The base repository accepts only this handle.
+The handle it yields is a **branded** `TenantTx`, constructible only inside `withTenant`. A branded type alone is forgeable with `as`, so four mechanisms hold the line together: the brand; a rule confining `.transaction()` and `.startTransaction()` to `packages/database`; a lint rule forbidding type assertions to `TenantTx`; and a runtime registry — `withTenant` records every handle it issues in a `WeakSet`, and the exported `assertIssuedTenantTx` rejects anything else. The base repository accepts only this handle.
+
+The registry is not redundant with the lint rule. Lint fails a build, which is where a boundary violation should be caught; the registry fails a request, which is what survives a disabled rule, a file the config does not match, or a handle forged in a dependency.
 
 ### `withGlobal` is the one narrow exception
 
