@@ -1,3 +1,6 @@
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
@@ -35,7 +38,7 @@ const nextConfig = {
    * lockfile and silently omits @finsoft/* from the traced output — the image
    * builds and then fails at runtime on a missing module.
    */
-  outputFileTracingRoot: new URL('../../', import.meta.url).pathname,
+  outputFileTracingRoot: join(fileURLToPath(import.meta.url), '../../..'),
   transpilePackages: ['@finsoft/ui', '@finsoft/shared-types'],
 }
 export default nextConfig
