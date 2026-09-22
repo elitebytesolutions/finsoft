@@ -1,0 +1,33 @@
+{
+  "name": "@finsoft/api",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "nest build",
+    "dev": "nest start --watch",
+    "start": "node dist/main.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "12.0.5",
+    "@nestjs/testing": "12.0.4",
+    "@swc/cli": "0.8.1",
+    "@swc/core": "1.16.2",
+    "@types/express": "5.0.6",
+    "@types/supertest": "7.2.1",
+    "supertest": "7.3.0",
+    "unplugin-swc": "2.0.0",
+    "vitest": "4.1.11"
+  },
+  "dependencies": {
+    "@finsoft/database": "0.1.0",
+    "@finsoft/validation": "0.1.0",
+    "@nestjs/common": "12.0.4",
+    "@nestjs/core": "12.0.4",
+    "@nestjs/platform-express": "12.0.4",
+    "@nestjs/swagger": "12.0.1",
+    "reflect-metadata": "0.2.2",
+    "rxjs": "7.8.2"
+  }
+}

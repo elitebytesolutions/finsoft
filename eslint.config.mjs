@@ -129,6 +129,49 @@ export default tseslint.config(
   },
 
   /* ---------------------------------------------------------------- *
+   * packages/** must stay loadable by Node's type stripping
+   *
+   * These packages ship TypeScript source and are executed directly — the
+   * migration CLI runs `node packages/database/src/migrate/cli.ts`, and
+   * apps/api requires the package at runtime. Node strips types; it does
+   * not transform. A construct that needs transforming makes the module
+   * unloadable.
+   *
+   * This is invisible to the test suite, because Vitest transpiles. A
+   * parameter property in BaseRepository passed every test while the module
+   * could not be loaded by Node at all, and only surfaced when apps/api
+   * first required it.
+   *
+   * apps/** is exempt: apps/api builds with SWC, and NestJS dependency
+   * injection depends on parameter properties.
+   * ---------------------------------------------------------------- */
+  {
+    files: ['packages/*/src/**/*.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        ...invariantSyntax,
+        {
+          selector: 'TSParameterProperty',
+          message:
+            'Node strip-only mode cannot load a parameter property. Declare the field and ' +
+            'assign it in the constructor body — packages/** is executed as TypeScript.',
+        },
+        {
+          selector: 'TSEnumDeclaration',
+          message:
+            'Node strip-only mode cannot load an enum. Use a const object with `as const` ' +
+            'and a derived union type.',
+        },
+        {
+          selector: 'TSModuleDeclaration[kind="namespace"]',
+          message: 'Node strip-only mode cannot load a namespace. Use a module.',
+        },
+      ],
+    },
+  },
+
+  /* ---------------------------------------------------------------- *
    * packages/validation — the one place a decimal library may live
    * ADR-0011, ADR-0014
    * ---------------------------------------------------------------- */

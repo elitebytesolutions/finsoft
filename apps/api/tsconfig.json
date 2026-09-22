@@ -1,0 +1,26 @@
+{
+  // Typechecking only. The build is SWC (see nest-cli.json), because
+  // NestJS needs emitDecoratorMetadata and Node's native type stripping does
+  // not perform that transformation.
+  //
+  // allowImportingTsExtensions is here for @finsoft/database, not for this
+  // app. That package ships TypeScript source and runs under Node's type
+  // stripping, so its internal imports carry .ts extensions; resolving it
+  // from here pulls those files into this project. This app's own imports
+  // stay extensionless, which is what SWC emits into dist.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "Preserve",
+    // Preserve + bundler: SWC owns the emit (nest-cli.json), so TypeScript is
+    // only typechecking here. node10 resolution is deprecated, and node16
+    // would object to a CommonJS file importing @finsoft/database, which is
+    // ESM. Neither objection is real when the emitter is SWC.
+    "moduleResolution": "bundler",
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"]
+}

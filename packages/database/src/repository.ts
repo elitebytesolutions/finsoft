@@ -39,7 +39,23 @@ import { assertIssuedTenantTx, type TenantTx } from './transaction.ts'
  */
 
 export abstract class BaseRepository<TB extends TenantTableName> {
-  protected constructor(protected readonly table: TB) {}
+  /*
+   * Assigned explicitly rather than declared as a constructor parameter
+   * property. A parameter property is a TypeScript construct that has to be
+   * *transformed*, not merely erased, so Node's strip-only mode refuses to
+   * load the file — and this package is executed as TypeScript directly by
+   * the migration CLI and by anything that imports it under plain Node.
+   *
+   * Nothing caught this until apps/api first required the package at
+   * runtime: Vitest transpiles, so every test passed while the module was
+   * unloadable in production. The lint rule in eslint.config.mjs now keeps
+   * packages/** strip-safe.
+   */
+  protected readonly table: TB
+
+  protected constructor(table: TB) {
+    this.table = table
+  }
 
   /** The tenant this unit of work belongs to. Context only, never an argument. */
   protected get tenantId(): string {
