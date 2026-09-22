@@ -6,17 +6,21 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./testing": "./src/testing/harness.ts"
   },
   "dependencies": {
+    "kysely": "0.29.6",
     "pg": "8.23.0"
   },
   "devDependencies": {
     "@types/pg": "8.23.1",
+    "kysely-codegen": "0.20.0",
     "vitest": "4.1.11"
   },
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "codegen": "node src/generate/cli.ts"
   }
 }

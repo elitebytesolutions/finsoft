@@ -1,0 +1,15 @@
+{
+  // Typechecking for the schema test suite.
+  //
+  // These files live outside the npm workspaces, so `npm run typecheck
+  // --workspaces` does not reach them. Without this project they would be
+  // executed by Vitest but never typechecked — and the compile-time
+  // assertions in tests/security (`@ts-expect-error` on withGlobal and
+  // withTenant) would silently stop asserting anything.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "types": ["node"]
+  },
+  "include": ["**/*.ts"]
+}
