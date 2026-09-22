@@ -41,6 +41,8 @@ Proposed → Accepted → Superseded by ADR-00NN
 | [0010](ADR-0010-transactional-outbox.md) | Transactional outbox for all external side effects | Accepted | Emails, PDFs, FBR pushes, webhooks and cache invalidation are rows written in the posting transaction and dispatched afterwards. |
 | [0011](ADR-0011-money-representation.md) | Money as `numeric` with decimal arithmetic | Accepted | `numeric(19,4)` and `numeric(19,6)`, strings in JSON, a decimal library in TypeScript, half-up rounding once, PKR base. |
 | [0012](ADR-0012-fiscal-period-locking.md) | Fiscal period locking with no system bypass | Accepted | `OPEN → CLOSED → LOCKED`, enforced at the posting engine and the database, with no exemption for jobs, imports or scripts. |
+| [0013](ADR-0013-kysely-and-sql-migrations.md) | Kysely as the query builder, with hand-written SQL migrations | Proposed | A typed query builder with no schema opinion; migrations stay reviewable SQL, so the database keeps ownership of the compliance surface. |
+| [0014](ADR-0014-decimal-js.md) | decimal.js as the single decimal implementation | Proposed | Closes the library choice ADR-0011 deferred; a frozen cloned constructor, half-up away from zero, matching PostgreSQL. |
 
 ---
 
