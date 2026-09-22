@@ -1,9 +1,42 @@
 # ADR-0007: Weighted average as the single costing algorithm
 
-**Status:** Superseded by [ADR-0015](ADR-0015-inventory-valuation-is-carried-value.md)
+**Status:** Accepted — with a known conflict; see the notice below
+**Conflict:** [ADR-0015](ADR-0015-inventory-valuation-is-carried-value.md) (Proposed) would supersede this record
 **Date:** 2026-09-22
 **Deciders:** Product Owner, Architecture Guardian, Accounting Guardian
 **Authority:** LEVEL 1 — reversing this requires a superseding ADR
+
+---
+
+> ## ⚠ KNOWN CONFLICT — WAVE 5 IS BLOCKED
+>
+> **Do not implement inventory valuation from this record until the conflict
+> below is resolved.** This ADR remains **Accepted** — it is the costing
+> decision in force, and nothing has superseded it — but three of its
+> provisions are known to be wrong or unsafe, and one of them contradicts a
+> LEVEL 0 document.
+>
+> The status is deliberately *not* `Superseded`. [ADR-0015](ADR-0015-inventory-valuation-is-carried-value.md)
+> is only `Proposed`, and an accepted decision cannot be superseded by a
+> proposal — that would leave the repository with no accepted costing ADR at
+> all. The two statuses change together, or not at all.
+>
+> | Provision | Problem |
+> |---|---|
+> | Compliance, *"closing valuation equal to `qty_on_hand × current_avg` **within the documented rounding tolerance**"* | Defines the valuation as a recomputation **and** admits a tolerance. [NON_NEGOTIABLES §4](../NON_NEGOTIABLES.md) forbids a tolerance in an invariant check and is LEVEL 0, so this clause cannot stand whatever this ADR says. |
+> | Compliance, *"Rounding differences between the sum of line-level COGS and a batch-level total are posted to the rounding account"* | Posits a second residual channel. Under a carried-value model a document total is the sum of its already-rounded stored lines, so no line-versus-total residual exists and this would authorise a rounding leg on an ordinary multi-line sale. |
+> | §The formula, *"`qty_on_hand + qty_received = 0` → not reachable"* | The reasoning assumes `qty_on_hand ≥ 0`, but the same table authorises negative stock. `−3 + 3 = 0` **is** reachable, and the formula then divides by zero. |
+>
+> This record's own §69 states the correct principle — *"the stock ledger and
+> the general ledger agree because they are recording the same stored number,
+> not because two algorithms happen to produce the same answer"* — which the
+> Compliance clause above contradicts. ADR-0015 resolves the contradiction in
+> favour of §69.
+>
+> Recorded here rather than left in a separate document because this is the
+> file a Wave 5 implementer will read.
+
+---
 
 ## Context
 

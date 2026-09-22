@@ -264,7 +264,15 @@ describe('Golden Scenario A (NON_NEGOTIABLES §3)', () => {
   const revenue = Money.multiply(sold, UnitCost.from('140'))
   const grossProfit = Money.subtract(revenue, cogs)
   const closingQuantity = Quantity.subtract(totalQuantity, sold)
-  const inventoryValue = Money.round(Money.multiply(closingQuantity, average))
+  /*
+   * The CARRIED value, not `closingQuantity × average` (ADR-0015 §7).
+   *
+   * This was the recomputation until the ruling, named `inventoryValue` and
+   * asserted as the inventory value. It passed only because 9533.3334 and
+   * 9533.3333 both present as 9,533.33 at 2 dp — the exact coincidence the
+   * ADR exists to stop relying on.
+   */
+  const inventoryValue = Money.subtract(totalValue, cogs)
 
   it('reproduces the hand-computed weighted average', () => {
     expect(UnitCost.serialize(average)).toBe('86.666667')

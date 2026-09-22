@@ -210,12 +210,32 @@ describe(`Golden Scenario ${scenarioA.id}: ${scenarioA.name}`, () => {
     it('posts the residual to the rounding account and still balances exactly', () => {
       expect(Money.serialize(rounding, 4)).toBe(sellOut.roundingAmount)
 
-      const debits = finalCogs
-      const credits = Money.add(valueAfter, rounding)
+      /*
+       * The journal is built from LINES and the two sides summed
+       * independently, rather than asserting `finalCogs === valueAfter +
+       * rounding` — which is just the definition of `rounding` rearranged,
+       * and would balance no matter what the line amounts were.
+       *
+       * Each line here is the amount a posting engine would actually write:
+       * the COGS debit is the stored cogs_amount, the inventory credit is the
+       * magnitude of the stored inventory_value_delta, and the rounding line
+       * is the stored rounding_amount. Summing those and comparing is a real
+       * check of Invariant 1.
+       */
+      const lines = [
+        { account: 'Cost of Goods Sold', debit: finalCogs, credit: Money.from('0') },
+        { account: 'Inventory', debit: Money.from('0'), credit: Money.abs(inventoryDelta) },
+        { account: 'Rounding', debit: Money.from('0'), credit: rounding },
+      ]
+
+      const debits = Money.sum(lines.map((l) => l.debit))
+      const credits = Money.sum(lines.map((l) => l.credit))
+
       expect(Money.serialize(debits, 4)).toBe(sellOut.journal.debits)
       expect(Money.serialize(credits, 4)).toBe(sellOut.journal.credits)
       // Invariant 1, at posting scale, with no tolerance.
       expect(Money.equals(debits, credits)).toBe(true)
+      expect(Money.isZero(Money.subtract(debits, credits))).toBe(true)
     })
   })
 
@@ -293,6 +313,85 @@ describe(`Golden Scenario ${scenarioA.id}: ${scenarioA.name}`, () => {
       expect(Money.serialize(splitValue, 4)).toBe(splitTransactions.tenSalesOf4.valueOnHandAfter)
       // The paths genuinely differ, so neither assertion above is vacuous.
       expect(Money.equals(splitValue, valueAfter)).toBe(false)
+    })
+  })
+
+  describe('the closure identity (ADR-0015 §9)', () => {
+    /*
+     * Where the path difference actually goes. It is not absorbed and not
+     * tolerated — it is carried forward and discharged in full at the flush.
+     *
+     * The GENERAL form is asserted, `Σ inventory_value_delta = 0`, because it
+     * holds for every movement type. The familiar corollary
+     * `Σ receipt_value = Σ outward_value − Σ rounding_amount` is asserted too,
+     * but it breaks on value-only adjustments, which have a delta and neither
+     * a receipt nor an outward movement.
+     */
+    function runLifecycle(saleSizes: readonly number[]) {
+      const deltas = [
+        receiptValue(opening.quantity, opening.unitCost!),
+        receiptValue(purchase.quantity, purchase.unitCost!),
+      ]
+      const receiptTotal = Money.sum(deltas)
+
+      let value = receiptTotal
+      let qty = quantityOnHand
+      let outwardTotal = Money.from('0')
+      let roundingTotal = Money.from('0')
+
+      for (const size of saleSizes) {
+        const q = Quantity.from(String(size))
+        const remaining = Quantity.subtract(qty, q)
+        const outward = Money.round(Money.multiply(q, average))
+        outwardTotal = Money.add(outwardTotal, outward)
+
+        if (Quantity.isZero(remaining)) {
+          // §5 flush: the inventory leg is the carried value, not the rate.
+          deltas.push(Money.negate(value))
+          roundingTotal = Money.add(roundingTotal, Money.subtract(outward, value))
+          value = Money.from('0')
+        } else {
+          deltas.push(Money.negate(outward))
+          value = Money.subtract(value, outward)
+        }
+        qty = remaining
+      }
+
+      return { deltas, receiptTotal, outwardTotal, roundingTotal, value, qty }
+    }
+
+    it.each([
+      ['one sale of 40 then the flush', [40, 110]],
+      ['ten sales of 4 then the flush', [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 110]],
+      ['a single sale of the whole 150', [150]],
+    ] as const)('closes to zero for %s', (_label, sizes) => {
+      const { deltas, receiptTotal, outwardTotal, roundingTotal, value, qty } = runLifecycle(sizes)
+
+      expect(Quantity.isZero(qty), 'the life cycle must end at zero stock').toBe(true)
+      expect(Money.isZero(value)).toBe(true)
+
+      // General identity — holds for every movement type.
+      expect(Money.serialize(Money.sum(deltas), 4)).toBe('0.0000')
+
+      // Corollary — the path difference is discharged through the rounding
+      // account, not absorbed. Different paths produce different totals on
+      // both sides, and both close to the same receipts.
+      expect(Money.equals(Money.subtract(outwardTotal, roundingTotal), receiptTotal)).toBe(true)
+    })
+
+    it('discharges a LARGER residual on the more fragmented path', () => {
+      // The 0.0003 path difference from A4 does not vanish — it shows up as a
+      // larger rounding-account posting at the flush, which is exactly what
+      // makes it visible and attributable rather than tolerated.
+      const one = runLifecycle([40, 110])
+      const ten = runLifecycle([4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 110])
+
+      expect(Money.serialize(one.roundingTotal, 4)).toBe('0.0001')
+      expect(Money.serialize(ten.roundingTotal, 4)).toBe('0.0004')
+      expect(Money.serialize(Money.subtract(ten.roundingTotal, one.roundingTotal), 4)).toBe(
+        '0.0003',
+      )
+      expect(Money.serialize(Money.subtract(ten.outwardTotal, one.outwardTotal), 4)).toBe('0.0003')
     })
   })
 })

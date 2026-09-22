@@ -126,7 +126,28 @@ Not `quantity_on_hand × current_avg + …`. The two are identical in exact arit
 
 `receipt_value` is the landed total actually debited to inventory — not `quantity × rounded unit cost`. Landed cost composition is ADR-0007's, unchanged.
 
-Outward movements do not move the average. ADR-0007's edge-case table — zero quantity on hand, negative stock, purchase return, sales return, transfer — is carried forward **verbatim and unchanged**, with `value_on_hand` maintained alongside quantity in each case.
+Outward movements do not move the average.
+
+### 4a. Edge cases, restated
+
+ADR-0007's edge-case table cannot be carried forward unchanged: one of its rows is **false** under authorised negative stock, and three are undefined once value is carried separately from quantity. Restated here in full, so no implementation improvises.
+
+`outward_value` is the driving amount for **every** outward movement. `cogs_amount` is the sale-specific case of it, and is the only one that debits Cost of Goods Sold — a purchase return, a write-off and a shrinkage adjustment are outward movements that are not COGS, and ADR-0007's table left them with no rule.
+
+| Situation | Rule |
+|---|---|
+| `quantity_on_hand = 0` on an inward movement | `average_cost = receipt_cost`, `value_on_hand = receipt_value`. No residual. |
+| **Zero crossing from negative** (`quantity_on_hand < 0`, `quantity_on_hand + quantity_received = 0`) | ADR-0007 declared this *"not reachable"*; that reasoning assumed `quantity_on_hand ≥ 0` and the same table authorises negative stock, so `−3 + 3 = 0` is reachable and §4's division would be by zero. **The movement is split at the zero boundary**: the portion that clears the negative is an inward flush — `value_on_hand → 0`, `rounding_amount = receipt_value_of_that_portion − |value_on_hand|` to the rounding account — and any remainder is then an ordinary receipt against zero quantity, taking `average_cost = receipt_cost`. The division never runs against a zero denominator. |
+| `quantity_on_hand < 0` (authorised negative stock) | `value_on_hand` is the **sum of deltas**, which will be negative. It is *not* `quantity × held average` — that is the recomputation §7 forbids. The held `average_cost` is what the negative quantity was issued at, and it is used for nothing until the balance is replenished. |
+| **Replenishing a negative balance** | §4's formula can yield a negative or absurd `average_cost` from legitimate inputs — value `+50`, quantity `−3`, receipt `1 @ 10` gives `60 / −2 = −30`. A negative `average_cost` is **forbidden**: the receipt is split at the zero boundary per the row above, so the average is always derived against a non-negative quantity. |
+| Outward movement | `average_cost` unchanged. `outward_value = −cogs_amount` for a sale; see the flush rule in §5 when it takes quantity to zero. |
+| Purchase return | An outward movement at the current average. `outward_value` is computed exactly as a sale's is, but the GL credit is inventory against **accounts payable**, not COGS. |
+| Write-off, shrinkage, expiry destruction | Outward movements at the current average. Same arithmetic; the GL debit is the loss account named by the posting rule. |
+| **Sales return, full** | Inward movement. `receipt_value` is **the original movement's `cogs_amount`, exactly** — not a recomputation. This is what makes the life-cycle closure identity in §9 hold. |
+| **Sales return, partial** | Inward movement per tranche: `receipt_value = round(quantity_returned × the original movement's unit_cost, 4)`. Tranches need not sum back to the original `cogs_amount`; any difference is discharged at the next flush to zero, not posted per return. |
+| Sales return, effect on the average | A return is an inward movement, so it **does** move the average — toward the historical rate it was issued at. ADR-0007 implied this and never said it. It is correct: the stock is genuinely back, at the cost it left at. |
+| Inter-location transfer | `outward_value = 0` and `receipt_value = 0` on both legs. The costing scope is the tenant, so a transfer moves quantity, not value, and does not touch the average. |
+| Value-only adjustment (`STOCK_ADJUSTED` with zero quantity) | Permitted. `inventory_value_delta` is the adjustment; `average_cost` is **re-derived** from the new carried value per §4, because leaving it stale would make subsequent COGS ignore the write-down and prevent a clean flush to zero. |
 
 ### 5. Residual allocation — one case, and it is explicit
 
@@ -149,7 +170,37 @@ Dr  Cost of Goods Sold                  9,533.3334
 
 Quantity reaches zero and value reaches zero **together**. The residual is visible, attributable and reportable — which is what ADR-0011 asks of the rounding account, and what a tolerance destroys.
 
-For every other movement, `rounding_amount = 0` and `inventory_value_delta = −cogs_amount` (outward) or `+receipt_value` (inward). Inter-location transfers are `0` on both legs: the costing scope is the tenant, so a transfer moves quantity, not value.
+For every other movement, `rounding_amount = 0` and `inventory_value_delta = −outward_value` (outward) or `+receipt_value` (inward). Inter-location transfers are `0` on both legs: the costing scope is the tenant, so a transfer moves quantity, not value.
+
+#### The residual is signed, and both signs occur
+
+`rounding_amount = cogs_amount − value_on_hand` is a signed quantity. The worked example above is the positive case, where the average rounded **up** and the final COGS slightly exceeds the value carried. When the average rounds **down** the residual is negative and the entry reverses:
+
+```
+POSITIVE residual — average rounded up (Scenario A)
+  Dr  Cost of Goods Sold            9,533.3334
+      Cr  Inventory                              9,533.3333
+      Cr  Rounding account                           0.0001
+
+NEGATIVE residual — average rounded down
+  Dr  Cost of Goods Sold            2,999.9997
+  Dr  Rounding account                  0.0003
+      Cr  Inventory                              3,000.0000
+```
+
+In both, inventory is credited **exactly** the carried value, quantity and value reach zero together, and debits equal credits at 4 dp. An implementer reading only the positive example would hardcode the credit direction, so both are written out.
+
+**Magnitude.** The flush residual is bounded by approximately `quantity × 5×10⁻⁷`, since the stored average is within half a unit of the sixth decimal place. That is Rs 0.0001 at 110 units and about Rs 0.55 at 1.1 million units. `numeric(19,4)` accommodates both; the point of stating it is that the residual is *small and bounded*, not *negligible and ignorable*.
+
+#### ADR-0007's second residual channel is struck
+
+ADR-0007's Compliance section says:
+
+> Rounding differences between the sum of line-level COGS and a batch-level total are posted to the designated rounding account
+
+**That channel does not exist under this ADR and is superseded.** A document total is the sum of its already-rounded stored line amounts, so it equals the sum of its parts by construction — there is no line-versus-total difference to post. Left standing, it would authorise a rounding leg on an ordinary multi-line sale, which would contradict this section's opening claim that a residual arises in exactly one place.
+
+The flush at zero quantity is the **only** residual channel in the system.
 
 ### 6. Exact balance at posting scale
 
@@ -165,7 +216,26 @@ The kernel itself uses `quantity × unit_cost` for exactly one thing: computing 
 
 ### 8. Reversal
 
-A reversal **copies the three stored amounts and negates them**. It never recomputes. Reversing the flush above restores `value_on_hand = 9,533.3333`, `quantity_on_hand = 110`, the held average, and debits the rounding account back by 0.0001. Invariant 6 — a reversal neutralises the original exactly — holds by construction rather than by arithmetic agreement.
+A reversal **copies the stored amounts and negates them**. It never recomputes `cogs_amount`, `inventory_value_delta` or `rounding_amount`, and it posts into an **open** period — never back-dated into a closed one (rule 3, ADR-0012), including when the original was a flush.
+
+Negation restores `value_on_hand` and `quantity_on_hand` exactly, because both are running totals of deltas. **It does not restore `average_cost`, and this ADR does not claim that it does.**
+
+`average_cost` is a **level**, not a delta. Negating a delta cannot restore a level, and an earlier draft of this section asserted otherwise. Two cases, decided:
+
+| Reversing | Rule for `average_cost` |
+|---|---|
+| An **outward** movement | Unchanged. Outward movements never moved it, so nothing has to be restored. |
+| An **inward** movement | **Re-derived** from the carried value per §4, treating the reversal as a negative receipt. It is NOT restored to the prior rate. |
+
+The second case deserves its reasoning stated, because it is a genuine limitation rather than a preference.
+
+A receipt that moved the average from 80.000000 to 86.666667 cannot be undone by negating deltas — the information needed to reconstruct 80.000000 is not in the delta. Re-deriving from the carried value is the only option that keeps the average consistent with the value actually on hand, and it is what the formula in §4 does anyway.
+
+**With intervening transactions it does not return to the prior rate at all**, and it should not. If a receipt is followed by three more receipts and two issues before it is reversed, the average after the reversal reflects the stock that is genuinely there — not the rate that held at some earlier moment. Re-deriving is correct; restoring would be a fiction that would then disagree with `value_on_hand`.
+
+What Invariant 6 requires is that the reversal neutralises the original's **financial impact** — the GL, the subledger value, and the stock quantity. Those are restored exactly, by negation. The costing *rate* going forward is a consequence of what remains on hand, and a reversal legitimately changes it. Anyone expecting the average to rewind is expecting the ledger to forget the transactions in between.
+
+A reversal that would drive `quantity_on_hand` to zero triggers the flush rule in §5 like any other movement.
 
 ### 9. Ten transactions are not one transaction ten times larger
 
@@ -181,26 +251,84 @@ Each of the ten roundings is independently correct: every movement's `cogs_amoun
 
 **In both cases `value_on_hand` equals the inventory GL balance exactly**, because both subtract the same stored deltas. Invariant 10 holds either way. What differs is a path-dependent total, and that is a property of transaction-level rounding, not an error to be engineered away. Anyone tempted to make the two paths agree is proposing to round somewhere other than boundary 2.
 
+#### Bound, and where the difference goes
+
+Two questions follow immediately — how large can it get, and where does it end up — and an assertion is not an answer to either.
+
+**Bound.** `|Σ outward_value − exact| ≤ 0.00005 × movements + 5×10⁻⁷ × units`. At 100,000 movements and ten million units a year that is under Rs 10.
+
+**Closure.** The path difference is not absorbed and not tolerated. It is carried forward and discharged in full at the flush. The general identity, over any life cycle that ends at zero quantity:
+
+```
+Σ inventory_value_delta = 0        exactly, for a costing scope at zero stock
+```
+
+Stated this way it covers every movement type, because `inventory_value_delta` is defined for all of them. The familiar form is a corollary:
+
+```
+Σ receipt_value = Σ outward_value − Σ rounding_amount
+```
+
+Verified on both A4 paths: one sale of 40 then the flush gives `Σ outward_value = 13,000.0001` and `Σ rounding = 0.0001`; ten sales of 4 then the flush gives `13,000.0004` and `0.0004`. Both close to exactly `13,000.0000` — the receipts.
+
+**Assumptions and sign conventions**, because the corollary is easy to misapply:
+
+| | |
+|---|---|
+| Sign | `inventory_value_delta` is signed: positive inward, negative outward. `receipt_value`, `outward_value` and `cogs_amount` are unsigned magnitudes. `rounding_amount` is **signed** (§5). |
+| `outward_value`, not `cogs_amount` | A purchase return, a write-off and a shrinkage adjustment are outward movements that are not COGS. Writing the corollary with `cogs_amount` makes it false the first time stock is written off. |
+| Opening inventory | An inward movement like any other, with `receipt_value` the opening valuation. It is not a special term. |
+| Sales returns | Inward, with `receipt_value` the original `cogs_amount` (§4a). The return and the original sale therefore cancel on opposite sides, which is why the full-return rule has to be *exactly* the original amount rather than a recomputation. |
+| Purchase returns | Outward, contributing to `Σ outward_value`. |
+| Transfers | Contribute `0` to both sides. They do not appear. |
+| **Value-only adjustments** | **Break the corollary.** A write-down has an `inventory_value_delta` with no receipt and no outward movement, so `Σ receipt_value = Σ outward_value − Σ rounding_amount` no longer holds. The general identity `Σ inventory_value_delta = 0` still does. Use the general form wherever adjustments are possible, which is everywhere in production. |
+| Scope | Per costing scope — per `(tenant_id, product_id)` — and only once quantity has actually reached zero. A scope with stock on hand has `Σ inventory_value_delta = value_on_hand`, not zero. |
+
 ---
 
 ## What this supersedes, precisely
 
+Provisions are cited by section rather than by line number. ADR-0007 now carries a conflict notice at its head, which shifts every line below it — and a supersession table whose anchors move is worse than one with no anchors.
+
 | ADR-0007 provision | Disposition |
 |---|---|
-| §The formula (line 22) — numerator `qty_on_hand × current_avg` | **Superseded** by §4: numerator is `value_on_hand` |
-| §The formula — edge-case table | **Carried forward unchanged**, extended to maintain `value_on_hand` |
+| §The formula — numerator `qty_on_hand × current_avg` | **Superseded** by §4: the numerator is `value_on_hand` |
+| §The formula — the edge-case table | **Superseded** by §4a, not carried forward. One row (`qty_on_hand + qty_received = 0` → *"not reachable"*) is **false** under the authorised negative stock the same table permits, and would divide by zero. Three more were undefined once value is carried separately from quantity |
 | §Costing scope — tenant, not location | **Carried forward unchanged** |
-| §COGS at the outward movement, stored on the row, immutable | **Carried forward unchanged** |
-| §Precision and rounding | **Carried forward**, with the three boundaries named explicitly in §3 |
-| §Worked reference (line 97) — `Stock value = 110 × 86.666667` | **Superseded** by §7. The presented figure Rs 9,533.33 is unchanged |
-| Compliance (line 155) — `closing valuation equal to qty_on_hand × current_avg` | **Superseded** by §7 |
-| Compliance (line 155) — *"within the documented rounding tolerance"* | **Struck.** Conflicts with NON_NEGOTIABLES §4, which is LEVEL 0 |
-| Compliance (line 156) — reports read `cogs_amount` or the GL, never a recomputation | **Carried forward and strengthened** |
-| Everything in Consequences and Alternatives | **Carried forward unchanged** |
+| §COGS at the outward movement, stored on the row, immutable | **Carried forward unchanged.** `cogs_amount` keeps its definition exactly; §4a adds `outward_value` as the general case for outward movements that are not sales |
+| §Precision and rounding — scales | **Carried forward unchanged** |
+| §Precision and rounding — *"Rounding differences between the sum of line-level COGS and a batch-level total are posted to the rounding account"* | **Struck** (§5). A second residual channel that cannot exist under a carried value: a document total is the sum of its already-rounded stored lines. Left standing it would authorise a rounding leg on an ordinary multi-line sale |
+| §Worked reference — `Stock value = 110 × 86.666667` | **Superseded** by §7. The presented figure Rs 9,533.33 is unchanged |
+| Compliance — `closing valuation equal to qty_on_hand × current_avg` | **Superseded** by §7 |
+| Compliance — *"within the documented rounding tolerance"* | **Struck.** Conflicts with NON_NEGOTIABLES §4, which is LEVEL 0, so it could not stand whatever ADR-0007 said |
+| Compliance — reports read `cogs_amount` or the GL, never a recomputation | **Carried forward and strengthened** (§7, and the average no longer leaves the kernel) |
+| Consequences — *"Repeated receipt/issue cycles accumulate a residual"* | **Restated.** The average still accumulates rounding; the carried value does not, and cannot drift from the GL at all. The Sev-2 escalation attached to it is carried forward unchanged |
+| Everything else in Consequences and Alternatives | **Carried forward unchanged** |
 
 **[NON_NEGOTIABLES.md](../NON_NEGOTIABLES.md) is not changed.** Invariant 10 stands as written — exact, no tolerance. Golden Scenario A's published figures stand: `inventory value = Rs 9,533.33` is what both the carried value (9,533.3333) and the superseded recomputation (9,533.3334) present as at 2 dp.
 
-One point needs the Product Owner's and Architecture Guardian's confirmation when approving this ADR. Rule 16's expansion writes the average's numerator as `qty_on_hand × current_avg`; §4 substitutes `value_on_hand`. In exact arithmetic these are the same quantity — *the value on hand* — and rules 6, 10 and 11 decide which **representation** of it is authoritative: the ledger's stored total, not the product of two rounded numbers. This ADR treats that as an implementation refinement consistent with LEVEL 0 rather than an amendment to it. No published figure in §3 changes under either reading.
+### This requires a LEVEL 0 amendment, and it is not a refinement
+
+An earlier draft of this ADR claimed that substituting `value_on_hand` for `qty_on_hand × current_avg` in rule 16 was "an implementation refinement consistent with LEVEL 0 rather than an amendment to it." **That framing was wrong and is withdrawn.**
+
+The two expressions are equal in exact arithmetic and **not equal in stored arithmetic**, because `current_avg` has already been rounded to 6 dp. They can produce different stored averages, different COGS and different published figures. That is a change to an operative formula printed in a LEVEL 0 document.
+
+It is also broken operationally. `NON_NEGOTIABLES.md` is loaded into the context of every coding agent; this ADR is not. A Wave 5 agent reads rule 16, implements `qty_on_hand × current_avg`, and is **correct to do so** — or implements this ADR and is told by §4 of the constitution that it has found a violation. Either way the contradiction surfaces as a blocked ticket on the first day of Wave 5.
+
+**The amendment.** Rule 16's formula block in [NON_NEGOTIABLES.md](../NON_NEGOTIABLES.md) §2 becomes:
+
+```
+new_avg = round( (value_on_hand + receipt_value)
+                 / (quantity_on_hand + quantity_received), 6 )
+```
+
+with the sentence:
+
+> `value_on_hand` is the carried value of the stock ledger — the sum of the stored value amounts on its movement rows — never `quantity_on_hand × current_avg`. The inventory valuation **is** that carried value, and is never reconstructed from quantity and a rounded average (ADR-0015).
+
+**Two facts that support the amendment but do not excuse skipping it.** NON_NEGOTIABLES §3's own Golden Scenario A already computes the numerator as `((100×80)+(50×100))` — a sum of values, not a quantity times a rounded average — so §2 and §3 of the constitution already disagree in form, and this aligns them. And no published figure in §3 changes.
+
+**Approval required, and it is not satisfied by this document's header.** LEVEL 0 requires the Product Owner, the Architecture Guardian and the Accounting Guardian, recorded as an ADR. Listing those three as Deciders is a statement of who must sign, not evidence that any of them has approved this text. The amendment is applied to NON_NEGOTIABLES only after explicit approval of the final wording, and this ADR stays `Proposed` — with Wave 5 blocked — until then.
 
 ---
 
@@ -241,11 +369,34 @@ One point needs the Product Owner's and Architecture Guardian's confirmation whe
 ## Compliance
 
 - **Schema:** `stock_balances.value_on_hand numeric(19,4) NOT NULL`, `stock_movements.inventory_value_delta numeric(19,4) NOT NULL`, `stock_movements.rounding_amount numeric(19,4) NOT NULL DEFAULT 0`. All covered by the immutability trigger (ADR-0006).
-- **Schema:** `CHECK ((quantity_on_hand = 0) = (value_on_hand = 0))` on `stock_balances`. This is what makes §5's flush non-optional rather than a convention a kernel might forget.
+- **Quantity and value reach zero together — enforcement is DEFERRED, and deliberately so.**
+
+  The obvious control is `CHECK ((quantity_on_hand = 0) = (value_on_hand = 0))` on `stock_balances`. It cannot be written today, for three reasons, and shipping a bullet that does not compile would be worse than admitting that.
+
+  1. The columns do not exist under those names. ADR-0008 defines `stock_balances(tenant_id, product_id, location_id, qty, avg_cost)`.
+  2. If the row stays **per location**, the constraint and §4a's zero-value transfer are mutually unsatisfiable: transfer all stock out of location A and `qty = 0` while the tenant-scoped value is non-zero. The constraint would fire on a legitimate transfer.
+  3. If value moves to a **tenant-scope** row — the likely resolution in the Open section — the condition spans two rows and cannot be a row-level `CHECK` at all.
+
+  So the enforcement is specified now and sited once ADR-0008 rules on the row shape:
+
+  | Row shape | Control |
+  |---|---|
+  | Value and quantity on one row | `CHECK ((quantity_on_hand = 0) = (value_on_hand = 0))`, with the transfer case resolved by keeping value tenant-scoped |
+  | Value on a separate tenant-scope row | A deferrable constraint trigger at transaction end, plus the reconciliation job below |
+
+  In **both** shapes the kernel asserts the invariant before it writes, and the reconciliation job asserts it after. Those two are unconditional and do not wait on ADR-0008. The database-level control is the third layer, and it is the one that is deferred — not the guarantee.
 - **FinancialInvariantSuite Invariant 10:** `Σ stock_movements.inventory_value_delta` per tenant **equals** the inventory control account GL balance. Exact equality, **no tolerance parameter**. A tolerance argument added to this assertion fails review (NON_NEGOTIABLES §4).
 - **FinancialInvariantSuite Invariant 10 (second form):** `stock_balances.value_on_hand` equals `Σ inventory_value_delta` for its costing scope.
 - **FinancialInvariantSuite Invariant 1:** every journal entry including a rounding leg balances exactly at 4 dp.
-- **Lint rule:** ADR-0007's existing "valuation arithmetic only in `packages/inventory-kernel`" rule is extended to name the pattern — a quantity multiplied by an average cost outside the kernel fails the build, in `packages/reporting`, `modules/*` and `apps/*` alike.
+- **The average does not leave the kernel.** This is the primary control, and it is stronger than any rule about multiplication: `average_cost` is not exposed by the inventory kernel's public API and is not readable by `packages/reporting`, `modules/*` or `apps/*`. The forbidden recomputation is only reachable if the average escapes, so closing the read closes the whole class. Enforced by `dependency-cruiser` on the module graph and by the kernel's export surface.
+
+- **Lint rule, with a named exemption.** ADR-0007's "valuation arithmetic only in `packages/inventory-kernel`" rule is extended to the specific pattern: a quantity multiplied by an average cost outside the kernel fails the build.
+
+  Two things about it have to be stated, or the first engineer who hits it will weaken it.
+
+  **Mechanism.** `Money.multiply(Quantity, UnitCost)` is a method call, not an operator, so this needs type-aware `typescript-eslint` over the branded types — which already make `Quantity` and `UnitCost` non-interchangeable. A syntactic rule cannot see it.
+
+  **Exemption.** `tests/accounting/**` and `packages/validation/src/*.test.ts` are exempt, because **pinning the forbidden figure requires computing it**. A rule that forbade its own counter-example would have the pin deleted within a week, which is precisely how the recomputation would creep back. The exemption is narrow, it is test-only, and the golden suite is where the forbidden figure is asserted to *differ* from the valuation.
 - **Golden scenario:** Scenario A asserts `value_on_hand` and the GL balance are equal at storage scale, and pins `quantity_on_hand × average_cost` as the **forbidden** figure so the recomputation cannot creep back in as an expectation.
 - **Golden scenario A2 (sell-out):** quantity and value both reach zero, the rounding leg is Rs 0.0001, and debits equal credits exactly.
 - **Golden scenario A3 (×10):** the carried value equals the GL exactly at ten times the quantity, while the recomputation is off by 0.0005 — the case that proves a tolerance cannot be sized.
