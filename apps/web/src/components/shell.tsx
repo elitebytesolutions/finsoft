@@ -6,11 +6,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { NavLink, useLocation, useNavigate } from '@/lib/router'
 import {
-  Activity, AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, BadgeCheck, Bell, BookOpen, BookUser, Boxes, CalendarCheck, CalendarDays, ChartNoAxesCombined,
-  Check, ChevronDown, ChevronRight, CircleHelp, Mail, Settings, ChevronsLeft, CircleDollarSign, ClipboardCheck, ClipboardList, ClipboardPlus, Clock3, ContactRound, Download,
-  Eye, FileChartColumn, FilePlus2, FileText, Filter, HandCoins, History, Landmark, LayoutDashboard, LockKeyhole, Menu, PackageCheck, Pill, Plus, Printer,
-  ReceiptText, ScrollText, Search, Settings2, ShieldCheck, ShoppingBag, ShoppingCart, Sparkles, TableProperties, Truck,
-  TrendingUp, Users, WalletCards, Navigation, ArrowLeftRight, Banknote, Barcode, BellRing, Building2, ChartPie, Database, FolderTree, Grid2x2, Layers, ListChecks, MapPin, PackageSearch, Percent, Scale, ShieldAlert, Store, Tag, Target, UserCog, UsersRound, Wallet, Warehouse, Coins, Ellipsis, type LucideIcon,
+  Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, BadgeCheck, Bell, BookOpen, BookUser, Boxes, CalendarCheck, CalendarDays, ChartNoAxesCombined, ChevronDown, ChevronRight, CircleHelp, Mail, Settings, ChevronsLeft, ClipboardCheck, ClipboardList, ClipboardPlus, Clock3, ContactRound, Download, Eye, FileChartColumn, FilePlus2, FileText, HandCoins, History, Landmark, LayoutDashboard, Menu, PackageCheck, Pill, Plus, Printer, ReceiptText, ScrollText, Search, Settings2, ShieldCheck, ShoppingBag, ShoppingCart, TableProperties, Truck, TrendingUp, Users, WalletCards, Navigation, ArrowLeftRight, Banknote, Barcode, BellRing, Building2, ChartPie, Database, FolderTree, Grid2x2, Layers, ListChecks, MapPin, PackageSearch, Percent, Scale, ShieldAlert, Store, Tag, Target, UserCog, UsersRound, Wallet, Warehouse, Coins, Ellipsis, type LucideIcon
 } from 'lucide-react'
 import { nav, roles, type NavChild, type NavItem } from '@/mocks/api'
 import { Badge } from '@finsoft/ui'
