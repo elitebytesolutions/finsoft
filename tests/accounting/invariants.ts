@@ -87,8 +87,9 @@ export const INVARIANTS: readonly Invariant[] = [
     statement: 'Inventory ledger valuation reconciles to the inventory GL account balance',
     status: 'pending',
     note:
-      'Needs the inventory ledger and the inventory GL account. Wave 5. See the open ADR-0007 ' +
-      'ruling: Golden Scenario A produces a Rs 0.0001 residual and §4 forbids tolerances.',
+      'Needs the inventory ledger and the inventory GL account. Wave 5. Ruled on by ADR-0015: ' +
+      'valuation is the carried value, not quantity x average, so reconciliation is exact and no ' +
+      'tolerance is involved. Golden Scenario A asserts the identity today.',
   },
 ]
 

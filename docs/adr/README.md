@@ -35,7 +35,7 @@ Proposed → Accepted → Superseded by ADR-00NN
 | [0004](ADR-0004-postgresql-row-level-security.md) | PostgreSQL Row Level Security as the isolation backstop | Accepted | RLS enabled and forced on every tenant-owned table, with the app role subject to it, beneath three application layers. |
 | [0005](ADR-0005-central-double-entry-posting-engine.md) | One central double-entry posting engine | Accepted | Modules raise typed financial events; `packages/accounting-kernel` is the only code that builds journal lines. |
 | [0006](ADR-0006-immutable-posted-transactions.md) | Immutable posted transactions, correction by reversal | Accepted | Posted rows are frozen; mistakes are corrected by reversal plus re-entry, never by `UPDATE` or `DELETE`. |
-| [0007](ADR-0007-weighted-average-costing.md) | Weighted average as the single costing algorithm | Accepted | One valuation method system-wide, COGS fixed at the outward movement and stored on the movement row. |
+| [0007](ADR-0007-weighted-average-costing.md) | Weighted average as the single costing algorithm | Superseded by [0015](ADR-0015-inventory-valuation-is-carried-value.md) | One valuation method system-wide, COGS fixed at the outward movement and stored on the movement row. |
 | [0008](ADR-0008-inventory-movement-ledger-and-fefo.md) | Inventory movement ledger and FEFO batch selection | Accepted | The movement ledger is the sole source of quantity; all writes go through the inventory kernel; FEFO decides which batch. |
 | [0009](ADR-0009-jwt-access-and-rotating-refresh-tokens.md) | Short-lived JWT access tokens with rotating refresh tokens | Accepted | Signed `tenant_id` claim, refresh rotation with reuse detection, server-side revocation, MFA for privileged roles. |
 | [0010](ADR-0010-transactional-outbox.md) | Transactional outbox for all external side effects | Accepted | Emails, PDFs, FBR pushes, webhooks and cache invalidation are rows written in the posting transaction and dispatched afterwards. |
@@ -43,6 +43,7 @@ Proposed → Accepted → Superseded by ADR-00NN
 | [0012](ADR-0012-fiscal-period-locking.md) | Fiscal period locking with no system bypass | Accepted | `OPEN → CLOSED → LOCKED`, enforced at the posting engine and the database, with no exemption for jobs, imports or scripts. |
 | [0013](ADR-0013-kysely-and-sql-migrations.md) | Kysely as the query builder, with hand-written SQL migrations | Proposed | A typed query builder with no schema opinion; migrations stay reviewable SQL, so the database keeps ownership of the compliance surface. |
 | [0014](ADR-0014-decimal-js.md) | decimal.js as the single decimal implementation | Proposed | Closes the library choice ADR-0011 deferred; a frozen cloned constructor, half-up away from zero, matching PostgreSQL. |
+| [0015](ADR-0015-inventory-valuation-is-carried-value.md) | Inventory valuation is the carried value, not a recomputation | Proposed | Supersedes ADR-0007. The subledger valuation is the sum of stored movement amounts, never quantity x average; the one residual case posts to the rounding account. |
 
 ---
 

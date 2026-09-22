@@ -1,6 +1,6 @@
 # ADR-0007: Weighted average as the single costing algorithm
 
-**Status:** Accepted
+**Status:** Superseded by [ADR-0015](ADR-0015-inventory-valuation-is-carried-value.md)
 **Date:** 2026-09-22
 **Deciders:** Product Owner, Architecture Guardian, Accounting Guardian
 **Authority:** LEVEL 1 — reversing this requires a superseding ADR

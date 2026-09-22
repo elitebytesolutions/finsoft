@@ -279,15 +279,34 @@ describe('Golden Scenario A (NON_NEGOTIABLES §3)', () => {
     expect(Quantity.serialize(closingQuantity, 0)).toBe('110')
   })
 
-  it('records the Invariant 10 residual that ADR-0007 must rule on', () => {
-    // The inventory ledger valuation and the inventory GL balance differ by
-    // Rs 0.0001 at 4dp. Both present as Rs 9,533.33, so the golden figures
-    // stand — but Invariant 10 asserts exact reconciliation and §4 forbids
-    // tolerances. Asserted here so the gap cannot drift unnoticed while the
-    // ruling is outstanding.
+  it('reconciles the carried value to the GL exactly (ADR-0015)', () => {
+    /*
+     * This test used to assert a Rs 0.0001 residual as an open question. The
+     * question has been ruled on: ADR-0015 establishes that the inventory
+     * valuation is the CARRIED VALUE, not `quantity × average`.
+     *
+     * Both sides below subtract the same stored COGS amount, so they agree by
+     * construction rather than by two algorithms happening to land on the
+     * same number. Invariant 10 is exact, and no tolerance is needed.
+     */
+    const carriedValue = Money.subtract(totalValue, cogs)
     const glBalance = Money.subtract(totalValue, cogs)
-    expect(Money.serialize(inventoryValue)).toBe('9533.3334')
+
+    expect(Money.serialize(carriedValue)).toBe('9533.3333')
     expect(Money.serialize(glBalance)).toBe('9533.3333')
-    expect(Money.serialize(Money.subtract(inventoryValue, glBalance))).toBe('0.0001')
+    expect(Money.serialize(Money.subtract(carriedValue, glBalance))).toBe('0.0000')
+  })
+
+  it('pins quantity × average as the forbidden recomputation', () => {
+    // Rule 16 / ADR-0015 §7. Kept so the figure cannot come back as an
+    // expectation. It differs from the carried value by 0.0001 here and by
+    // 0.0005 at ten times the quantity — which is why no tolerance can cover
+    // it. The full argument lives in tests/accounting/golden/scenario-a.json.
+    const recomputed = Money.round(Money.multiply(closingQuantity, average))
+    const carriedValue = Money.subtract(totalValue, cogs)
+
+    expect(Money.serialize(recomputed)).toBe('9533.3334')
+    expect(Money.serialize(Money.subtract(recomputed, carriedValue))).toBe('0.0001')
+    expect(Money.equals(recomputed, carriedValue)).toBe(false)
   })
 })
