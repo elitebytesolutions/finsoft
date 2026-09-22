@@ -1,0 +1,171 @@
+name: CI
+
+# Feature work is checked on the pull request; main and develop are checked
+# again after merge, because a merge can break what neither branch broke
+# alone. Splitting it this way also avoids running twice on every push to a
+# branch that has a PR open.
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+
+# Least privilege. No job here writes to the repository, publishes a package
+# or comments on a PR, so nothing needs more than read.
+permissions:
+  contents: read
+
+# A superseded run is wasted minutes and a confusing status. The last push
+# to a ref is the one whose result matters.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ------------------------------------------------------------------ #
+  # Everything that needs no database. Runs first and fails fast: a lint
+  # error should not wait on a PostgreSQL container starting.
+  # ------------------------------------------------------------------ #
+  static:
+    name: static analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # From .nvmrc, so CI and developers cannot drift. The version is
+          # load-bearing: packages/* run under Node's native type stripping.
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: typecheck
+        run: npm run typecheck
+
+      - name: lint
+        run: npm run lint
+
+      - name: format
+        run: npm run format:check
+
+      - name: module boundaries
+        run: npm run depcruise
+
+      # Proves every package entrypoint LOADS under plain node with no
+      # transpiler. Vitest transpiles, so a suite can be green against a
+      # module the runtime cannot load — which has happened here before.
+      - name: runtime smoke
+        run: npm run smoke
+
+      # Migration files against their recorded checksums. Offline: it reads
+      # the files and the manifest, not the database.
+      - name: migration ledger
+        run: npm run db:migrate:verify
+
+      # The pre-push hook refuses direct pushes to main and develop. If it
+      # stops being installable, that protection quietly disappears.
+      - name: git hooks
+        run: npm run hooks:verify
+
+  # ------------------------------------------------------------------ #
+  # The real stack. Not a mocked database: the RLS and role tests assert
+  # properties only PostgreSQL can demonstrate, and a mock would agree
+  # with whatever it was told.
+  # ------------------------------------------------------------------ #
+  test:
+    name: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      # `.env.example` verbatim, which is deliberate twice over.
+      #
+      # Its passwords are named `local-dev-only-*` and this cluster is
+      # ephemeral, bound to the runner and destroyed with it — it is never
+      # network-reachable, so there is no secret here to rotate.
+      #
+      # And using the example unmodified means CI exercises the exact path a
+      # developer follows. If `.env.example` drifts and no longer produces a
+      # working system, this job is where that is discovered, rather than by
+      # the next person who clones the repository.
+      - name: environment
+        run: cp .env.example .env
+
+      # INFRASTRUCTURE.md:257 — "docker compose down -v && docker compose up
+      # must produce a working system from scratch; if it does not, that is a
+      # Wave 0 bug." A CI runner is always from scratch, so this step IS that
+      # criterion, run on every pull request.
+      #
+      # --wait blocks until every healthcheck passes, so a test never races a
+      # database that is still starting.
+      - name: data plane
+        run: docker compose up -d --wait
+
+      # Roles, privileges, encoding, locale provider and isolation level,
+      # asserted against the running cluster. This is what proves RLS is a
+      # control rather than decoration — finsoft_app must have neither
+      # BYPASSRLS nor SUPERUSER.
+      - name: data plane assertions
+        run: npm run db:verify
+
+      - name: migrate
+        run: npm run db:migrate
+
+      - name: migrate test cluster
+        run: npm run db:migrate:test
+
+      # Per-workspace suites, then the gate: smoke, schema, security,
+      # accounting. `npm test` is the whole thing — running vitest directly
+      # at the root is NOT equivalent, because it globs build output and the
+      # prototype directory that the workspace configs exclude.
+      - name: test
+        run: npm test
+
+      - name: compose logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail 200
+
+      - name: tear down
+        if: always()
+        run: docker compose down -v
+
+  # ------------------------------------------------------------------ #
+  # Advisory, and deliberately not a gate — see the note below.
+  # ------------------------------------------------------------------ #
+  audit:
+    name: dependency audit (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # There is one known high advisory (postcss, reached through next) with
+    # no accept-or-upgrade ruling yet. Making this block merges today would
+    # mean every pull request is red for a reason unrelated to its change,
+    # and a permanently-red check is one nobody reads.
+    #
+    # This is a temporary posture, not a decision. Once that advisory is
+    # ruled on, remove continue-on-error so the check has teeth.
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: audit
+        run: npm audit --audit-level=high
