@@ -19,6 +19,7 @@ import type { Server } from 'node:http'
 import { loadConfig, type WorkerConfig } from './config.ts'
 import { startHealthServer } from './health.ts'
 import { HEARTBEAT_JOB, handleHeartbeat, type HeartbeatPayload } from './jobs/heartbeat.ts'
+import { OutageTracker } from './outage.ts'
 import { QUEUES, createQueue, createWorker } from './queue.ts'
 import { withJobContext } from './runner.ts'
 
@@ -41,10 +42,17 @@ async function bootstrap(): Promise<void> {
    * BullMQ surfaces connection-level problems here. Without a listener an
    * 'error' event on an EventEmitter terminates the process, so a transient
    * Redis blip would crash a worker that should have waited it out.
+   *
+   * De-duplicated, because it fires on every reconnect attempt. Running the
+   * image against an unreachable Redis produced two identical lines a second
+   * — about 172,000 a day — which describes the outage no better than one
+   * line and buries everything else that happened during it.
    */
+  const queueOutage = new OutageTracker('worker queue connection failed', 'worker queue recovered')
   worker.on('error', (error) => {
-    logger.error({ err: error }, 'worker error')
+    queueOutage.recordFailure({ err: error })
   })
+  worker.on('ready', () => queueOutage.recordSuccess())
 
   worker.on('failed', (job, error) => {
     /*

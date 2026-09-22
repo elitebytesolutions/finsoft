@@ -4,6 +4,7 @@ import { getCorrelation, initLogger, resetLoggerForTests } from '@finsoft/observ
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleHeartbeat, type HeartbeatPayload } from './jobs/heartbeat.ts'
+import { OutageTracker } from './outage.ts'
 import type { Job } from './queue.ts'
 import { withJobContext } from './runner.ts'
 
@@ -146,5 +147,51 @@ describe('heartbeat handler', () => {
     )
 
     expect(lines.find((l) => l.msg === 'heartbeat')?.queueLatencyMs).toBeUndefined()
+  })
+})
+
+describe('outage de-duplication', () => {
+  /*
+   * Found by running the worker image against an unreachable Redis: BullMQ's
+   * error event fires on every reconnect attempt, and the first version
+   * logged all of them — two identical lines a second, about 172,000 a day.
+   * A repeating failure gets one line, not one per attempt.
+   */
+  it('logs the first failure and stays quiet for the rest', () => {
+    const outage = new OutageTracker('down', 'up')
+
+    for (let i = 0; i < 50; i += 1) outage.recordFailure({ attempt: i })
+
+    expect(lines.filter((l) => l.msg === 'down')).toHaveLength(1)
+    expect(outage.isFailing).toBe(true)
+  })
+
+  it('reports the shape of the outage on recovery', () => {
+    const outage = new OutageTracker('down', 'up')
+
+    outage.recordFailure({})
+    outage.recordFailure({})
+    outage.recordFailure({})
+    outage.recordSuccess()
+
+    const recovery = lines.find((l) => l.msg === 'up')
+    expect(recovery?.failedAttempts).toBe(3)
+    expect(Number(recovery?.outageMs)).toBeGreaterThanOrEqual(0)
+    expect(outage.isFailing).toBe(false)
+  })
+
+  it('says nothing on a success that follows no failure', () => {
+    new OutageTracker('down', 'up').recordSuccess()
+    expect(lines.filter((l) => l.msg === 'up')).toHaveLength(0)
+  })
+
+  it('logs again for a SECOND outage, rather than staying quiet forever', () => {
+    const outage = new OutageTracker('down', 'up')
+
+    outage.recordFailure({})
+    outage.recordSuccess()
+    outage.recordFailure({})
+
+    expect(lines.filter((l) => l.msg === 'down')).toHaveLength(2)
   })
 })

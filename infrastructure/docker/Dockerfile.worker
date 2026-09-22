@@ -1,0 +1,57 @@
+# syntax=docker/dockerfile:1
+
+# apps/worker — BullMQ consumer. See Dockerfile.api for why the whole
+# workspace is copied before `npm ci` rather than the manifests first.
+
+ARG NODE_VERSION=24.17.0
+
+# ---------------------------------------------------------------------------
+# deps
+#
+# There is no build stage. The worker is plain Node with no decorators and no
+# DI, so it runs directly under Node's native type stripping — its tsconfig
+# extends tsconfig.packages.json and inherits erasableSyntaxOnly, which is
+# what guarantees every construct in it can be erased rather than transformed.
+# apps/api deliberately does not, because NestJS needs emitDecoratorMetadata.
+# ---------------------------------------------------------------------------
+FROM node:${NODE_VERSION}-alpine AS deps
+WORKDIR /app
+
+COPY . .
+
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
+
+# ---------------------------------------------------------------------------
+# runtime
+# ---------------------------------------------------------------------------
+FROM node:${NODE_VERSION}-alpine AS runtime
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+# Signal handling matters more here than anywhere else in the system. On
+# SIGTERM the worker stops taking new jobs and waits for in-flight ones to
+# finish (main.ts). Without an init forwarding the signal to PID 1, that never
+# runs: the container is SIGKILLed mid-job instead. At-least-once delivery
+# means the job comes back — but redelivery is a safety net, not a routine.
+RUN apk add --no-cache dumb-init
+
+COPY --from=deps /app/node_modules node_modules
+COPY --from=deps /app/package.json /app/package-lock.json ./
+COPY --from=deps /app/apps/worker apps/worker
+COPY --from=deps /app/packages packages
+
+USER node
+
+# Probes only. The worker has no other HTTP surface.
+EXPOSE 3002
+
+# Liveness, not readiness — same reasoning as the API, and it bites harder
+# here: readiness goes false the moment SIGTERM arrives, so a readiness-based
+# container healthcheck would report the container unhealthy during every
+# normal graceful shutdown.
+HEALTHCHECK --interval=15s --timeout=3s --start-period=15s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:3002/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["node", "apps/worker/src/main.ts"]

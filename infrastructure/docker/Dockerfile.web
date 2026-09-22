@@ -1,0 +1,62 @@
+# syntax=docker/dockerfile:1
+
+# apps/web — Next.js. Same-origin with the API behind the reverse proxy,
+# which is what lets ADR-0009's SameSite=Strict refresh cookie work at all.
+#
+# See Dockerfile.api for why the whole workspace is copied before `npm ci`.
+
+ARG NODE_VERSION=24.17.0
+
+# ---------------------------------------------------------------------------
+# build
+# ---------------------------------------------------------------------------
+FROM node:${NODE_VERSION}-alpine AS build
+WORKDIR /app
+
+COPY . .
+
+RUN npm ci --ignore-scripts
+
+# Telemetry is off in a build container: it is an outbound network call from
+# a machine that should make none, and it would appear in build logs as an
+# unexplained connection.
+ENV NEXT_TELEMETRY_DISABLED=1
+
+RUN npm run build --workspace @finsoft/web
+
+# ---------------------------------------------------------------------------
+# runtime
+#
+# Standalone output only — see next.config.mjs. Next traces the files the
+# server actually needs into .next/standalone, including its own minimal
+# node_modules, so the workspace install never reaches production.
+# ---------------------------------------------------------------------------
+FROM node:${NODE_VERSION}-alpine AS runtime
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
+
+RUN apk add --no-cache dumb-init
+
+# The traced server, with the workspace layout preserved. outputFileTracingRoot
+# is the repository root, so standalone mirrors it: the entrypoint lands at
+# apps/web/server.js rather than at server.js.
+COPY --from=build --chown=node:node /app/apps/web/.next/standalone ./
+COPY --from=build --chown=node:node /app/apps/web/.next/static ./apps/web/.next/static
+COPY --from=build --chown=node:node /app/apps/web/public ./apps/web/public
+
+USER node
+
+EXPOSE 3000
+
+# Next serves this without an application route. The app's own health surface
+# is the API's; this only answers "is the server process up", which is what a
+# container healthcheck should ask.
+HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["node", "apps/web/server.js"]

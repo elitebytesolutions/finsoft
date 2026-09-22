@@ -153,6 +153,46 @@ jobs:
         run: docker compose down -v
 
   # ------------------------------------------------------------------ #
+  # The deployable artifacts.
+  #
+  # Added because nothing was building them. `npm test` and `npm run
+  # typecheck` both passed while `next build` failed on six pages for a
+  # real defect (useSearchParams outside a Suspense boundary) — a broken
+  # production build that no gate looked at, because no gate built.
+  #
+  # Builds all three images and does NOT push. Pushing needs a registry
+  # decision and somewhere to deploy to, neither of which exists yet; this
+  # proves the images can be produced, which is the part that can be true
+  # today.
+  # ------------------------------------------------------------------ #
+  images:
+    name: container images
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    strategy:
+      # One broken image should not hide the state of the other two.
+      fail-fast: false
+      matrix:
+        image: [api, worker, web]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: build ${{ matrix.image }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infrastructure/docker/Dockerfile.${{ matrix.image }}
+          push: false
+          # GitHub Actions cache, so an unchanged image is not rebuilt from
+          # scratch on every run.
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  # ------------------------------------------------------------------ #
   # Advisory, and deliberately not a gate — see the note below.
   # ------------------------------------------------------------------ #
   audit:

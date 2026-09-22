@@ -20,48 +20,9 @@
 
 import { createServer, type Server, type ServerResponse } from 'node:http'
 
-import { getLogger } from '@finsoft/observability'
+import { OutageTracker } from './outage.ts'
 
 export type ReadinessProbe = () => Promise<boolean>
-
-/*
- * A readiness probe runs every few seconds, forever. Logging every failed
- * probe turns a ten-minute Redis outage into a few hundred identical lines
- * that bury the one line explaining what else broke.
- *
- * So only TRANSITIONS are logged: the first failure, and the recovery. The
- * recovery line carries how long the outage lasted and how many probes failed,
- * which is the information the repeated lines would have carried anyway.
- */
-class OutageTracker {
-  private failingSince: number | undefined
-  private failures = 0
-
-  recordFailure(detail: string): void {
-    this.failures += 1
-
-    if (this.failingSince === undefined) {
-      this.failingSince = Date.now()
-      /*
-       * `detail` is bounded and sanitised by the caller and passes through the
-       * logger's redaction in any case, so a driver error's connection
-       * topology does not reach the log (ADR-0016).
-       */
-      getLogger().error({ detail }, 'worker not ready')
-    }
-  }
-
-  recordSuccess(): void {
-    if (this.failingSince !== undefined) {
-      getLogger().info(
-        { outageMs: Date.now() - this.failingSince, failedProbes: this.failures },
-        'worker ready again',
-      )
-      this.failingSince = undefined
-      this.failures = 0
-    }
-  }
-}
 
 export interface HealthServerOptions {
   readonly port: number
@@ -71,7 +32,7 @@ export interface HealthServerOptions {
 }
 
 export function startHealthServer(options: HealthServerOptions): Server {
-  const outage = new OutageTracker()
+  const outage = new OutageTracker('worker not ready', 'worker ready again')
   const startedAt = Date.now()
 
   const server = createServer((request, response) => {
@@ -98,7 +59,7 @@ export function startHealthServer(options: HealthServerOptions): Server {
             outage.recordSuccess()
             json(response, 200, { status: 'ready' })
           } else {
-            outage.recordFailure('redis probe returned not ready')
+            outage.recordFailure({ detail: 'redis probe returned not ready' })
             json(response, 503, { status: 'degraded' })
           }
         })
@@ -109,7 +70,7 @@ export function startHealthServer(options: HealthServerOptions): Server {
            * wrong place to publish which dependency is down and why — the
            * diagnosis goes to the log, keyed to the same moment (rule 20).
            */
-          outage.recordFailure(error instanceof Error ? error.message : 'probe threw')
+          outage.recordFailure({ err: error })
           json(response, 503, { status: 'degraded' })
         })
       return
