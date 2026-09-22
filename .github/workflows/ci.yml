@@ -1,12 +1,19 @@
 name: CI
 
-# Feature work is checked on the pull request; main and develop are checked
-# again after merge, because a merge can break what neither branch broke
-# alone. Splitting it this way also avoids running twice on every push to a
-# branch that has a PR open.
+# Every push to every branch, plus the pull request.
+#
+# An earlier version ran only on `pull_request` and on pushes to main and
+# develop, to avoid duplicate runs. That left the case this project actually
+# operates in with NO coverage: agents push feature branches and never merge,
+# so a branch with no PR open yet was checked by nothing. Verified by pushing
+# one and watching zero runs start.
+#
+# The pull_request trigger stays because it tests the MERGE result, which a
+# branch push cannot — a merge can break what neither side broke alone.
 on:
-  pull_request:
   push:
+    branches: ['**']
+  pull_request:
     branches: [main, develop]
 
 # Least privilege. No job here writes to the repository, publishes a package
@@ -16,8 +23,12 @@ permissions:
 
 # A superseded run is wasted minutes and a confusing status. The last push
 # to a ref is the one whose result matters.
+# Keyed on the HEAD BRANCH, not the ref, so the push run and the pull-request
+# run for the same branch share a group and the newer cancels the older.
+# Keying on github.ref would put them in different groups (refs/heads/x versus
+# refs/pull/N/merge) and run both.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event.pull_request.head.ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
