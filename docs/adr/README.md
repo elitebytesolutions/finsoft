@@ -16,6 +16,16 @@ An ADR records a decision that the codebase is built on: what was decided, why, 
 
 4. **ADRs are immutable once Accepted.** They are superseded, never edited. A decision that is wrong in hindsight stays on the record with `Status: Superseded by ADR-00NN` so the reasoning trail survives. Correcting typos or adding links is permitted; changing the decision, the rationale or the consequences is not.
 
+   **One further edit is permitted: a conflict notice.** When a defect is found in an Accepted ADR and its replacement is drafted but not yet Accepted, a notice may be added **at the head** of the Accepted record naming the defective provisions, the ADR that would replace it, and what is blocked meanwhile. This is permitted because the alternative is worse in both directions: marking it `Superseded` by a `Proposed` record would leave the decision with no ADR in force, and recording the defect only in the replacement leaves it invisible to the implementer, who opens the Accepted file. The notice annotates status only — it must not touch the decision, the rationale or the consequences, and the body below it stays exactly as accepted. It is removed when the supersession lands.
+
+   The lifecycle therefore has one more state than the diagram below shows:
+
+   ```
+   Accepted → Accepted (conflict notice, replacement pending) → Superseded by ADR-00NN
+   ```
+
+   An Accepted record carrying a notice is **still in force**. Implement it, with the notice's exclusions.
+
 ```
 Proposed → Accepted → Superseded by ADR-00NN
                     ↘ Deprecated (decision no longer applies, nothing replaces it)

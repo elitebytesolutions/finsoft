@@ -5,6 +5,26 @@
 **Deciders:** Product Owner, Architecture Guardian, Accounting Guardian
 **Authority:** LEVEL 1 — reversing this requires a superseding ADR
 
+---
+
+> ## ⚠ Conflict notice — two provisions are pending supersession
+>
+> **This ADR is still in force.** Implement it, with the two exclusions below. This notice annotates status only; the decision, rationale and consequences are untouched, per the lifecycle exception in [the ADR README](README.md).
+>
+> [ADR-0015](ADR-0015-inventory-valuation-is-carried-value.md) puts the **costing scope at the tenant**, while this record specifies `stock_balances(tenant_id, product_id, location_id, quantity, avg_cost)` — an average **per location**. As specified, either every location's `avg_cost` holds a duplicate of a tenant-level number that can drift between rows, or an inter-location transfer silently moves value. Adding `value_on_hand` inherits the ambiguity, and the locking discipline compounds it.
+>
+> | Provision | Status |
+> |---|---|
+> | `stock_balances` row shape (`avg_cost` per location) | **Pending** — do not build against it |
+> | §5 lock ordering | **Pending** — a tenant-scoped value row changes it; see ADR-0015's recorded ruling |
+> | Everything else — the movement ledger as the sole source of quantity, all writes through the inventory kernel, FEFO batch selection, the reconciliation job | **In force, unchanged** |
+>
+> **Replacement:** ADR-0016, decided by the Architecture Guardian, is a **Wave 5 entry gate**. Wave 5 cannot start until it is Accepted. ADR-0015 §Open records the Guardian's ruling on the row shape and on coarse-before-fine lock ordering for ADR-0016 to adopt.
+>
+> This notice is removed when ADR-0016 lands.
+
+---
+
 ## Context
 
 The legacy system kept quantity in a mutable column on the product record. Every module that moved stock updated it directly, under last-writer-wins semantics, with no record of the movement that caused the change. When the physical count disagreed with the system — which it did — there was nothing to reconcile against, because the number had no history.
