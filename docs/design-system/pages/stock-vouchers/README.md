@@ -50,6 +50,12 @@ History    "Previous Vouchers": Voucher No · Date · Type · Total Items · Tot
 Rate is the current weighted-average cost, read-only, so the value of what is being written off is
 visible before posting.
 
+**This multiplication is legitimate and must not be "corrected".** A write-off is an outward
+movement, and its value is `round(quantity x unit_cost, 4)` -- rounding boundary 2 in ADR-0015 §3.
+What ADR-0015 §7 forbids is valuing the stock that *remains* as `quantity_on_hand x average_cost`.
+Costing an outward movement at the average is the rule; recomputing the balance from it is the
+defect.
+
 ## 5. Actions
 
 | Action | Kind | Permission | Confirm | Result |

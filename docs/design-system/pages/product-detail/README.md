@@ -57,7 +57,9 @@ Batches sort FEFO by default — the order stock will actually be issued in.
 
 ## 6. Financial rules
 
-- On hand, value and average cost are **server figures** from the movement ledger. This page never
+- On hand, value and average cost are **server figures** from the movement ledger. Value is the carried
+  `value_on_hand`, never `on hand × average cost` (ADR-0015 §7); average cost is a rate shown for
+  information. This page never
   sums movements in the browser.
 - The batch table's total stock must equal the header's on-hand figure; a mismatch is rendered as an
   integrity error, not silently reconciled.

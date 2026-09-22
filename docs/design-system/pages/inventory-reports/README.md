@@ -35,7 +35,9 @@ Recent      Recently generated, with format chips
 
 ## 4. Standard columns
 
-Valuation: `SKU · Product Name · Class · Company · Warehouse · Qty · Unit Cost · Total Value`
+Valuation: `SKU · Product Name · Class · Company · Qty · Unit Cost · Total Value`
+
+**No `Warehouse` column on the valuation report.** Inventory value exists only at the tenant/product costing scope (ADR-0015, ADR-0018 §8), so a per-warehouse value cannot be produced without multiplying a warehouse quantity by an average cost — the recomputation ADR-0015 §7 forbids, and one that does not sum back to the tenant value. Warehouse **quantities** are available on the stock-overview and stock-as-of pages; warehouse **valuations** are not invented here.
 (the column set the prototype's report engine already defines).
 Every report adds, in its header: company, as-at date or range, warehouse and class filters,
 accounting method for valuation, and generated-at.

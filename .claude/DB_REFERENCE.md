@@ -27,7 +27,7 @@ Read these before copying any table below into a migration:
 | Stock views filtered with `HAVING SUM(...) > 0` | Correct for a **picker**, wrong for an **authoritative** view. A balance view that hides negatives makes a negative-stock exception report permanently empty (ADR-0017) |
 | `CHECK (discount_amount <= quantity * rate * discount_limit_pct / 100)` | A CHECK passes when its expression is NULL, and those columns are nullable — so it admitted any discount, including one that drives `cost_per_unit` negative |
 | `cost_per_unit` divides by `total_qty`, which is NULL when `loose_per_pack = 0` | Prove the received quantity positive before dividing |
-| No availability enforcement on posting | Stock sufficiency is checked **inside the posting transaction, under the ADR-0016 locks** — a pre-save check lets two sales each sell 8 of the same 10 units (ADR-0017) |
+| No availability enforcement on posting | Stock sufficiency is checked **inside the posting transaction, under the ADR-0018 locks** — a pre-save check lets two sales each sell 8 of the same 10 units (ADR-0017) |
 | Legacy `status VARCHAR(1)` enums, `MUSER`/`MTIME` lineage | Append-only audit record per financial mutation |
 | Oracle-flavoured tablespaces (`APP_DATA`, `APP_INDEX`) | See [docs/INFRASTRUCTURE.md](../docs/INFRASTRUCTURE.md) for the real storage/role model |
 

@@ -46,8 +46,8 @@ Panel         "Stock as on <date>" — Product · Category · Quantity · Avg. c
 | Product | left | name (700) |
 | Category | left | plain text |
 | Quantity | right | reconstructed as-of quantity: current stock minus every non-transfer movement dated after the cutoff |
-| Avg. cost | right | money — the product's **current** weighted-average cost, not a historical cost as of the cutoff (see §8) |
-| Stock value | right | money, 700 — `Quantity × Avg. cost` |
+| Avg. cost | right | money — the product's **current** weighted-average cost, not a historical cost as of the cutoff (see §8). It is a **rate, shown for information**; it is never multiplied by a quantity to produce a value |
+| Stock value | right | money, 700 — the **carried inventory value** at the costing scope. **Not `Quantity × Avg. cost`** (ADR-0015 §7): that product misstates the valuation and does not agree with the inventory GL. See §8 |
 | Reorder status | left | `Below level` (`warn`) / `Sufficient` (`good`), compared to the product's **current** reorder point |
 
 ## 5. Actions
