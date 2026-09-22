@@ -1,0 +1,8 @@
+# Checksums of applied migration files. ADR-0013.
+#
+# Append a line when a migration is added. Never edit an existing line:
+# CI recomputes these and fails if one changes, because an applied
+# migration is immutable. Correct a mistake with a new forward migration.
+#
+# sha256 of the file content, line endings normalised to LF.
+f393cfbd467ddab681cfd42ca916a86a8b19c69cb820b445938cb3946071f4a3  001_create_tenants.sql

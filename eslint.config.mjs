@@ -296,5 +296,18 @@ export default tseslint.config(
     rules: { 'no-console': 'off' },
   },
 
+  /* ---------------------------------------------------------------- *
+   * CLI entrypoints. A command-line tool's output IS stdout, so the
+   * file that legitimately owns the thing no-console bans gets a scoped
+   * override rather than fourteen inline disables.
+   *
+   * Narrow on purpose: only cli.ts, not the modules it calls. Library
+   * code still has no business printing.
+   * ---------------------------------------------------------------- */
+  {
+    files: ['packages/*/src/**/cli.ts'],
+    rules: { 'no-console': 'off' },
+  },
+
   prettier,
 )
