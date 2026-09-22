@@ -1,0 +1,49 @@
+# Staging reverse proxy.
+#
+# A proxy is required here even without TLS, and not as a convenience: the web
+# app and the API must be SAME-ORIGIN. ADR-0009's refresh cookie is
+# SameSite=Strict, which a cross-origin call from :3000 to :3001 would not
+# send. So the browser sees one origin and `/api/*` is routed behind it,
+# exactly as production does.
+#
+# HTTP only, by decision, for a staging box reached by IP. That has a
+# consequence worth stating rather than leaving implicit: session cookies
+# travel in clear. Nothing involving a real credential should be exercised
+# here until this has a hostname and a certificate.
+
+:80 {
+	# Caddy's own access log, as JSON, so it lands in the same shape as the
+	# application's structured logs (ADR-0016) rather than as a second format
+	# an aggregator has to be taught.
+	log {
+		output stdout
+		format json
+	}
+
+	# The API, including its health probes at /api/health and
+	# /api/health/ready. Path-routed, not rewritten: apps/api sets a global
+	# prefix of /api so the proxy can route on path alone, and a probe travels
+	# the same path as real traffic — which is the point of a probe.
+	handle /api/* {
+		reverse_proxy api:3001
+	}
+
+	# Everything else is the Next.js app.
+	handle {
+		reverse_proxy web:3000
+	}
+
+	# apps/web is not deployed yet: it does not build (FND-017). Without this,
+	# every request to / returns a bare 502 that says nothing about why.
+	handle_errors {
+		@web_down expression {err.status_code} in [502, 503]
+		respond @web_down `FinSoft staging
+
+The API is up and reachable at /api/health.
+
+The web application is not deployed: apps/web does not currently build
+(useSearchParams outside a Suspense boundary, FND-017). This is expected,
+not an outage.
+` 503
+	}
+}

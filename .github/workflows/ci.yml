@@ -15,6 +15,10 @@ on:
     branches: ['**']
   pull_request:
     branches: [main, develop]
+  # So a deploy can be exercised without merging. Agents push feature branches
+  # and never merge, so the automatic develop path alone could never be tested
+  # by the people who build it.
+  workflow_dispatch:
 
 # Least privilege. No job here writes to the repository, publishes a package
 # or comments on a PR, so nothing needs more than read.
@@ -170,8 +174,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
+    # Only this job may write packages, and only this job gets the token.
+    permissions:
+      contents: read
+      packages: write
+
     strategy:
-      # One broken image should not hide the state of the other two.
+      # One broken image must not hide the state of the other two. web
+      # currently fails (FND-017); api and worker still publish.
       fail-fast: false
       matrix:
         image: [api, worker, web]
@@ -181,16 +191,93 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: build ${{ matrix.image }}
+      - name: registry login
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          # The run's own short-lived token. No long-lived PAT is stored
+          # anywhere, and this one expires when the job ends.
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: build and push ${{ matrix.image }}
         uses: docker/build-push-action@v6
         with:
           context: .
           file: infrastructure/docker/Dockerfile.${{ matrix.image }}
-          push: false
+          push: true
+          tags: ghcr.io/${{ github.repository }}-${{ matrix.image }}:${{ github.sha }}
           # GitHub Actions cache, so an unchanged image is not rebuilt from
           # scratch on every run.
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  # ------------------------------------------------------------------ #
+  # Staging deploy. INFRASTRUCTURE §3: develop deploys to Contabo
+  # automatically. Production is a different provider, needs a human, and
+  # has no path from here.
+  #
+  # `needs` IS the security property. This job cannot start unless static
+  # analysis, the full suite and the image build all passed in THIS run —
+  # which is to say, on this exact commit. A separate workflow keyed on a
+  # branch name could deploy a commit that was never tested.
+  # ------------------------------------------------------------------ #
+  deploy-staging:
+    name: deploy to staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [static, test, images]
+    if: github.ref == 'refs/heads/develop' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: authorise
+        env:
+          KEY: ${{ secrets.STAGING_SSH_KEY }}
+          HOSTKEYS: ${{ secrets.STAGING_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s' "$KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          # A pinned host key. Without it, StrictHostKeyChecking=no accepts
+          # whatever answers on that address — the entire value of host
+          # verification, given away to save one secret.
+          printf '%s' "$HOSTKEYS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: ship configuration
+        env:
+          HOST: ${{ vars.STAGING_HOST }}
+          SSH_USER: ${{ vars.STAGING_USER }}
+        run: |
+          ssh "$SSH_USER@$HOST" 'install -d /opt/finsoft/postgres/init'
+          scp infrastructure/staging/compose.yaml "$SSH_USER@$HOST:/opt/finsoft/compose.yaml"
+          scp infrastructure/staging/Caddyfile "$SSH_USER@$HOST:/opt/finsoft/Caddyfile"
+          scp infrastructure/docker/postgres/init/* "$SSH_USER@$HOST:/opt/finsoft/postgres/init/"
+
+      # Digests, not tags. A tag is a moving pointer; a digest is the exact
+      # bytes that passed the gate above, which is what
+      # infrastructure/README.md requires be the thing that actually runs.
+      - name: deploy
+        env:
+          HOST: ${{ vars.STAGING_HOST }}
+          SSH_USER: ${{ vars.STAGING_USER }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          ssh "$SSH_USER@$HOST" \
+            REGISTRY_TOKEN="$REGISTRY_TOKEN" ACTOR="$ACTOR" SHA="$SHA" REPO="$REPO" \
+            'bash -s' < infrastructure/staging/deploy.sh
+
+      # A deploy that reports success without asking the thing whether it
+      # works is a deploy that reports success.
+      - name: smoke
+        env:
+          HOST: ${{ vars.STAGING_HOST }}
+        run: bash infrastructure/staging/smoke.sh "http://$HOST"
 
   # ------------------------------------------------------------------ #
   # Advisory, and deliberately not a gate — see the note below.
