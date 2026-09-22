@@ -8,8 +8,11 @@ type Kind = 'In' | 'Out'
 type Entry = { id:string; kind:Kind; account:string; amount:number }
 const emptyForm = { date:'2026-08-30', time:'14:30', party:'', partyPick:'', category:'', account:'Main Cash Drawer', mode:'Cash', reference:'', amount:'', notes:'' }
 
-function Field({label,required,icon,children,full}:{label:string;required?:boolean;icon:ReactNode;children:ReactNode;full?:boolean}){
- return <label className={`cb-f ${full?'full':''}`}><span className="cb-l">{label}{required&&<em>*</em>}</span><span className="cb-in"><i>{icon}</i>{children}</span></label>
+function Field({label,required,icon,children,full,extra}:{label:string;required?:boolean;icon:ReactNode;children:ReactNode;full?:boolean;extra?:string}){
+ return <label className={`cb-f${full?' full':''}${extra?' '+extra:''}`}><span className="cb-l">{label}{required&&<em>*</em>}</span><span className="cb-in"><i>{icon}</i>{children}</span></label>
+}
+function GroupLabel({label,first}:{label:string;first?:boolean}){
+ return <div className={`cb-group-label${first?' first':''}`}>{label}</div>
 }
 
 export function CashBook({data}:{data:AppData}){
@@ -17,6 +20,7 @@ export function CashBook({data}:{data:AppData}){
  const [entries,setEntries]=useState<Entry[]>([])
  const [fin,setFin]=useState({...emptyForm,party:'Walk-in Customer',category:'Sales Revenue'})
  const [fout,setFout]=useState({...emptyForm,party:'Office Mart Sdn Bhd',category:'Office Supplies'})
+ const [inDragOver,setInDragOver]=useState(false)
  const base={drawer:12480,bank:24300,petty:2700}
  const delta=(acct:string)=>entries.filter(e=>e.account===acct).reduce((a,e)=>a+(e.kind==='In'?e.amount:-e.amount),0)
  const drawer=base.drawer+delta('Main Cash Drawer'), bank=base.bank+delta('Bank Account'), petty=base.petty+delta('Petty Cash')
@@ -43,18 +47,23 @@ export function CashBook({data}:{data:AppData}){
     <span className="cb-ph-badge">{out?'Manage your expenses':'Increase your cash flow'}</span>
    </div>
    <div className="cb-grid">
+    <GroupLabel label="When" first/>
     <Field label="Date" required icon={<CalendarDays/>}><input type="date" value={f.date} onChange={e=>set({date:e.target.value})}/><CalendarDays className="cb-trail"/></Field>
     <Field label="Time" required icon={<Clock3/>}><input type="time" value={f.time} onChange={e=>set({time:e.target.value})}/></Field>
+    <GroupLabel label="Who"/>
     <Field label={out?'Paid To / Party':'Received From / Party'} required icon={<User/>} full><input value={f.party} onChange={e=>set({party:e.target.value})} placeholder={out?'Office Mart Sdn Bhd':'Walk-in Customer'}/><ChevronRight className="cb-trail"/></Field>
     <Field label={out?'Vendor':'Customer'} required={out} icon={<Users/>} full><select value={f.partyPick} onChange={e=>set({partyPick:e.target.value,party:e.target.value||f.party})}><option value="">{out?'Select a vendor (e.g. Office Mart Sdn Bhd)':'Select a customer (e.g. ABC Sdn Bhd)'}</option>{(out?vendors:customers).map(c=><option key={c}>{c}</option>)}</select><ChevronDown className="cb-trail"/></Field>
+    <GroupLabel label="What"/>
     <Field label="Category" required icon={<Tag/>}><select value={f.category} onChange={e=>set({category:e.target.value})}>{(out?['Office Supplies','Accounts Payable','Rent Expense','Utilities','Salaries']:['Sales Revenue','Accounts Receivable','Other Income']).map(c=><option key={c}>{c}</option>)}</select><ChevronDown className="cb-trail"/></Field>
     <Field label="Account" required icon={<WalletCards/>}><select value={f.account} onChange={e=>set({account:e.target.value})}>{accounts.map(a=><option key={a}>{a}</option>)}</select><ChevronDown className="cb-trail"/></Field>
     <Field label="Payment Mode" required icon={<CreditCard/>}><select value={f.mode} onChange={e=>set({mode:e.target.value})}>{['Cash','Cheque','Bank transfer','Card'].map(m=><option key={m}>{m}</option>)}</select><ChevronDown className="cb-trail"/></Field>
     <Field label="Reference No." icon={<FileText/>}><input value={f.reference} onChange={e=>set({reference:e.target.value})} placeholder={out?'e.g. BILL-2045':'e.g. INV-1042'}/></Field>
-    <Field label="Amount" required icon={<b className="cb-rs">Rs</b>} full><input type="number" min="0" step="0.01" value={f.amount} onChange={e=>set({amount:e.target.value})} placeholder="0.00"/></Field>
+    <GroupLabel label="Amount"/>
+    <Field label="Amount" required icon={<b className="cb-rs">Rs</b>} full extra="amount-f"><input type="number" min="0" step="0.01" value={f.amount} onChange={e=>set({amount:e.target.value})} placeholder="0.00"/></Field>
+    <GroupLabel label="Notes"/>
     <Field label="Notes / Narration" icon={<MessageSquareText/>} full><input value={f.notes} onChange={e=>set({notes:e.target.value})} placeholder={out?'e.g. Office supplies purchase, invoice no., etc.':'e.g. Payment for invoice, customer name, etc.'}/></Field>
    </div>
-   <div className="cb-attach"><span className="cb-l">Receipt / Attachment</span><label className="cb-drop"><CloudUpload/><span><b>Drag &amp; drop a receipt here, or <u>browse</u></b><small>Supports PDF, JPG, PNG (Max 5MB)</small></span><input type="file" hidden/></label></div>
+   <div className="cb-attach"><span className="cb-l">Receipt / Attachment</span><label className="cb-drop"><div className="cb-drop-icon"><CloudUpload/></div><div className="cb-drop-body"><b>Drop your receipt here, or <u>browse</u></b><small>PDF · JPG · PNG &nbsp;·&nbsp; Max 5 MB</small></div><input type="file" hidden/></label></div>
    <button className="cb-save" type="submit"><Save/> {out?'Save Cash Out':'Save Cash In'}</button>
   </form>
  }

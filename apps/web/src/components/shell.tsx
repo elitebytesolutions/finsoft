@@ -3,7 +3,7 @@
  * Ported verbatim from ui-prototype/src/App.tsx (Shell, renderNodes, iconMap).
  * Route children arrive from the App Router instead of <Routes>; nothing else
  * changed, because the sidebar is the most reference-matched surface we have. */
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { NavLink, useLocation, useNavigate } from '@/lib/router'
 import {
   Activity, AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, BadgeCheck, Bell, BookOpen, BookUser, Boxes, CalendarCheck, CalendarDays, ChartNoAxesCombined,
@@ -38,6 +38,16 @@ export function Shell({children,role,setRole}:{children:ReactNode;role:string;se
  const path=location.pathname.split('?')[0]
  const [collapsed,setCollapsed]=useState(false),[mobileOpen,setMobileOpen]=useState(false),[global,setGlobal]=useState(''),[notifications,setNotifications]=useState(false),[modQuery,setModQuery]=useState('')
  const [closed,setClosed]=useState<Set<string>>(()=>{const s=new Set<string>();const here=location.pathname;const holds=(n:NavChild):boolean=>(n.path===here)||(n.children??[]).some(holds);const seed=(nodes:NavChild[],prefix:string)=>{for(const n of nodes){if((n.children??[]).length){const k=prefix+'|'+n.label;if(!holds(n))s.add(k);seed(n.children??[],k)}}};for(const grp of nav)seed(grp.items as unknown as NavChild[],grp.group);return s})
+ const [createOpen,setCreateOpen]=useState(false)
+ const createRef=useRef<HTMLDivElement>(null)
+ useEffect(()=>{
+  if(!createOpen)return
+  const onKey=(e:KeyboardEvent)=>{if(e.key==='Escape'){setCreateOpen(false)}}
+  const onOutside=(e:MouseEvent)=>{if(createRef.current&&!createRef.current.contains(e.target as Node))setCreateOpen(false)}
+  document.addEventListener('keydown',onKey)
+  document.addEventListener('mousedown',onOutside)
+  return()=>{document.removeEventListener('keydown',onKey);document.removeEventListener('mousedown',onOutside)}
+ },[createOpen])
  const allowed=(perm?:string)=>!perm||roles[role]?.includes('all')||roles[role]?.includes(perm)
  useEffect(()=>{const q=modQuery.trim().toLowerCase();if(!q)return
  const keys:string[]=[]
@@ -56,7 +66,7 @@ export function Shell({children,role,setRole}:{children:ReactNode;role:string;se
     <nav className="sb-nav">{nav.map(group=>{const prune=(n:NavChild):NavChild|null=>{if((n.children??[]).length){const kids=(n.children??[]).map(prune).filter((x):x is NavChild=>!!x);return kids.length?{...n,children:kids}:null}return allowed(n.perm)?n:null}
       const items=group.items.map(prune).filter((x):x is NavItem=>!!x).filter(searchHit);if(!items.length)return null;const ctx={closed,open:toggleOpen,go:()=>setMobileOpen(false)}
       const holds=(n:NavChild):boolean=>(!!n.path&&n.path.split('?')[0]===path)||(n.children??[]).some(holds)
-      if(!group.group){return <div className="sb-tiles" key="tiles">{items.map(it=>{const Icon=it.icon?iconMap[it.icon]:undefined;return it.path?<NavLink key={it.label} to={it.path} onClick={()=>setMobileOpen(false)} className={({isActive})=>`sb-tile ${isActive?'active':''}`}><span className="sb-tile-icon">{Icon&&<Icon/>}</span><span className="sb-tile-text"><b>{it.label}</b><small>{it.desc}</small></span></NavLink>:null})}</div>}
+      if(!group.group){return <div className="sb-tiles" key="tiles">{items.map(it=>{const Icon=it.icon?iconMap[it.icon]:undefined;const tileLabel=it.desc?`${it.label} — ${it.desc}`:it.label;return it.path?<NavLink key={it.label} to={it.path} onClick={()=>setMobileOpen(false)} className={({isActive})=>`sb-tile ${isActive?'active':''}`} title={tileLabel} aria-label={tileLabel}><span className="sb-tile-icon" aria-hidden="true">{Icon&&<Icon/>}</span><span className="sb-tile-text" aria-hidden="true"><b>{it.label}</b>{it.desc&&<small>{it.desc}</small>}</span></NavLink>:null})}</div>}
       const GIcon=group.icon?iconMap[group.icon]:undefined
       return <div className="sb-group" key={group.group}><div className="sb-section"><span className="sb-section-title">{group.group}</span><i className="sb-section-line"/>{group.tagline&&<span className="sb-section-tag">{GIcon&&<GIcon/>}<span>{group.tagline}</span></span>}</div><div className="sb-modules">{items.map(it=>{const Icon=it.icon?iconMap[it.icon]:undefined
        if((it.children??[]).length){const key=group.group+'|'+it.label;const isOpen=!closed.has(key);const current=(it.children??[]).some(holds);return <div className={`sb-module ${isOpen?'open':''} ${current?'current':''}`} key={it.label}><button type="button" aria-expanded={isOpen} onClick={()=>{toggleOpen(key);setMobileOpen(false)}} className={`sb-head ${isOpen?'open':''}`}><span className="sb-head-icon">{Icon&&<Icon/>}</span><span className="sb-head-text"><b>{it.label}</b><small>{it.desc}</small></span><ChevronRight className={chevCls(isOpen)}/></button><div className="sb-subbox"><div className="sb-clip"><div className="sb-children d1">{renderNodes(it.children??[],key,2,ctx)}</div></div></div></div>}
@@ -68,7 +78,19 @@ export function Shell({children,role,setRole}:{children:ReactNode;role:string;se
       <div className="top-brand"><span className="brandmark"><Activity/></span><div><b>Fin<span>soft</span></b><small>Smarter Accounting for a Brighter Tomorrow</small></div></div>
       <button type="button" className="company-pick"><Building2/><span>Bhatti Traders</span><ChevronDown/></button>
       <label className="global-search"><Search/><input value={global} onChange={e=>setGlobal(e.target.value)} onKeyDown={e=>e.key==='Enter'&&navigate(`/products?q=${encodeURIComponent(global)}`)} placeholder="Search anything... (Customers, Invoices, Payments, Products, Reports)"/><kbd>Ctrl + K</kbd></label>
-      <div className="top-actions"><button type="button" className="create-new" onClick={()=>navigate('/vouchers/new')}><Plus/><span>Create New</span><ChevronDown/></button>
+      <div className="top-actions"><div ref={createRef} className="create-new-wrap">
+        <button type="button" className="create-new" aria-haspopup="true" aria-expanded={createOpen} onClick={()=>setCreateOpen(o=>!o)}><Plus/><span>Create New</span><ChevronDown className={createOpen?'create-chev open':'create-chev'}/></button>
+        {createOpen&&<div className="create-menu" role="menu" aria-label="Create new">
+          {allowed('Cash, Bank & GL')&&<button role="menuitem" className="create-item" onClick={()=>{setCreateOpen(false);navigate('/vouchers/new')}}><span className="create-item-icon"><FilePlus2/></span><span className="create-item-body"><b>Journal Voucher</b><small>New GL / cash / bank entry</small></span></button>}
+          {allowed('Sales & POS')&&<button role="menuitem" className="create-item" onClick={()=>{setCreateOpen(false);navigate('/sales/voucher')}}><span className="create-item-icon tone-sales"><ShoppingCart/></span><span className="create-item-body"><b>Sales Voucher</b><small>Invoice a customer</small></span></button>}
+          {allowed('Purchasing')&&<button role="menuitem" className="create-item" onClick={()=>{setCreateOpen(false);navigate('/purchasing/voucher')}}><span className="create-item-icon tone-purchase"><ShoppingBag/></span><span className="create-item-body"><b>Purchase Voucher</b><small>Record a supplier bill</small></span></button>}
+          {allowed('Cash, Bank & GL')&&<button role="menuitem" className="create-item" onClick={()=>{setCreateOpen(false);navigate('/payments')}}><span className="create-item-icon tone-payment"><WalletCards/></span><span className="create-item-body"><b>Payment / Receipt</b><small>Record a payment or receipt</small></span></button>}
+          <div className="create-divider" role="separator"/>
+          {allowed('Masters')&&<button role="menuitem" className="create-item" onClick={()=>{setCreateOpen(false);navigate('/customers')}}><span className="create-item-icon tone-party"><Users/></span><span className="create-item-body"><b>Customer</b><small>Add a new customer account</small></span></button>}
+          {allowed('Masters')&&<button role="menuitem" className="create-item" onClick={()=>{setCreateOpen(false);navigate('/vendors')}}><span className="create-item-icon tone-party"><ContactRound/></span><span className="create-item-body"><b>Vendor</b><small>Add a new supplier account</small></span></button>}
+          {allowed('Products')&&<button role="menuitem" className="create-item" onClick={()=>{setCreateOpen(false);navigate('/products')}}><span className="create-item-icon tone-product"><Pill/></span><span className="create-item-body"><b>Product</b><small>Add to the product catalogue</small></span></button>}
+        </div>}
+      </div>
       <button aria-label="Notifications" className="icon-btn" onClick={()=>setNotifications(!notifications)}><Bell/><i>3</i></button><button aria-label="Messages" className="icon-btn"><Mail/></button><button aria-label="Help" className="icon-btn"><CircleHelp/></button><button aria-label="Settings" className="icon-btn" onClick={()=>navigate('/settings')}><Settings/></button>
       <label className="user-menu"><span className="avatar">{role.slice(0,2).toUpperCase()}</span><div><b>Sarah Lloyd</b><small>{role}</small></div><ChevronDown/><select aria-label="View as role" value={role} onChange={e=>setRole(e.target.value)}>{Object.keys(roles).map(r=><option key={r}>{r}</option>)}</select></label></div>
       {notifications&&<div className="notification-pop"><h3>Notifications <Badge tone="info">3 new</Badge></h3><p><AlertTriangle/>Augmentin is below reorder level.</p><p><Clock3/>2 cheques clear this week.</p><p><PackageCheck/>PO-1048 was received.</p></div>}

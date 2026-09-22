@@ -83,7 +83,48 @@ export function ChartOfAccounts({data,onAdd,onRemove,canCreate}:{data:AppData;on
    </div></div>
   {notice&&<p className="coa2-notice" role="status">{notice}</p>}
 
-  {view==='map'?<section className="coa2-map">{accounts.filter(m=>m.level===1).map(root=><div key={root.code} className="coa2-map-root"><div className={`coa2-map-node tone-${toneOf(root)}`}><b>{root.name}</b><small>{root.code} · {money(valueOfTree(root.code,1))}</small></div><div className="coa2-map-kids">{childrenOf(root.code).map(k=><div key={k.code} className="coa2-map-node"><b>{k.name}</b><small>{k.code} · {childrenOf(k.code).length} groups</small></div>)}</div></div>)}</section>
+  {view==='map'
+  ?<section className="coa2-map">
+    <div className="coa2-map-main">
+      {accounts.filter(m=>m.level===1&&childrenOf(m.code).length>0).map(root=>{
+        const RootIcon=iconOf(root),tone=toneOf(root),subs=childrenOf(root.code)
+        return <div key={root.code} className="coa2-map-branch">
+          <div className={`coa2-map-root-card tone-${tone}`} role="region" aria-label={root.name}>
+            <span className={`coa2-map-root-icon tone-${tone}`} aria-hidden="true"><RootIcon/></span>
+            <div className="coa2-map-root-body">
+              <div className="coa2-map-root-top"><div className="coa2-map-root-name"><b>{root.name}</b><code>{root.code}</code></div><span className="coa2-kind header sm">Header</span></div>
+              <div className="coa2-map-root-foot"><span className="coa2-map-subcount">{subs.length} sub-type{subs.length!==1?'s':''}</span><span className={`coa2-map-bal${valueOfTree(root.code,1)===0?' zero':''}`}>{money(valueOfTree(root.code,1))}</span></div>
+            </div>
+          </div>
+          {subs.length>0&&<div className="coa2-map-l2-list" role="list">{subs.map((sub,si,sarr)=>{
+            const SubIcon=iconOf(sub),grps=childrenOf(sub.code)
+            return <div key={sub.code} className={`coa2-map-l2-item${si===sarr.length-1?' last':''}`} role="listitem">
+              <div className="coa2-map-l2-card">
+                <span className={`coa2-map-l2-icon tone-${tone}`} aria-hidden="true"><SubIcon/></span>
+                <div className="coa2-map-l2-body">
+                  <b>{sub.name}</b>
+                  <div className="coa2-map-l2-foot"><code className="coa2-map-code">{sub.code}</code><span className="coa2-kind group sm">Group</span><span className={`coa2-map-bal${valueOfTree(sub.code,sub.level??2)===0?' zero':''}`}>{money(valueOfTree(sub.code,sub.level??2))}</span></div>
+                  {grps.length>0&&<div className="coa2-map-l3-list" role="list">{grps.map((grp,gi,garr)=>{
+                    const GrpIcon=iconOf(grp),kids=childrenOf(grp.code).length
+                    return <div key={grp.code} className={`coa2-map-l3-item${gi===garr.length-1?' last':''}`} role="listitem">
+                      <div className="coa2-map-l3-card">
+                        <span className="coa2-map-l3-icon" aria-hidden="true"><GrpIcon/></span>
+                        <div className="coa2-map-l3-body">
+                          <span className="coa2-map-l3-name">{grp.name}</span>
+                          <div className="coa2-map-l3-foot"><code className="coa2-map-code">{grp.code}</code><span className={`coa2-kind ${kindOf(grp).toLowerCase()} sm`}>{kindOf(grp)}</span><span className="coa2-map-count">{kids?`${kids} acct${kids!==1?'s':''}` :'—'}</span><span className={`coa2-map-bal${valueOfTree(grp.code,grp.level??3)===0?' zero':''}`}>{money(valueOfTree(grp.code,grp.level??3))}</span></div>
+                        </div>
+                      </div>
+                    </div>
+                  })}</div>}
+                </div>
+              </div>
+            </div>
+          })}</div>}
+        </div>
+      })}
+    </div>
+    {(()=>{const orphans=accounts.filter(m=>m.level===1&&childrenOf(m.code).length===0);if(!orphans.length)return null;return <div className="coa2-map-ungrouped" role="region" aria-label="Ungrouped accounts"><span className="coa2-map-ungrouped-label">Ungrouped</span><div className="coa2-map-ungrouped-cards">{orphans.map(a=>{const AIcon=iconOf(a);return <div key={a.code} className="coa2-map-orphan-card"><span className="coa2-map-orphan-icon" aria-hidden="true"><AIcon/></span><div className="coa2-map-orphan-body"><b>{a.name}</b><div className="coa2-map-orphan-foot"><code className="coa2-map-code">{a.code}</code><span className="coa2-kind header sm">Header</span><span className={`coa2-map-bal${valueOfTree(a.code,1)===0?' zero':''}`}>{money(valueOfTree(a.code,1))}</span></div></div></div>})}</div></div>})()}
+  </section>
   :<section className={`coa2-table density-${density}`} style={{"--name-w":`${nameWidth}px`} as React.CSSProperties}>
    <div className="coa2-tr head"><span className="c-check"><label className="coa2-check"><input type="checkbox" aria-label="Select page" checked={allChecked} onChange={toggleAll}/><i><Check/></i></label></span><span className="c-name">Account Name <ChevronsUpDown/><span className="coa2-resizer" role="separator" aria-orientation="vertical" aria-label="Resize account name column" onPointerDown={startResize}/></span><span><Tag/> Code <ChevronsUpDown/></span><span><Filter/> Type <Filter className="f"/></span><span><FolderTree/> Parent Account <Filter className="f"/></span><span><Network/> Sub-accounts</span><span className="num"><Coins/> Balance (PKR) <ChevronsUpDown/></span><span><TrendingUp/> Change</span><span><CalendarDays/> Last Modified</span><span><Activity/> Status</span><span className="c-actions">Actions</span></div>
    {rows.map(({m,depth,last,trail})=>{const Icon=iconOf(m),kids=childrenOf(m.code).length,isOpen=open.has(m.code),chg=changeOf(m),mod=modifiedOf(m),parent=accounts.find(a=>a.code===m.parent);return <div key={m.code} className={`coa2-tr depth-${depth} ${selected.has(m.code)?'sel':''} ${m.level===1?'root':''}`}>

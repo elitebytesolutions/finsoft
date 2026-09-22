@@ -1,17 +1,17 @@
 'use client'
 /* Dashboard and the seven compact module screens that lived inside
  * ui-prototype/src/App.tsx. Bodies are verbatim; only imports were rewritten. */
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { useLocation, useNavigate } from '@/lib/router'
 import {
   Activity, AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, BadgeCheck, Bell, BookOpen, BookUser, Boxes, CalendarCheck, CalendarDays, ChartNoAxesCombined,
   Check, ChevronDown, ChevronRight, CircleHelp, Mail, Settings, ChevronsLeft, CircleDollarSign, ClipboardCheck, ClipboardList, ClipboardPlus, Clock3, ContactRound, Download,
   Eye, FileChartColumn, FilePlus2, FileText, Filter, HandCoins, History, Landmark, LayoutDashboard, LockKeyhole, Menu, PackageCheck, Pill, Plus, Printer,
   ReceiptText, ScrollText, Search, Settings2, ShieldCheck, ShoppingBag, ShoppingCart, Sparkles, TableProperties, Truck,
-  TrendingUp, Users, WalletCards, Navigation, ArrowLeftRight, Banknote, Barcode, BellRing, Building2, ChartPie, Database, FolderTree, Grid2x2, Layers, ListChecks, MapPin, PackageSearch, Percent, Scale, ShieldAlert, Store, Tag, Target, UserCog, UsersRound, Wallet, Warehouse, Coins, Ellipsis, type LucideIcon,
+  TrendingUp, Users, WalletCards, Navigation, ArrowLeftRight, Banknote, Barcode, BellRing, Building2, ChartPie, Database, FolderTree, Grid2x2, Layers, ListChecks, MapPin, PackageSearch, Percent, Scale, ShieldAlert, Store, Tag, Target, UserCog, UsersRound, Wallet, Warehouse, Coins, Ellipsis, X, type LucideIcon,
 } from 'lucide-react'
 import { Area, AreaChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { actionPermissions, chartData, nav, roles, users, type Master, type NavChild, type NavItem, type Product, type Purchase, type Sale } from '@/mocks/api'
+import { actionPermissions, chartData, masters as seedMasters, nav, roles, users, type Master, type NavChild, type NavItem, type Product, type Purchase, type Sale } from '@/mocks/api'
 import { usePersistentData } from '@/mocks/api'
 import { AccountDetail, EmployeeDetail, MasterDetail, ProductDetail, PurchaseDetail, SaleDetail, UserDetail } from './detail-pages'
 import { AccountsPayable, AccountsReceivable } from './finance-pages'
@@ -92,12 +92,391 @@ export function Purchasing({products,purchases,onAdd,canCreate}:{products:Return
  {open&&<Modal title="Create purchase invoice" onClose={()=>setOpen(false)} wide><form onSubmit={submit}><div className="steps"><span className="current"><i>1</i>Invoice details</span><span><i>2</i>Review</span><span><i>3</i>Post stock</span></div><div className="form-grid"><label>Supplier<select value={form.supplier} onChange={e=>setForm({...form,supplier:e.target.value})}><option>Getz Pharma</option><option>GlaxoSmithKline</option><option>Abbott Laboratories</option><option>The Searle Company</option></select></label><label>Invoice date<input type="date" defaultValue="2026-08-30"/></label><label className="span-2">Product<select value={form.product} onChange={e=>setForm({...form,product:e.target.value})}>{products.map(p=><option key={p.id}>{p.name}</option>)}</select></label><label>Quantity<input min="1" type="number" value={form.qty} onChange={e=>setForm({...form,qty:Number(e.target.value)})}/></label><label>Posting status<select value={form.status} onChange={e=>setForm({...form,status:e.target.value})}><option>Posted</option><option>Draft</option></select></label></div><div className="summary-strip"><span>Selected item<b>{form.product}</b></span><span>Stock impact<b>+{form.qty} packs</b></span><span>Estimated total<b>{money(form.qty*(products.find(p=>p.name===form.product)?.cost||0))}</b></span></div><div className="modal-foot"><Button kind="secondary" onClick={()=>setOpen(false)}>Cancel</Button><Button type="submit"><Check/> Save purchase</Button></div></form></Modal>}</>
 }
 
+// ─── Sales: helpers, invoice document, print modal ───────────────────────────
+
+/** Amount in words — display only, purely presentational, no financial logic */
+function amountInWords(amount: number): string {
+  const n = Math.round(amount)
+  if (n === 0) return 'Zero Rupees Only'
+  const ones = ['','One','Two','Three','Four','Five','Six','Seven','Eight','Nine',
+    'Ten','Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen']
+  const tens_ = ['','','Twenty','Thirty','Forty','Fifty','Sixty','Seventy','Eighty','Ninety']
+  function w(x: number): string {
+    if (x <= 0) return ''
+    if (x < 20) return ones[x] + ' '
+    if (x < 100) return tens_[Math.floor(x/10)] + (x%10 ? ' '+ones[x%10] : '') + ' '
+    return ones[Math.floor(x/100)] + ' Hundred ' + w(x%100)
+  }
+  function conv(x: number): string {
+    if (x >= 10000000) return w(Math.floor(x/10000000)) + 'Crore ' + conv(x%10000000)
+    if (x >= 100000)   return w(Math.floor(x/100000))   + 'Lakh '  + conv(x%100000)
+    if (x >= 1000)     return w(Math.floor(x/1000))     + 'Thousand ' + conv(x%1000)
+    return w(x)
+  }
+  return conv(n).trim() + ' Rupees Only'
+}
+
+const BT_COMPANY = {
+  name:    'Bhatti Traders',
+  address: 'Anarkali Bazar, Lahore, Pakistan',
+  phone:   '042-3578-2210',
+  ntn:     '1234567-8',
+  strn:    '01-23-4567-001-41',
+}
+
+/** A single A4-style invoice document for print */
+function InvoiceDoc({ sale, products }: { sale: Sale; products: Product[] }) {
+  const prod = products.find(p => p.name === sale.product)
+  const cust = seedMasters.find(m => m.name === sale.customer)
+  // Display rate derived from server total ÷ qty — preview only, not a kernel figure
+  const dispRate = sale.qty > 0 ? Math.round(sale.amount / sale.qty) : 0
+  const fmt2 = (v: number) => v.toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+  return (
+    <div className="inv-doc">
+      {/* ── Company header ── */}
+      <div className="inv-doc-header">
+        <div>
+          <div className="inv-co-name">{BT_COMPANY.name}</div>
+          <div className="inv-co-detail">{BT_COMPANY.address}</div>
+          <div className="inv-co-detail">Tel: {BT_COMPANY.phone} &nbsp;·&nbsp; NTN: {BT_COMPANY.ntn}</div>
+          <div className="inv-co-detail">STRN: {BT_COMPANY.strn}</div>
+        </div>
+        <div className="inv-doc-type">
+          <div className="inv-type-label">TAX INVOICE</div>
+          <div className="inv-doc-no">{sale.id}</div>
+        </div>
+      </div>
+
+      {/* ── Bill-to + invoice meta ── */}
+      <div className="inv-bill-row">
+        <div className="inv-bill-to">
+          <div className="inv-bill-label">Bill To</div>
+          <div className="inv-bill-name">{sale.customer}</div>
+          {cust && <div className="inv-bill-addr">{[cust.extra?.area, cust.city].filter(Boolean).join(', ')}</div>}
+          {cust?.extra?.ntn && <div className="inv-bill-ntn">NTN: {cust.extra.ntn}</div>}
+          {cust?.contact && <div className="inv-bill-contact">Tel: {cust.contact}</div>}
+        </div>
+        <div className="inv-meta-grid">
+          <div><span>Invoice No</span><b>{sale.id}</b></div>
+          <div><span>Date</span><b>{sale.date}</b></div>
+          <div><span>Mode</span><b>{sale.mode}</b></div>
+          <div><span>Status</span>
+            <b className={sale.status === 'Paid' ? 'inv-status-paid' : 'inv-status-credit'}>
+              {sale.status}
+            </b>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Line table ── */}
+      <table className="inv-lines">
+        <thead>
+          <tr>
+            <th className="inv-col-num">#</th>
+            <th>Product / Description</th>
+            <th>Batch</th>
+            <th className="r">Qty</th>
+            <th className="r">Rate</th>
+            <th className="r">Amount (Rs)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td className="inv-col-num">1</td>
+            <td>
+              <b>{sale.product}</b>
+              {prod?.generic && <small>{prod.generic}</small>}
+            </td>
+            <td>{sale.batch}</td>
+            <td className="r">{sale.qty}</td>
+            <td className="r">{dispRate.toLocaleString('en-PK')}</td>
+            <td className="r inv-line-total">{fmt2(sale.amount)}</td>
+          </tr>
+        </tbody>
+        <tfoot>
+          <tr className="inv-total-row">
+            <td colSpan={5} className="r inv-total-label">Net Payable</td>
+            <td className="r inv-total-val">{fmt2(sale.amount)}</td>
+          </tr>
+        </tfoot>
+      </table>
+
+      {/* ── Amount in words ── */}
+      <div className="inv-words-row">
+        <span className="inv-words-label">Amount in Words:</span>
+        <span className="inv-words-text">{amountInWords(sale.amount)}</span>
+      </div>
+
+      {/* ── Preview disclaimer ── */}
+      <div className="inv-preview-note">
+        ⓘ Rates shown are indicative (preview). Authoritative fiscal figures are in the posted ledger.
+      </div>
+
+      {/* ── Signature block ── */}
+      <div className="inv-sigs">
+        <div className="inv-sig">
+          <div className="inv-sig-line"/>
+          <div className="inv-sig-role">Authorised Signatory</div>
+          <div className="inv-sig-for">{BT_COMPANY.name}</div>
+        </div>
+        <div className="inv-sig">
+          <div className="inv-sig-line"/>
+          <div className="inv-sig-role">Received By</div>
+          <div className="inv-sig-for">Date: _______________</div>
+        </div>
+      </div>
+
+      {/* ── Doc footer ── */}
+      <div className="inv-doc-footer">
+        <span>Generated · {new Date().toLocaleString('en-PK', { dateStyle: 'medium', timeStyle: 'short' })}</span>
+        <span>{BT_COMPANY.name} — Computer-generated document</span>
+      </div>
+    </div>
+  )
+}
+
+/** Full-screen print preview modal */
+function SalesPrintModal({ targets, products, onClose }: { targets: Sale[]; products: Product[]; onClose: () => void }) {
+  return (
+    <div className="sr-print-overlay" role="dialog" aria-modal aria-label="Print invoice preview">
+      {/* Chrome — hidden by @media print */}
+      <div className="sr-print-chrome">
+        <div className="sr-print-chrome-inner">
+          <div>
+            <div className="sr-print-title">
+              {targets.length === 1
+                ? `Invoice Preview — ${targets[0].id}`
+                : `Preview — ${targets.length} invoices`}
+            </div>
+            <div className="sr-print-sub">
+              Review before printing. Navigation is hidden in the printed output.
+            </div>
+          </div>
+          <div className="sr-print-actions">
+            <button type="button" className="btn secondary" onClick={onClose}>
+              <X/> Close
+            </button>
+            <button type="button" className="btn primary" onClick={() => window.print()}>
+              <Printer/> Print
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Scrollable preview — becomes print body */}
+      <div className="sr-print-body">
+        <div className="inv-print-content">
+          {targets.map(sale => (
+            <InvoiceDoc key={sale.id} sale={sale} products={products}/>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Sales register ──────────────────────────────────────────────────────────
+
 export function Sales({products,sales,onAdd,canCreate}:{products:ReturnType<typeof usePersistentData>['data']['products'];sales:Sale[];onAdd:(p:Sale)=>void;canCreate:boolean}){
- const location=useLocation(),[open,setOpen]=useState(()=>new URLSearchParams(location.search).get('new')==='1'),[tab,setTab]=useState('All sales'),navigate=useNavigate(),[form,setForm]=useState({mode:'Retail',customer:'Walk-in Customer',product:products[0].name,qty:1,status:'Paid'})
- const submit=(e:FormEvent)=>{e.preventDefault();const product=products.find(p=>p.name===form.product)!;if(form.qty>product.stock)return;const fefo=[...product.batches].filter(b=>b.stock>0).sort((a,b)=>a.expiry.localeCompare(b.expiry))[0];onAdd({id:`INV-${26815+sales.length}`,date:'30 Aug 2026',customer:form.customer,product:form.product,qty:Number(form.qty),amount:Number(form.qty)*product.price,mode:form.mode,status:form.status as Sale['status'],batch:fefo?.id??product.batch,unitCost:fefo?.cost??product.cost});setOpen(false)}
- const visible=sales.filter(s=>tab==='All sales'||s.status===tab)
- return <><PageHead eyebrow="Trading & Inventory / Sales & POS" title="Sales & point of sale" description="Process retail, wholesale, hospital and clinic sales with FEFO allocation." actions={<><Button kind="secondary" onClick={()=>navigate('/sales/voucher')}><FileText/> Sales voucher</Button><Button disabled={!canCreate} onClick={()=>setOpen(true)}><Plus/> New sale</Button></>}/><div className="kpi-grid mini"><Kpi label="Sales today" value="Rs 192,480" change="84 invoices" icon={CircleDollarSign}/><Kpi label="Cash received" value="Rs 128,200" change="66.6% of sales" icon={WalletCards} tone="teal"/><Kpi label="Credit sales" value="Rs 64,280" change="18 invoices" icon={ReceiptText} tone="yellow"/></div><div className="tabs">{['All sales','Paid','Credit'].map(t=><button className={tab===t?'active':''} onClick={()=>setTab(t)} key={t}>{t}</button>)}</div><Panel title="Sales register" sub={`${visible.length} matching invoices`}><Table headers={['Invoice','Date','Customer','Mode','Product','Quantity','Total','Status','']} rows={visible.map(s=>[<button className="linkable" onClick={()=>navigate(`/sales/${s.id}`)}>{s.id}</button>,s.date,s.customer,<Badge tone="info">{s.mode}</Badge>,s.product,s.qty,<b>{money(s.amount)}</b>,<Badge tone={s.status==='Paid'?'good':'warn'}>{s.status}</Badge>,<button aria-label={`View ${s.id}`} className="table-action" onClick={()=>navigate(`/sales/${s.id}`)}><Eye/> View</button>])}/></Panel>
- {open&&<Modal title="New sales invoice" onClose={()=>setOpen(false)} wide><form onSubmit={submit}><div className="mode-picker">{['Retail','Wholesale'].map(m=><button type="button" className={form.mode===m?'active':''} onClick={()=>setForm({...form,mode:m,customer:m==='Retail'?'Walk-in Customer':form.customer})} key={m}>{m}</button>)}</div><div className="form-grid"><label>Customer<input value={form.customer} onChange={e=>setForm({...form,customer:e.target.value})}/></label><label>Payment<select value={form.status} onChange={e=>setForm({...form,status:e.target.value})}><option>Paid</option><option>Credit</option></select></label><label className="span-2">Product / FEFO batch<select value={form.product} onChange={e=>setForm({...form,product:e.target.value})}>{products.filter(p=>p.stock>0).map(p=><option key={p.id}>{p.name} — {p.batch} — {p.stock} available</option>)}</select><small className="field-note"><Sparkles/> Earliest valid expiry is automatically selected</small></label><label>Quantity<input type="number" min="1" max={products.find(p=>p.name===form.product)?.stock} value={form.qty} onChange={e=>setForm({...form,qty:Number(e.target.value)})}/></label><label>Unit price<input readOnly value={money(products.find(p=>p.name===form.product)?.price||0)}/></label></div><div className="invoice-total"><span>Invoice total</span><b>{money(form.qty*(products.find(p=>p.name===form.product)?.price||0))}</b></div><div className="modal-foot"><Button kind="secondary" onClick={()=>setOpen(false)}>Cancel</Button><Button type="submit"><Check/> Post sale</Button></div></form></Modal>}</>
+  const location  = useLocation()
+  const navigate  = useNavigate()
+  const [open,    setOpen]    = useState(() => new URLSearchParams(location.search).get('new') === '1')
+  const [tab,     setTab]     = useState('All sales')
+  const [form,    setForm]    = useState({mode:'Retail', customer:'Walk-in Customer', product:products[0].name, qty:1, status:'Paid'})
+
+  // ── selection & print state ──
+  const [selected,     setSelected]     = useState<Set<string>>(new Set())
+  const [printTargets, setPrintTargets] = useState<Sale[]>([])
+  const [printOpen,    setPrintOpen]    = useState(false)
+
+  const visible        = sales.filter(s => tab === 'All sales' || s.status === tab)
+  const allSelected    = visible.length > 0 && visible.every(s => selected.has(s.id))
+  const someSelected   = visible.some(s => selected.has(s.id)) && !allSelected
+  const selectedInView = visible.filter(s => selected.has(s.id))
+
+  const allCheckRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (allCheckRef.current) allCheckRef.current.indeterminate = someSelected
+  }, [someSelected])
+
+  const toggleOne  = (id: string) => setSelected(s => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n })
+  const toggleAll  = () => setSelected(allSelected ? new Set() : new Set(visible.map(x => x.id)))
+  const openPrint  = (targets: Sale[]) => { setPrintTargets(targets); setPrintOpen(true) }
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault()
+    const product = products.find(p => p.name === form.product)!
+    if (form.qty > product.stock) return
+    const fefo = [...product.batches].filter(b => b.stock > 0).sort((a,b) => a.expiry.localeCompare(b.expiry))[0]
+    onAdd({
+      id: `INV-${26815+sales.length}`, date: '30 Aug 2026', customer: form.customer,
+      product: form.product, qty: Number(form.qty), amount: Number(form.qty)*product.price,
+      mode: form.mode, status: form.status as Sale['status'],
+      batch: fefo?.id ?? product.batch, unitCost: fefo?.cost ?? product.cost,
+    })
+    setOpen(false)
+  }
+
+  return (
+    <div className={printOpen ? 'sr-page sr-has-print' : 'sr-page'}>
+      {/* ── Page header ── */}
+      <PageHead
+        eyebrow="Trading & Inventory / Sales & POS"
+        title="Sales & point of sale"
+        description="Process retail, wholesale, hospital and clinic sales with FEFO allocation."
+        actions={<>
+          <Button kind="secondary" onClick={() => navigate('/sales/voucher')}><FileText/> Sales voucher</Button>
+          <Button disabled={!canCreate} onClick={() => setOpen(true)}><Plus/> New sale</Button>
+        </>}
+      />
+
+      {/* ── KPIs ── */}
+      <div className="kpi-grid mini">
+        <Kpi label="Sales today"    value="Rs 192,480" change="84 invoices"      icon={CircleDollarSign}/>
+        <Kpi label="Cash received"  value="Rs 128,200" change="66.6% of sales"   icon={WalletCards} tone="teal"/>
+        <Kpi label="Credit sales"   value="Rs 64,280"  change="18 invoices"      icon={ReceiptText} tone="yellow"/>
+      </div>
+
+      {/* ── Tabs ── */}
+      <div className="tabs">
+        {['All sales','Paid','Credit'].map(t => (
+          <button key={t} className={tab===t?'active':''} onClick={() => { setTab(t); setSelected(new Set()) }}>{t}</button>
+        ))}
+      </div>
+
+      {/* ── Bulk action bar (visible when rows are selected) ── */}
+      {selectedInView.length > 0 && (
+        <div className="sr-bulk-bar" role="toolbar" aria-label="Bulk actions for selected invoices">
+          <span className="sr-bulk-count">
+            {selectedInView.length} invoice{selectedInView.length !== 1 ? 's' : ''} selected
+          </span>
+          <button type="button" className="sr-bulk-print-btn" onClick={() => openPrint(selectedInView)}>
+            <Printer/> Print invoice{selectedInView.length !== 1 ? 's' : ''}
+          </button>
+          <button type="button" className="sr-bulk-clear-btn" onClick={() => setSelected(new Set())} aria-label="Clear selection">
+            <X/> Clear
+          </button>
+        </div>
+      )}
+
+      {/* ── Sales register table ── */}
+      <Panel title="Sales register" sub={`${visible.length} matching invoice${visible.length !== 1 ? 's' : ''}`}>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th className="sr-cb-col" aria-label="Select">
+                  <input
+                    ref={allCheckRef}
+                    type="checkbox"
+                    className="sr-cb"
+                    checked={allSelected}
+                    onChange={toggleAll}
+                    aria-label={allSelected ? 'Deselect all visible invoices' : 'Select all visible invoices'}
+                  />
+                </th>
+                <th>Invoice</th>
+                <th>Date</th>
+                <th>Customer</th>
+                <th>Mode</th>
+                <th>Product</th>
+                <th style={{textAlign:'right'}}>Quantity</th>
+                <th style={{textAlign:'right'}}>Total</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map(s => (
+                <tr key={s.id} className={selected.has(s.id) ? 'sr-row-sel' : ''}>
+                  <td className="sr-cb-col">
+                    <input
+                      type="checkbox"
+                      className="sr-cb"
+                      checked={selected.has(s.id)}
+                      onChange={() => toggleOne(s.id)}
+                      aria-label={`Select invoice ${s.id}`}
+                    />
+                  </td>
+                  <td><button className="linkable" onClick={() => navigate(`/sales/${s.id}`)}>{s.id}</button></td>
+                  <td>{s.date}</td>
+                  <td>{s.customer}</td>
+                  <td><Badge tone="info">{s.mode}</Badge></td>
+                  <td>{s.product}</td>
+                  <td style={{textAlign:'right'}}>{s.qty}</td>
+                  <td style={{textAlign:'right'}}><b>{money(s.amount)}</b></td>
+                  <td><Badge tone={s.status==='Paid'?'good':'warn'}>{s.status}</Badge></td>
+                  <td>
+                    <div className="sr-row-actions">
+                      <button
+                        type="button"
+                        className="sr-icon-print-btn"
+                        aria-label={`Print invoice ${s.id}`}
+                        title="Print invoice"
+                        onClick={() => openPrint([s])}
+                      >
+                        <Printer/>
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`View ${s.id}`}
+                        className="table-action"
+                        onClick={() => navigate(`/sales/${s.id}`)}
+                      >
+                        <Eye/> View
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+
+      {/* ── New sale modal ── */}
+      {open && (
+        <Modal title="New sales invoice" onClose={() => setOpen(false)} wide>
+          <form onSubmit={submit}>
+            <div className="mode-picker">
+              {['Retail','Wholesale'].map(m => (
+                <button type="button" key={m} className={form.mode===m?'active':''}
+                  onClick={() => setForm({...form, mode:m, customer:m==='Retail'?'Walk-in Customer':form.customer})}>
+                  {m}
+                </button>
+              ))}
+            </div>
+            <div className="form-grid">
+              <label>Customer<input value={form.customer} onChange={e=>setForm({...form,customer:e.target.value})}/></label>
+              <label>Payment<select value={form.status} onChange={e=>setForm({...form,status:e.target.value})}><option>Paid</option><option>Credit</option></select></label>
+              <label className="span-2">Product / FEFO batch
+                <select value={form.product} onChange={e=>setForm({...form,product:e.target.value})}>
+                  {products.filter(p=>p.stock>0).map(p=><option key={p.id}>{p.name} — {p.batch} — {p.stock} available</option>)}
+                </select>
+                <small className="field-note"><Sparkles/> Earliest valid expiry is automatically selected</small>
+              </label>
+              <label>Quantity<input type="number" min="1" max={products.find(p=>p.name===form.product)?.stock} value={form.qty} onChange={e=>setForm({...form,qty:Number(e.target.value)})}/></label>
+              <label>Unit price<input readOnly value={money(products.find(p=>p.name===form.product)?.price||0)}/></label>
+            </div>
+            <div className="invoice-total">
+              <span>Invoice total</span>
+              <b>{money(form.qty*(products.find(p=>p.name===form.product)?.price||0))}</b>
+            </div>
+            <div className="modal-foot">
+              <Button kind="secondary" onClick={()=>setOpen(false)}>Cancel</Button>
+              <Button type="submit"><Check/> Post sale</Button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* ── Print preview overlay ── */}
+      {printOpen && (
+        <SalesPrintModal targets={printTargets} products={products} onClose={() => setPrintOpen(false)}/>
+      )}
+    </div>
+  )
 }
 
 export function Masters({masters,onAddMaster,canCreate}:{masters:Master[];onAddMaster:(m:Master)=>void;canCreate:boolean}){
