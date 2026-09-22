@@ -1,0 +1,141 @@
+# FinSoft local data plane. FND-005.
+#
+# Four services: a development database and cache, and a disposable pair for
+# tests. The application services (api, web, worker) are added by the tasks
+# that create them — FND-009, FND-011 and FND-015. A stanza pointing at a
+# Dockerfile that does not exist yet would break `up` for everyone.
+#
+# Acceptance, from INFRASTRUCTURE.md:257:
+#   docker compose down -v && docker compose up
+# must produce a working system from scratch. If it does not, that is a
+# Wave 0 bug.
+#
+# The project name comes from the environment so that each git worktree gets
+# its own containers, volumes and ports. One agent's `down -v` can then only
+# ever destroy its own stack (INFRASTRUCTURE.md:257, "every developer and
+# every agent gets an isolated database").
+
+name: ${COMPOSE_PROJECT_NAME:-finsoft}
+
+x-postgres-common: &postgres-common
+  # PostgreSQL 17 is load-bearing, not incidental: the builtin locale
+  # provider used below does not exist before 17. ADR-0002:71 sets the floor
+  # at 15+; INFRASTRUCTURE.md:250 requires the same major as production.
+  image: ${POSTGRES_IMAGE:-postgres:17-alpine}
+  environment: &postgres-env
+    POSTGRES_USER: ${POSTGRES_BOOTSTRAP_USER:-finsoft_bootstrap}
+    POSTGRES_PASSWORD: ${POSTGRES_BOOTSTRAP_PASSWORD:?set it in .env — copy .env.example}
+    POSTGRES_DB: postgres
+    # UTF8 with PostgreSQL's builtin provider and C.UTF-8. Deterministic byte
+    # ordering that is stable across glibc AND ICU versions, so a base-image
+    # bump can never silently reorder a ledger or corrupt index ordering.
+    POSTGRES_INITDB_ARGS: >-
+      --encoding=UTF8
+      --locale-provider=builtin
+      --builtin-locale=C.UTF-8
+    # created_at is server UTC (NON_NEGOTIABLES rule 13). No developer's host
+    # clock may influence a default.
+    TZ: UTC
+    PGTZ: UTC
+  stop_grace_period: 10s
+
+services:
+  # ---------------------------------------------------------------- #
+  # Development database
+  # ---------------------------------------------------------------- #
+  postgres:
+    <<: *postgres-common
+    container_name: ${COMPOSE_PROJECT_NAME:-finsoft}-postgres
+    environment:
+      <<: *postgres-env
+      FINSOFT_DB: ${POSTGRES_DB:-finsoft}
+      FINSOFT_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?set it in .env}
+      FINSOFT_MIGRATION_PASSWORD: ${POSTGRES_MIGRATION_PASSWORD:?set it in .env}
+      FINSOFT_READONLY_PASSWORD: ${POSTGRES_READONLY_PASSWORD:?set it in .env}
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # Nothing in docs/ specifies a healthcheck. This exists to make the
+      # `down -v && up` guarantee real: dependants must not start before
+      # PostgreSQL accepts connections to the application database.
+      test: ['CMD-SHELL', 'pg_isready -U "$$POSTGRES_USER" -d "$$FINSOFT_DB" -h 127.0.0.1']
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  # ---------------------------------------------------------------- #
+  # Test database — a separate cluster, not a separate database.
+  # A test run can never reach development data, and can be reset by
+  # destroying it.
+  # ---------------------------------------------------------------- #
+  postgres-test:
+    <<: *postgres-common
+    container_name: ${COMPOSE_PROJECT_NAME:-finsoft}-postgres-test
+    environment:
+      <<: *postgres-env
+      FINSOFT_DB: ${POSTGRES_TEST_DB:-finsoft_test}
+      FINSOFT_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?set it in .env}
+      FINSOFT_MIGRATION_PASSWORD: ${POSTGRES_MIGRATION_PASSWORD:?set it in .env}
+      FINSOFT_READONLY_PASSWORD: ${POSTGRES_READONLY_PASSWORD:?set it in .env}
+    ports:
+      - '${POSTGRES_TEST_PORT:-5433}:5432'
+    volumes:
+      - postgres-test-data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    # Durability off. This data is disposable by definition, and losing it on
+    # a crash costs nothing while making every test reset substantially
+    # faster. Never do this to the development database.
+    command: >-
+      postgres
+      -c fsync=off
+      -c synchronous_commit=off
+      -c full_page_writes=off
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$$POSTGRES_USER" -d "$$FINSOFT_DB" -h 127.0.0.1']
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  # ---------------------------------------------------------------- #
+  # Cache and queues. ADR-0002: never a source of truth.
+  # ---------------------------------------------------------------- #
+  redis:
+    image: ${REDIS_IMAGE:-redis:7-alpine}
+    container_name: ${COMPOSE_PROJECT_NAME:-finsoft}-redis
+    # appendonly no, deliberately. ADR-0002:60 — "if Redis is flushed at any
+    # moment, the system must lose nothing but speed." A durable local Redis
+    # would let code quietly acquire a dependency on a guarantee production
+    # does not make. BullMQ durability is a staging/production decision.
+    command: ['redis-server', '--appendonly', 'no', '--save', '']
+    ports:
+      - '${REDIS_PORT:-6379}:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  # ---------------------------------------------------------------- #
+  # Test cache. Separate so a suite can FLUSHALL freely — ADR-0002:110
+  # requires a redis-flush test that proves the system survives it.
+  # ---------------------------------------------------------------- #
+  redis-test:
+    image: ${REDIS_IMAGE:-redis:7-alpine}
+    container_name: ${COMPOSE_PROJECT_NAME:-finsoft}-redis-test
+    command: ['redis-server', '--appendonly', 'no', '--save', '']
+    ports:
+      - '${REDIS_TEST_PORT:-6380}:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  postgres-data:
+  postgres-test-data:

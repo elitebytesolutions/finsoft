@@ -12,3 +12,7 @@ database/migrations/
 # tools/parity drives ui-prototype, which is no longer version-controlled.
 # Dead code, slated for removal in FND-017 - not ours to restyle.
 tools/parity/
+
+# dotenv files have no Prettier parser
+.env
+.env.*

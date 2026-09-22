@@ -275,6 +275,16 @@ export default tseslint.config(
    * ---------------------------------------------------------------- */
   {
     files: ['*.config.{js,mjs,ts}', 'tools/**/*.mjs'],
+    languageOptions: {
+      globals: {
+        console: 'readonly',
+        process: 'readonly',
+        Buffer: 'readonly',
+        URL: 'readonly',
+        __dirname: 'readonly',
+        setTimeout: 'readonly',
+      },
+    },
     rules: { 'no-console': 'off' },
   },
   {

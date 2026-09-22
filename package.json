@@ -16,7 +16,13 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "depcruise": "depcruise apps packages --config .dependency-cruiser.cjs",
-    "verify": "npm run typecheck && npm run lint && npm run depcruise && npm run format:check && npm test"
+    "verify": "npm run typecheck && npm run lint && npm run depcruise && npm run format:check && npm test",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "db:reset": "docker compose down -v && docker compose up -d",
+    "db:logs": "docker compose logs -f",
+    "db:verify": "node tools/db/verify.mjs",
+    "db:psql": "docker compose exec postgres psql -U finsoft_bootstrap -d finsoft"
   },
   "engines": {
     "node": ">=24.17.0"
