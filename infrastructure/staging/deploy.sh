@@ -24,10 +24,19 @@ trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
 # THAT. Tags move; digests do not. infrastructure/README.md requires the image
 # which passed staging to be the image that runs in production, and only a
 # digest can carry that promise across two providers.
+# Fails loudly. An earlier version let a failed pull fall through: `set -e`
+# does not abort a failing command inside a command substitution whose output
+# is being redirected, so a denied registry pull wrote API_IMAGE= (empty) and
+# the deploy continued to compose, which then failed with a confusing
+# interpolation error several steps from the real cause.
 resolve() {
-  local name="ghcr.io/${REPO}-$1:${SHA}"
-  docker pull -q "$name" >/dev/null
-  docker inspect --format '{{index .RepoDigests 0}}' "$name"
+  local name="ghcr.io/${REPO}-$1:${SHA}" digest
+  docker pull -q "$name" >/dev/null 2>&1 ||
+    { echo "FATAL: cannot pull $name (is the token missing read:packages?)" >&2; exit 1; }
+  digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$name" 2>/dev/null) || digest=""
+  [ -n "$digest" ] ||
+    { echo "FATAL: $name has no repo digest" >&2; exit 1; }
+  printf '%s' "$digest"
 }
 
 {

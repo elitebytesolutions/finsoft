@@ -229,6 +229,14 @@ jobs:
     needs: [static, test, images]
     if: github.ref == 'refs/heads/develop' || github.event_name == 'workflow_dispatch'
 
+    # The workflow default is `contents: read`, and only the images job
+    # overrides it. Without this the deploy job's GITHUB_TOKEN could not pull
+    # from GHCR at all — the registry login would succeed and every pull
+    # would be denied. Read, not write: this job publishes nothing.
+    permissions:
+      contents: read
+      packages: read
+
     steps:
       - uses: actions/checkout@v4
 
