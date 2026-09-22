@@ -1,4 +1,4 @@
-import { FinDecimal, Rounding, type Dec, type RoundingMode } from './decimal.js'
+import { FinDecimal, Rounding, type Dec, type RoundingMode } from './decimal.ts'
 
 /*
  * Money, unit costs, quantities and percentages. ADR-0011, ADR-0014.

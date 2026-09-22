@@ -27,12 +27,13 @@
     "db:migrate:status": "node --env-file-if-exists=.env packages/database/src/migrate/cli.ts status",
     "db:migrate:verify": "node packages/database/src/migrate/cli.ts verify",
     "db:checksums": "node packages/database/src/migrate/cli.ts checksums",
-    "test:gate": "npm run test:schema && npm run test:security && npm run test:accounting",
+    "test:gate": "npm run smoke && npm run test:schema && npm run test:security && npm run test:accounting",
     "test:schema": "vitest run --dir database/tests",
     "test:security": "vitest run --dir tests/security",
     "db:codegen": "node --env-file-if-exists=.env packages/database/src/generate/cli.ts",
     "db:migrate:test": "node --env-file-if-exists=.env packages/database/src/testing/cli.ts migrate",
-    "test:accounting": "vitest run --dir tests/accounting"
+    "test:accounting": "vitest run --dir tests/accounting",
+    "smoke": "node tools/smoke/runtime.mjs"
   },
   "engines": {
     "node": ">=24.17.0"

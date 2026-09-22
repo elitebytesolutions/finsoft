@@ -13,6 +13,28 @@ import { withGlobal } from '@finsoft/database'
  * at exactly the moment the database is least able to cope.
  */
 
+/**
+ * The lowest schema version this build can run against.
+ *
+ * A count of applied migrations is not a compatibility check — it says the
+ * database has *some* schema, not the one this code expects. A build deployed
+ * ahead of its migrations would report ready and then fail on the first query
+ * against a column that does not exist yet.
+ *
+ * Bump this when a migration lands that the API requires. `health.spec.ts`
+ * asserts it matches the highest migration on disk, so it cannot drift
+ * silently — while the running container still needs no access to the
+ * migration files.
+ */
+export const REQUIRED_SCHEMA_VERSION = 2
+
+/**
+ * A readiness probe must answer quickly or it is useless: an orchestrator
+ * that waits 15s for an answer has already made its own decision. This is far
+ * below the pool's statement_timeout, which is sized for real queries.
+ */
+const PROBE_TIMEOUT_MS = 2_000
+
 export interface CheckResult {
   readonly status: 'up' | 'down'
   readonly detail: string
@@ -21,6 +43,21 @@ export interface CheckResult {
 export interface ReadinessReport {
   readonly status: 'ready' | 'degraded'
   readonly checks: Readonly<Record<string, CheckResult>>
+}
+
+class ProbeTimeout extends Error {
+  constructor() {
+    super('probe timed out')
+    this.name = 'ProbeTimeout'
+  }
+}
+
+function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new ProbeTimeout()), ms)
+  })
+  return Promise.race([work, deadline]).finally(() => clearTimeout(timer)) as Promise<T>
 }
 
 @Injectable()
@@ -39,38 +76,54 @@ export class HealthService {
   }
 
   /**
-   * Counts applied migrations rather than issuing `SELECT 1`.
+   * Verifies three things, in one round trip:
    *
-   * `SELECT 1` proves a socket is open. This proves the connection works, the
-   * application database is the one we think it is, and the schema has been
-   * migrated — which is the condition that actually has to hold before this
-   * process should receive traffic.
+   *   1. the connection works and the application database is reachable;
+   *   2. the schema is at or beyond the version this build requires;
+   *   3. a real table is readable — not merely that the catalog has rows.
    *
-   * It runs through `withGlobal` because it has no tenant and touches only a
-   * global table, which is precisely what that wrapper is for (ADR-0004:77).
+   * It runs through `withGlobal` because it has no tenant and touches only
+   * global tables, which is exactly what that wrapper exists for
+   * (ADR-0004:77).
    */
   private async checkDatabase(): Promise<CheckResult> {
     try {
-      const row = await withGlobal((tx) =>
-        tx
-          .selectFrom('schema_migrations')
-          .select(({ fn }) => fn.countAll<string>().as('applied'))
-          .executeTakeFirst(),
+      const { applied, readable } = await withTimeout(
+        withGlobal(async (tx) => {
+          const version = await tx
+            .selectFrom('schema_migrations')
+            .select(({ fn }) => fn.max('version').as('applied'))
+            .executeTakeFirst()
+
+          // Proves an actual table can be read, not just that
+          // schema_migrations has rows in it.
+          await tx.selectFrom('tenants').select('id').limit(1).execute()
+
+          return { applied: Number(version?.applied ?? 0), readable: true }
+        }),
+        PROBE_TIMEOUT_MS,
       )
-      const applied = Number(row?.applied ?? 0)
-      return applied > 0
-        ? { status: 'up', detail: `${applied} migration(s) applied` }
-        : { status: 'down', detail: 'reachable, but no migrations have been applied' }
+
+      if (!readable) return { status: 'down', detail: 'schema not readable' }
+
+      if (applied < REQUIRED_SCHEMA_VERSION) {
+        return {
+          status: 'down',
+          detail: `schema at ${applied}, this build requires ${REQUIRED_SCHEMA_VERSION}`,
+        }
+      }
+
+      return { status: 'up', detail: `schema ${applied}, requires ${REQUIRED_SCHEMA_VERSION}` }
     } catch (error) {
       /*
-       * The message is deliberately generic. A connection error from `pg`
-       * carries the host, port, database and role, and /health/ready is an
-       * unauthenticated endpoint — rule 20 forbids putting that in a
-       * response. The real error belongs in the logs, which FND-010 wires up.
+       * The detail is deliberately generic. A connection error from `pg`
+       * carries the host, port, database and role, and /health/ready is
+       * unauthenticated — rule 20 forbids putting that in a response. The
+       * real error belongs in the logs, which FND-010 wires up.
        */
       return {
         status: 'down',
-        detail: error instanceof Error ? error.name : 'unreachable',
+        detail: error instanceof ProbeTimeout ? 'timed out' : 'unreachable',
       }
     }
   }

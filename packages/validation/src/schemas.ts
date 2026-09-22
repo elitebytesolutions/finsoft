@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { AmountError, Money, Percentage, Quantity, UnitCost } from './money.js'
+import { AmountError, Money, Percentage, Quantity, UnitCost } from './money.ts'
 
 /*
  * Zod schemas for the boundary. ADR-0011: money arrives as a string in JSON

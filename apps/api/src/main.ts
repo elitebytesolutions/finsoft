@@ -3,6 +3,7 @@ import { Logger } from '@nestjs/common'
 import { NestFactory } from '@nestjs/core'
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger'
 import { closeDatabase } from '@finsoft/database'
+import { AllExceptionsFilter } from './common/all-exceptions.filter'
 import { AppModule } from './app.module'
 
 /*
@@ -26,6 +27,13 @@ async function bootstrap(): Promise<void> {
    * travels the same path as real traffic, which is the point of a probe.
    */
   app.setGlobalPrefix('api')
+
+  /*
+   * One error shape for every failure, and nothing internal in a response.
+   * An HttpException carries a deliberate status and message; anything else
+   * becomes a flat 500 with the real error logged server-side (rule 20).
+   */
+  app.useGlobalFilters(new AllExceptionsFilter())
 
   /*
    * No global ValidationPipe.

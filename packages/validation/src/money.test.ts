@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { Decimal } from 'decimal.js'
-import { FinDecimal, Rounding } from './decimal.js'
-import { AmountError, Money, Percentage, Quantity, UnitCost } from './money.js'
+import { FinDecimal, Rounding } from './decimal.ts'
+import { AmountError, Money, Percentage, Quantity, UnitCost } from './money.ts'
 
 /*
  * These tests are the Compliance section of ADR-0014, executed.
