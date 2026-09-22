@@ -156,7 +156,9 @@ ADR-0007's edge-case table cannot be carried forward unchanged: one of its rows 
 
 ### 5. Residual allocation — one case, and it is explicit
 
-A **rounding** residual arises in exactly one place: when an outward movement takes the quantity to **zero**, and the COGS computed from the rate does not equal the value carried.
+A **rounding** residual arises in exactly one place: when an outward movement takes the quantity to **zero**, and the outward value computed from the rate does not equal the value carried.
+
+**This is every outward movement, not just a sale.** A write-off, a shrinkage adjustment, an expiry destruction or a purchase return that removes the last units triggers the same flush on the same terms. Only the debit account differs — it is whatever the posting rule for that event names, not necessarily Cost of Goods Sold. The rule is stated in terms of `outward_value` for exactly this reason (§4a), and a write-off of the final units that left a few paise of carried value behind would otherwise strand it with no rule.
 
 This is the only difference that reaches the rounding account. It is bounded (the bound is stated below), it has no economic content, and it exists solely because a rate is carried at 6 dp while a value is carried at 4. The negative-balance difference of §4a is a different thing and must never be routed here: it is unbounded, it is economic — understated COGS on stock issued before it existed — and routing it to the rounding account would make that account unreconcilable and hide a cost-of-sales misstatement inside a line item auditors are told to ignore as immaterial. It is **not posted at all** under this ADR; see §4a.
 

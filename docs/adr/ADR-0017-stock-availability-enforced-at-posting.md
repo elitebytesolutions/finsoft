@@ -55,11 +55,34 @@ Confirmed against the schema rather than assumed: `grn_headers` carries `supplie
 
 `supplier_bill_no` is nullable and not unique, so two GRNs may be entered against the same supplier bill — each receiving stock and each raising a payable. That is the real double-count vector, and a uniqueness constraint alone **does not close it**. Four things are needed, and the first three are product decisions:
 
-**(a) Unnumbered GRNs.** A partial unique index skips NULLs, so any number of unnumbered GRNs remain possible and the constraint protects nothing on exactly the entries most likely to be duplicates. **Decision: a supplier bill number is required on a GRN that raises a payable.** A GRN without one may be saved as a draft but may not post. Where a supplier genuinely issues no document, the entry uses an explicit system-generated placeholder recorded as such — visible as a placeholder, never silently blank.
+**(a) Unnumbered GRNs.** A partial unique index skips NULLs, so any number of unnumbered GRNs remain possible and the constraint protects nothing on exactly the entries most likely to be duplicates.
+
+An earlier draft resolved this as *"a supplier bill number is required to post."* **That is withdrawn, because in the combined model it prevents receiving goods before the invoice arrives** — which is the normal sequence in distribution, not an edge case. Goods turn up with a delivery note; the invoice follows. A rule that blocks the receipt until the invoice exists stops the warehouse working, and operators will enter a fake number to get past it, which destroys the duplicate detection the rule was for.
+
+The requirement attaches to the **payable**, not to the stock receipt. In the combined model those are the same document, so the two cannot be separated — which is the tension §(c) resolves. Until then: the bill number is **required to raise a payable and not required to receive stock**, and in the combined model that means it is required to post. Where a supplier genuinely issues no document, an explicit system-generated placeholder is recorded and displayed **as** a placeholder, never silently blank.
 
 **(b) Normalisation.** `BT-1042`, `bt-1042` and `BT‑1042 ` are the same bill to a human and three distinct values to a `UNIQUE` index. **Decision, documented and applied at write time:** trim leading and trailing whitespace, collapse internal runs of whitespace to a single space, and fold to upper case for comparison. The normalised form is stored in a generated column that the index covers; the original as-entered text is retained for display and audit, because the supplier's own formatting is evidence.
 
-**(c) One bill, several receipts.** This needs confirming with the business before the constraint ships: a supplier invoice covering goods delivered across several days is common in distribution, and a naive `UNIQUE (tenant_id, vendor_id, supplier_bill_no_normalised)` would **reject legitimate partial receipts**. If that is legitimate here — and the `purchase_orders` → `grn_headers` partial-receipt flow suggests it is — then uniqueness belongs on `(tenant_id, vendor_id, bill_no, line/delivery discriminator)`, or the duplicate check becomes a warning on entry rather than a constraint. **This is an open product question and the constraint must not be written until it is answered**, because the wrong shape here blocks routine work.
+**(c) One bill, several receipts — a business workflow decision, and the constraint does not ship before it is made.**
+
+An earlier draft cited the `purchase_orders` → `grn_headers` partial-receipt flow as evidence that one bill spans several GRNs. **That inference was wrong.** Partial receipts against a purchase order say nothing about how the supplier bills; they are different axes:
+
+| Supplier workflow | What it needs |
+|---|---|
+| One PO, several deliveries, **each with its own bill** | Several GRNs with **distinct** bill numbers. The current combined model already supports this, and uniqueness is correct |
+| One supplier bill covering **several separately posted deliveries** | Several goods receipts linked to **one** purchase invoice. The combined model **cannot** express this, and uniqueness would block legitimate work |
+
+Only the second case is a problem, and the schema cannot tell us which one applies. **The concrete question for the business is:**
+
+> **Do we need to post stock from multiple deliveries before receiving one consolidated supplier invoice?**
+
+**If no** — the recommendation for this release — keep one supplier bill = one combined GRN/purchase invoice. Do not split the document merely because consolidated billing is *possible* somewhere in the trade; split it when these suppliers actually work that way. §(a)'s bill-number-to-post rule is then acceptable, because the invoice genuinely accompanies the goods.
+
+**If yes**, the combined document model is **insufficient** and separate receipt and invoice records are needed **now**, not later. Shipping the uniqueness constraint against a combined model would block routine work, and the workaround operators reach for — suffixes, `-A`/`-B`, fake numbers — defeats duplicate detection entirely and is worse than having no constraint. §(a)'s rule also falls, for the same reason.
+
+**Both questions have the same trigger**, which is why they resolve together: consolidated billing and receive-before-invoice each require the receipt to be separable from the payable. Answer one and you have answered both.
+
+**Status: unresolved, and it blocks the constraint — not the ADR.** Nothing else here waits on it.
 
 **(d) Idempotency.** None of the above helps against a retry: the same GRN submitted twice — a double-clicked button, a retried request after a timeout, a replayed job — can receive stock twice under different GRN numbers. **Posting is idempotent**: a client-supplied idempotency key on the posting request, recorded with the resulting document, so a retry returns the original result rather than posting again. This is the same discipline the posting engine already requires (NON_NEGOTIABLES rule 8 — three identical requests produce one journal entry), applied to stock receipt.
 
