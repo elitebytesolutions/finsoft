@@ -1,0 +1,61 @@
+{
+  "id": "A",
+  "name": "Weighted average across opening, purchase and sale",
+  "source": "docs/NON_NEGOTIABLES.md §3",
+  "description": [
+    "The reference case the constitution spells out. Every figure below was",
+    "computed by hand and appears verbatim in NON_NEGOTIABLES §3.",
+    "",
+    "Implementations may change; these numbers may not. If a change to the",
+    "costing code makes this file fail, the code is wrong — not the file."
+  ],
+
+  "movements": [
+    { "sequence": 1, "type": "OPENING", "quantity": "100", "unitCost": "80" },
+    { "sequence": 2, "type": "PURCHASE", "quantity": "50", "unitCost": "100" },
+    { "sequence": 3, "type": "SALE", "quantity": "40", "unitPrice": "140" }
+  ],
+
+  "expected": {
+    "totalValueBeforeSale": "13000.00",
+    "totalQuantityBeforeSale": "150",
+    "weightedAverageCost": "86.666667",
+    "closingQuantity": "110",
+    "revenue": "5600.00",
+    "cogs": "3466.67",
+    "grossProfit": "2133.33",
+    "inventoryValue": "9533.33"
+  },
+
+  "expectedAtStorageScale": {
+    "$comment": [
+      "The same figures before presentation rounding. Amounts are numeric(19,4)",
+      "and the weighted average is numeric(19,6), per ADR-0011. These are what",
+      "gets stored; the values above are what gets shown."
+    ],
+    "weightedAverageCost": "86.666667",
+    "cogs": "3466.6667",
+    "revenue": "5600.0000",
+    "grossProfit": "2133.3333",
+    "inventoryValue": "9533.3334",
+    "inventoryGlBalance": "9533.3333"
+  },
+
+  "openQuestion": {
+    "$comment": [
+      "inventoryValue and inventoryGlBalance differ by Rs 0.0001 at storage",
+      "scale, while both present as Rs 9,533.33. Invariant 10 requires the",
+      "inventory ledger valuation to reconcile to the inventory GL balance",
+      "exactly, and §4 forbids tolerances in an invariant check — but",
+      "ADR-0007's compliance section says 'within the documented rounding",
+      "tolerance'. Two accepted documents disagree.",
+      "",
+      "The residual is asserted below so it cannot drift while the ruling is",
+      "outstanding. Resolving it needs a clarifying ADR, and the resolution is",
+      "expected to be ADR-0011's rounding account rather than a tolerance.",
+      "Until then this scenario does not assert Invariant 10."
+    ],
+    "invariant10Residual": "0.0001",
+    "blocks": "FinancialInvariantSuite invariant 10"
+  }
+}
