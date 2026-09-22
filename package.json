@@ -11,12 +11,10 @@
     "build": "npm run build --workspace @finsoft/web",
     "lint": "npm run lint --workspace @finsoft/web",
     "typecheck": "npm run typecheck --workspace @finsoft/web",
-    "test": "npm run test --workspace @finsoft/web",
-    "prototype": "npm run dev --prefix ui-prototype",
-    "parity": "node tools/parity/run.mjs"
+    "test": "npm run test --workspace @finsoft/web"
   },
   "engines": {
-    "node": ">=20.9.0"
+    "node": ">=24.17.0"
   },
   "devDependencies": {
     "pixelmatch": "^7.2.0",
