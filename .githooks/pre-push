@@ -92,13 +92,27 @@ BASE=$(git merge-base HEAD origin/develop 2>/dev/null || git merge-base HEAD ori
 if [ -n "$BASE" ]; then
   CHANGED=$(git diff --name-only --diff-filter=ACMR "$BASE" HEAD -- '*.ts' '*.tsx' '*.mjs' '*.cjs' 2>/dev/null || true)
   if [ -n "$CHANGED" ]; then
-    printf '    lint (changed files) ... '
-    # shellcheck disable=SC2086
-    if npx eslint $CHANGED >/dev/null 2>&1; then
+    COUNT=$(printf '%s\n' "$CHANGED" | wc -l | tr -d ' ')
+    printf '    lint (%s changed files) ... ' "$COUNT"
+
+    # Batched through xargs rather than expanded onto one command line.
+    #
+    # On Windows npx runs through cmd.exe, which caps a command line at about
+    # 8191 characters. A branch that had diverged by 229 files blew past that,
+    # and the hook printed FAILED for a command that had never run — a tool
+    # that cannot start being indistinguishable from a tool that found a
+    # problem. xargs splits the list and returns non-zero if ANY batch fails,
+    # so a real finding still stops the push.
+    LINT_LOG=$(mktemp)
+    if printf '%s\n' "$CHANGED" | xargs -d '\n' -n 40 npx eslint >"$LINT_LOG" 2>&1; then
       printf 'ok\n'
+      rm -f "$LINT_LOG"
     else
       printf 'FAILED\n\n'
-      echo "  npx eslint $CHANGED"
+      # The findings themselves, not a command to re-run by hand — the whole
+      # point of the batching is that the by-hand command may not fit.
+      sed 's/^/  /' "$LINT_LOG" | head -60
+      rm -f "$LINT_LOG"
       exit 1
     fi
   fi
