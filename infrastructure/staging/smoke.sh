@@ -75,4 +75,35 @@ for PORT in 5432 6379 3001 3002; do
 done
 echo "  5432, 6379, 3001, 3002 all closed from outside"
 
+# ---------------------------------------------------------------------------
+# 5. A real application request through the proxy.
+#
+#    Readiness proves the API found its database. It says nothing about
+#    whether the thing a person opens actually renders — and those fail
+#    independently: the web container can be down, or the proxy misrouted,
+#    with a perfectly ready API behind it.
+# ---------------------------------------------------------------------------
+printf 'waiting for the web application '
+for i in $(seq 1 "$ATTEMPTS"); do
+  CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$BASE/" 2>/dev/null || echo 000)
+  if [ "$CODE" = "200" ]; then
+    printf ' up after %ss\n' "$(((i - 1) * INTERVAL))"
+    break
+  fi
+  [ "$i" -eq "$ATTEMPTS" ] && fail "GET / returned $CODE after $((ATTEMPTS * INTERVAL))s"
+  printf '.'
+  sleep "$INTERVAL"
+done
+
+# Rendered HTML, not just a 200. A proxy error page is also a 200 in some
+# configurations, and an empty shell would satisfy a status-code check.
+BODY=$(curl -fsS --max-time 10 "$BASE/")
+echo "$BODY" | grep -q '<title>' || fail "GET / returned no <title> — not a rendered page"
+echo "  GET / renders: $(echo "$BODY" | grep -oE '<title>[^<]*</title>' | head -1)"
+
+# Same origin, which is the reason the proxy exists at all: ADR-0009's refresh
+# cookie is SameSite=Strict and a cross-origin call would never send it.
+echo "$BODY" | grep -qi 'localhost:3001\|127.0.0.1:3001' &&
+  fail "the page references the API by host:port — it is not being served same-origin"
+
 printf '\n\033[32mSMOKE PASSED\033[0m\n'

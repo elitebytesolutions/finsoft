@@ -33,17 +33,14 @@
 		reverse_proxy web:3000
 	}
 
-	# apps/web is not deployed yet: it does not build (FND-017). Without this,
-	# every request to / returns a bare 502 that says nothing about why.
+	# A bare 502 from a proxy says nothing about which side is down. This says
+	# which, so the first question during an incident is already answered.
 	handle_errors {
 		@web_down expression {err.status_code} in [502, 503]
-		respond @web_down `FinSoft staging
+		respond @web_down `FinSoft staging — the web application is not responding.
 
-The API is up and reachable at /api/health.
-
-The web application is not deployed: apps/web does not currently build
-(useSearchParams outside a Suspense boundary, FND-017). This is expected,
-not an outage.
+The proxy is up. Check /api/health: if that answers, the API is healthy and
+the fault is in the web container alone.
 ` 503
 	}
 }

@@ -100,15 +100,8 @@ services:
         condition: service_healthy
     networks: [internal]
 
-  # Behind a profile because apps/web does not currently build: `next build`
-  # fails on at least six pages with "useSearchParams() should be wrapped in a
-  # suspense boundary" (FND-017). The service is defined so that enabling it is
-  # a one-word change once that is fixed, rather than a rewrite.
-  #
-  #   docker compose --profile web up -d
   web:
-    image: ${WEB_IMAGE:-ghcr.io/elitebytesolutions/finsoft-web:missing}
-    profiles: [web]
+    image: ${WEB_IMAGE:?deploy must set WEB_IMAGE to a digest}
     restart: unless-stopped
     environment:
       NODE_ENV: production

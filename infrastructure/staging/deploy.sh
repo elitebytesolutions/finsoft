@@ -43,20 +43,18 @@ resolve() {
   echo "# Written by CI on $(date -u +%FT%TZ). Digests, never tags."
   echo "API_IMAGE=$(resolve api)"
   echo "WORKER_IMAGE=$(resolve worker)"
+  echo "WEB_IMAGE=$(resolve web)"
   echo "APP_VERSION=${SHA}"
 } >.env.images
 
 echo "deploying:"
-grep -E '^(API|WORKER)_IMAGE=' .env.images
+grep -E '^(API|WORKER|WEB)_IMAGE=' .env.images
 
 # Two env files, and the split is the point: .env holds database credentials
 # generated on this host that CI has never seen and cannot read, .env.images
 # holds only what CI just resolved. A workflow run never handles a database
 # password (INFRASTRUCTURE §6).
 #
-# apps/web is absent deliberately — it is behind a compose profile because it
-# does not build yet (FND-017). Adding --profile web is the whole change once
-# it does.
 compose() { docker compose --env-file .env --env-file .env.images "$@"; }
 
 # The data plane first, so migrations have something to connect to.
