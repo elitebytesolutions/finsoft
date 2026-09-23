@@ -46,7 +46,14 @@ RUN apk add --no-cache dumb-init
 # apps/web/server.js rather than at server.js.
 COPY --from=build --chown=node:node /app/apps/web/.next/standalone ./
 COPY --from=build --chown=node:node /app/apps/web/.next/static ./apps/web/.next/static
-COPY --from=build --chown=node:node /app/apps/web/public ./apps/web/public
+
+# No `public/` copy. This app has no public directory — nothing references a
+# root-relative static asset — and COPYing a path that does not exist is a
+# hard build failure, not a no-op. An earlier version included it out of habit
+# and failed in CI with "/app/apps/web/public: not found".
+#
+# Add it back with the directory if static assets are ever introduced; a
+# missing public/ at runtime is silent, whereas this was loud.
 
 USER node
 
