@@ -367,6 +367,14 @@ design system skeleton            database framework + tenant context + RLS help
 
 **Do not build business features in Wave 0.** Exit criterion: an empty-but-real vertical (one health endpoint, one page, one table, one migration, one test of each kind) goes from a branch to staging through the full pipeline, automatically.
 
+> **Task register:** the `FND-000…018` contracts — scope, dependencies, acceptance criteria, status and evidence — are recorded in
+> [WAVE_0_REGISTER.md](WAVE_0_REGISTER.md). They previously existed only in planning conversation, which meant the scope of Wave 0 was
+> not durable between sessions.
+>
+> **"One test of each kind" has an open scope question.** `tests/reconciliation/` has no suite and cannot have a meaningful one until a
+> posting exists. A deferral to Wave 5/6 is proposed, with an owner and acceptance criteria, and is **pending Product Owner approval** —
+> see the register. Wave 0 does not close on that deliverable until the decision is recorded.
+
 ### Wave 1 — Platform
 
 ```
