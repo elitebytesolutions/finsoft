@@ -86,6 +86,34 @@ jobs:
         run: npm run hooks:verify
 
   # ------------------------------------------------------------------ #
+  # Secret scanning. NON_NEGOTIABLES rule 20.
+  #
+  # Gitleaks as a pinned standalone binary, checksum-verified — not the
+  # GitHub Action. An action is a third party running arbitrary code in a
+  # job that holds GITHUB_TOKEN; a tarball pinned to a recorded SHA256 is
+  # a smaller surface and auditable from one file in this repository.
+  #
+  # NO continue-on-error, and none may be added. A finding fails the run,
+  # and so does a scanner that cannot complete — a broken scanner must
+  # never be indistinguishable from a clean repository.
+  # ------------------------------------------------------------------ #
+  secrets:
+    name: secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history. A secret committed months ago and deleted since is
+          # still in the pack file and still compromised; the default
+          # shallow clone would report the repository clean.
+          fetch-depth: 0
+
+      - name: scan
+        run: bash tools/security/secret-scan.sh
+
+  # ------------------------------------------------------------------ #
   # The real stack. Not a mocked database: the RLS and role tests assert
   # properties only PostgreSQL can demonstrate, and a mock would agree
   # with whatever it was told.
@@ -240,7 +268,12 @@ jobs:
     name: deploy to staging
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [static, test, images]
+    # `secrets` is in this list deliberately. On this repository branch
+    # protection is unavailable, so a failing scan cannot literally block a
+    # merge the way rule 20 describes — but it CAN stop the leak reaching a
+    # running system, and that is enforcement worth having rather than a
+    # status nobody is required to read.
+    needs: [static, secrets, test, images]
     if: github.ref == 'refs/heads/develop' || github.event_name == 'workflow_dispatch'
 
     # The workflow default is `contents: read`, and only the images job
