@@ -45,6 +45,22 @@ Gitleaks runs as a required job on every push and every pull request, over the *
 
 So today the merge button is not gated by anything. A person with write access can merge a pull request whose secret scan failed, and nothing in the repository will stop them. **The clause is not satisfied, and this file exists rather than a claim that it is.**
 
+### OBSERVED, 2026-09-23 — this stopped being hypothetical
+
+The scan was **red for 13 consecutive commits** and the branch merged anyway.
+
+A JWT-shaped test fixture was added to two more files without widening the allowlist that covered the first. Every push after `1dd0044` failed the `secrets` job. Every one was pushed regardless, and the pull request merged to `main` with the check red.
+
+Three things are worth separating, because the ruling depends on which failed:
+
+- **The scanner was correct on every run.** True positive by its own rules, every time.
+- **No credential was committed.** The value is the public RFC 7519 example token, which authenticates to nothing.
+- **What failed was the human loop** — the only control this gap leaves in place. "Agents do not merge. Every merge is a human decision by someone who can see the failing check" is compensating control 4 below, and it is the one that did not hold.
+
+**The compensating control that DID hold is control 2.** `deploy-staging` lists `secrets` in its `needs`, so a red scan cannot reach a running system. Staging was never deployed from any of those commits, and that is enforced by GitHub rather than by anyone remembering.
+
+So the entry below is accurate and its severity assessment was optimistic. "They reduce the window; they do not close it" is right — and the window was open for thirteen commits without anyone noticing, which is the number that should inform the plan decision rather than the principle alone.
+
 ### Compensating controls
 
 1. The scan fails loudly on every push and pull request, so the state is never unknown.

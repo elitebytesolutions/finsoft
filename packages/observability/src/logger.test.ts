@@ -213,8 +213,13 @@ describe('the message path is redacted too', () => {
    * `logger.error(\`auth failed: ${header}\`)` is what someone writes while
    * debugging the thing that is going wrong.
    */
-  const JWT =
-    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk'
+  const JWT = [
+    // The RFC 7519 example token, assembled so no JWT-shaped literal exists
+    // in the repository. See redact.test.ts for why that matters.
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9',
+    'eyJzdWIiOiIxMjM0NTY3ODkwIn0',
+    'dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk',
+  ].join('.')
 
   it('redacts a token concatenated into the message', () => {
     const { stream, line } = capture()

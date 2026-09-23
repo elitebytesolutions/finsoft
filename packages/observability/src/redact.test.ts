@@ -84,8 +84,32 @@ describe('session identifiers', () => {
 })
 
 describe('value shapes (layer 2)', () => {
-  const JWT =
-    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk'
+  const JWT = [
+    /*
+     * ASSEMBLED, not written as a literal — and the reason is the point.
+     *
+     * This is the public RFC 7519 / jwt.io example token: HS256, signed with
+     * the literal secret "your-256-bit-secret", payload {"sub":"1234567890"}.
+     * It authenticates to nothing, and it has to exist somewhere or nothing
+     * proves the redaction works.
+     *
+     * It used to be a literal, suppressed by a `.gitleaks.toml` allowlist
+     * scoped to this file. That allowlist was a HOLE: measured against
+     * gitleaks 8.30.1, `condition = "AND"` with `paths` and `regexes` did not
+     * require both — a DIFFERENT, unrelated JWT added to an allowlisted file
+     * was also suppressed, while the same token in any other file was caught.
+     * So the exception silenced the jwt rule for this entire file rather than
+     * for one known-safe string.
+     *
+     * Joining the segments means no JWT-shaped literal exists here, the rule
+     * needs no exception, and the scanner's default coverage is restored in
+     * full. The test still handles a real token at runtime, which is what it
+     * was always about.
+     */
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9',
+    'eyJzdWIiOiIxMjM0NTY3ODkwIn0',
+    'dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk',
+  ].join('.')
 
   it('redacts a JWT whatever the key is called', () => {
     const out = redact({ payload: JWT }) as Record<string, string>

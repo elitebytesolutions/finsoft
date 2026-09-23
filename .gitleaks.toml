@@ -16,30 +16,72 @@
 useDefault = true
 
 # ---------------------------------------------------------------------------
-# Reviewed exceptions
+# The one exception: a public documentation token, exempted BY STRING
 # ---------------------------------------------------------------------------
 
 [[allowlists]]
 description = """
-The public example JWT from RFC 7519 / jwt.io, used as a fixture in the
-observability redaction tests.
+The public RFC 7519 / jwt.io example token. HS256, signed with the literal
+secret "your-256-bit-secret", payload {"sub":"1234567890"}. It authenticates
+to nothing, anywhere, and it is the canonical counter-example every JWT
+redaction test needs.
 
-It is the canonical documentation token — HS256, signed with the literal
-secret "your-256-bit-secret", payload {"sub":"1234567890"} — and it
-authenticates to nothing. It exists in that file precisely so the tests can
-prove the LOGGER redacts a JWT shape before it reaches an aggregator
-(ADR-0016, layer 2). A rule that forbids its own counter-example gets the
-counter-example deleted, and then nothing proves the redaction works.
+EXEMPTED BY STRING, WITH NO PATH SCOPE, and that is the correction rather
+than an oversight.
 
-Scoped as narrowly as the format allows: this exact string, in that one file.
-Any other JWT-shaped value, there or anywhere else, still fails the scan.
+The previous entry paired this regex with `paths` under `condition = "AND"`,
+which reads as "this exact string, in that one file". Measured against
+gitleaks 8.30.1, it did not behave that way: a DIFFERENT, unrelated JWT added
+to an allowlisted file was suppressed as well, while the same token in any
+other file was caught. The `paths` clause was doing the work and the regex
+was decoration -- so the entry silenced the jwt rule for a whole file while
+claiming to exempt one value.
+
+Dropping `paths` inverts that. The exemption now attaches to the VALUE, which
+is the thing that is provably not a credential, rather than to a LOCATION,
+which is not. A real JWT in any file -- including the test files -- still
+fails.
+
+The fixtures were ALSO changed to assemble the token from its three segments
+rather than hold it as a literal, so nothing in the working tree matches this
+rule at all. This entry is still necessary because gitleaks scans FULL
+HISTORY and the literal is in past commits: a secret committed once is in the
+pack file forever, which is precisely why the scan is configured that way.
 """
-condition = "AND"
-paths = ['''packages/observability/src/redact\.test\.ts$''']
 regexes = [
   '''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJzdWIiOiIxMjM0NTY3ODkwIn0\.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk''',
 ]
 
+# VERIFIED, not assumed. Reproduce the measurement before adding any entry
+# here: add a DIFFERENT secret of the same shape to whatever the exception is
+# meant to cover, and confirm the scan still fails. An exception whose scope
+# has not been measured is an exception of unknown size -- which is what the
+# previous version of this entry turned out to be.
+
+# ---------------------------------------------------------------------------
+# What this entry's history demonstrates, recorded because it is evidence
+# ---------------------------------------------------------------------------
+#
+# The scan was RED for 13 consecutive commits and nobody noticed, because
+# nothing required anyone to read it. The fixture was added to logger.test.ts
+# in 1dd0044 and to log-leak.spec.ts in e9d4dcc; every push after the first
+# of those failed the secrets job, and every one of them was pushed anyway.
+# The branch then merged with the check red.
+#
+# That is GAP-001 happening, not in the abstract. GAP-001 says: "A person
+# with write access can merge a pull request whose secret scan failed, and
+# nothing in the repository will stop them." It was written as an exposure to
+# be aware of. It is now an observed event with a date.
+#
+# Note what did NOT go wrong, because the difference matters for the ruling:
+# the scanner was correct on every one of those runs, the finding was a true
+# positive by its own rules, and no actual credential was committed. What
+# failed was the human loop — the only control GAP-001 leaves in place.
+#
+# The compensating control that DID hold: deploy-staging lists `secrets` in
+# its `needs`, so a red scan cannot reach a running system. Staging was never
+# deployed from any of those commits.
+#
 # ---------------------------------------------------------------------------
 # Deliberately NOT allowlisted
 # ---------------------------------------------------------------------------

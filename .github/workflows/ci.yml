@@ -113,6 +113,48 @@ jobs:
       - name: scan
         run: bash tools/security/secret-scan.sh
 
+      # The scanner's own negative control.
+      #
+      # A scan that passes proves the repository is clean OR that the scanner
+      # has been configured into uselessness, and those look identical from
+      # the outside. This tells them apart by planting a credential and
+      # requiring the scan to fail.
+      #
+      # It plants it in the file the ONE allowlist entry used to cover,
+      # because that is where the hole was: `condition = "AND"` with `paths`
+      # and `regexes` did not require both, so a different, unrelated JWT in
+      # that file was suppressed too. The entry claimed to exempt one value
+      # and actually disabled a rule for a whole file. This step would have
+      # caught that the day it was written.
+      #
+      # The planted value is left in place on failure, so whoever debugs the
+      # job can see exactly what the scanner was shown.
+      - name: the scanner still catches a planted secret
+        run: |
+          # ASSEMBLED, for the same reason the test fixtures are.
+          #
+          # The first version of this step wrote the token as a literal, and
+          # the scan then flagged THIS FILE — a real JWT-shaped string,
+          # committed. The step meant to prove the scanner works was itself
+          # the finding. Correct behaviour by the scanner, and a reminder
+          # that `gitleaks detect` reads COMMITS: verifying before committing
+          # this file is what let it through.
+          HEAD_SEG='eyJhbGciOiJIUzI1NiJ9'
+          BODY_SEG='eyJzdWIiOiJwbGFudGVkLWJ5LWNpIiwibmFtZSI6IlgifQ'
+          SIGN_SEG='QmxhaEJsYWhCbGFoU2lnbmF0dXJlVmFsdWVYWVo'
+          {
+            echo ''
+            echo "// ${HEAD_SEG}.${BODY_SEG}.${SIGN_SEG}"
+          } >> packages/observability/src/redact.test.ts
+          if bash tools/security/secret-scan.sh; then
+            echo "::error::The secret scan PASSED with a credential planted in the repository."
+            echo "::error::It is not scanning what it claims to scan. Check .gitleaks.toml for an"
+            echo "::error::allowlist whose scope is wider than its description."
+            exit 1
+          fi
+          echo "  planted secret was caught — the scan is doing its job"
+          git checkout -- packages/observability/src/redact.test.ts
+
   # ------------------------------------------------------------------ #
   # The real stack. Not a mocked database: the RLS and role tests assert
   # properties only PostgreSQL can demonstrate, and a mock would agree
