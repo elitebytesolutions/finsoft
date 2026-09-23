@@ -9,7 +9,87 @@ export type Generated<T> = T extends ColumnType<infer S, infer I, infer U>
   ? ColumnType<S, I | undefined, U>
   : ColumnType<T, T | undefined, T>;
 
+export type Json = JsonValue;
+
+export type JsonArray = JsonValue[];
+
+export type JsonObject = {
+  [x: string]: JsonValue | undefined;
+};
+
+export type JsonPrimitive = boolean | number | string | null;
+
+export type JsonValue = JsonArray | JsonObject | JsonPrimitive;
+
 export type Timestamp = ColumnType<Date, Date | string, Date | string>;
+
+export interface Outbox {
+  /**
+   * A human has taken responsibility for this FAILED row. The ADR-0010 alert is defined over UNACKNOWLEDGED failed rows; without this it would fire forever from the first one and be muted.
+   */
+  acknowledged_at: Timestamp | null;
+  acknowledged_by: string | null;
+  /**
+   * CONSUMER failures. Cap 10, after which the row must become FAILED — outbox_exhausted_is_failed makes that a schema fact rather than a dispatcher convention.
+   */
+  attempts: Generated<number>;
+  available_at: Generated<Timestamp>;
+  /**
+   * When a dispatcher claimed the row. LEASE INTERVAL: 5 minutes is the contract value, and the dispatcher MUST read it from configuration rather than hard-coding it — a crash test that cannot shorten the lease cannot run in under five minutes.
+   */
+  claimed_at: Timestamp | null;
+  /**
+   * The request id that produced this row, propagated end to end (INFRASTRUCTURE §8).
+   */
+  correlation_id: string;
+  created_at: Generated<Timestamp>;
+  created_by: string;
+  dispatched_at: Timestamp | null;
+  /**
+   * Identity of the BUSINESS EFFECT, not of this row. The consumer deduplicates on (tenant_id, topic, effect_key); a replay carries its original value unchanged, so a fresh id cannot bypass deduplication.
+   */
+  effect_key: string;
+  id: Generated<string>;
+  /**
+   * Sanitised by packages/observability redactError BEFORE writing. readonly_support can read this and it is in every backup (rule 20).
+   */
+  last_error: string | null;
+  /**
+   * The lease fence. Regenerated on every claim INCLUDING every reclaim. Every ack, failure and reclaim carries WHERE id = $1 AND lease_id = $2 and asserts rowcount = 1. A stale dispatcher updates nothing.
+   */
+  lease_id: string | null;
+  occurred_at: Timestamp;
+  /**
+   * Identifiers and minimal facts, at most 4096 bytes. Never an amount, an account or any figure that must agree with the ledger (ADR-0010). Immutable after insert.
+   */
+  payload: Json;
+  /**
+   * DISPATCHER deaths: leases that expired without an ack. Cap 5. Counted separately from attempts because a deploy that restarts workers is an infrastructure event, not a poison message.
+   */
+  reclaims: Generated<number>;
+  /**
+   * The row this one replays. correlation_id cannot answer this: it also groups every unrelated row from the same request.
+   */
+  replay_of: string | null;
+  /**
+   * PENDING -> IN_FLIGHT -> DONE, or -> FAILED at either cap. Transitions are enforced by outbox_enforce_transition(); DONE and FAILED are terminal.
+   */
+  status: Generated<string>;
+  /**
+   * ADR-0003. Never from a request body or header; from the authenticated session only (rule 8).
+   */
+  tenant_id: string;
+  topic: string;
+  updated_at: Generated<Timestamp>;
+  /**
+   * Redundant by constraint: pinned to created_by, meaning "the user on whose behalf the effect was enqueued", never the dispatcher. §11 mandates the column; no machine principal exists (ADR-0004:78).
+   */
+  updated_by: string;
+  /**
+   * Optimistic lock. The application bumps it in the UPDATE WHERE clause; no trigger touches it. NOT the lease fence — see lease_id.
+   */
+  version: Generated<number>;
+}
 
 export interface SchemaMigrations {
   applied_at: Generated<Timestamp>;
@@ -70,6 +150,7 @@ export interface Users {
 }
 
 export interface DB {
+  outbox: Outbox;
   schema_migrations: SchemaMigrations;
   tenants: Tenants;
   users: Users;

@@ -4,6 +4,7 @@
 **Date:** 2026-09-22
 **Deciders:** Product Owner, Architecture Guardian
 **Authority:** LEVEL 1 — reversing this requires a superseding ADR
+**Amended by:** [ERRATUM-001](ADR-0010-ERRATUM-001.md) — four corrections from implementing it. Two change the delivery contract: replay is a new row rather than a reset, and consumer deduplication keys on `(tenant_id, topic, effect_key)` rather than `outbox.id`. Read the erratum alongside this record; where they differ, the erratum is later.
 
 ## Context
 
@@ -118,7 +119,7 @@ Because every external interaction is already a row plus a consumer, moving noti
 - External outages do not reject correct business transactions; the row waits and retries.
 - The posting transaction stays short, so locks stay short and the P95 < 800 ms budget is achievable.
 - Every pending, retrying and failed side effect is visible as data — queryable, alertable, replayable — rather than lost in a process's memory.
-- Replay is trivial: reset a row to `PENDING`. Recovering a botched integration is an `UPDATE` on the outbox, not a data-repair script over financial tables.
+- Replay is a **new row**, not a reset. **[ERRATUM-001](ADR-0010-ERRATUM-001.md) erratum 3 corrects this line**, which previously read "reset a row to `PENDING`": `status = 'DONE'` and `dispatched_at` are the record that the effect was performed, and frequently the only record — an SMTP send leaves nothing on our side. The reset erases it. Recovering a botched integration is still an `INSERT` on the outbox rather than a data-repair script over financial tables.
 - Gives the modular monolith a clean extraction seam for later.
 
 ### Negative / accepted costs
@@ -149,11 +150,11 @@ Because every external interaction is already a row plus a consumer, moving noti
 - Lint rule: HTTP clients, SMTP clients, object-storage SDKs and the PDF renderer may not be imported inside `packages/accounting-kernel`, `packages/inventory-kernel`, or any `modules/*/domain` and `modules/*/application`. Build failure.
 - Architecture test: a transaction that reaches `postingEngine.post(...)` is asserted to make no outbound network call — verified by a test harness that fails the test if any socket is opened while a posting transaction is open.
 - Type-level: the outbox payload type is restricted to identifier-shaped DTOs; a payload declaring a `Money`- or amount-typed field fails type-check (ADR-0002).
-- Schema: `outbox` carries `tenant_id NOT NULL` with RLS enabled and forced, like every tenant-owned table (ADR-0004); `(status, available_at)` index supports the dispatch query.
-- Integration test: kill the worker mid-dispatch after the side effect but before the `DONE` mark; assert the row is redelivered and the consumer's idempotency guard prevents a duplicate effect.
+- Schema: `outbox` carries `tenant_id NOT NULL` with RLS enabled and forced, like every tenant-owned table (ADR-0004). The dispatch index is **`(tenant_id, available_at, id) WHERE status = 'PENDING'`**, not `(status, available_at)` — [ERRATUM-001](ADR-0010-ERRATUM-001.md) erratum 2 states why, and what it costs.
+- Integration test: kill the worker mid-dispatch after the side effect but before the `DONE` mark; assert the row is redelivered and the consumer's idempotency guard prevents a duplicate effect. Redelivery now also requires a **lease fence** — see [ERRATUM-001](ADR-0010-ERRATUM-001.md), additive departures.
 - Integration test: roll back a posting transaction that wrote an outbox row; assert no row exists and no side effect occurs.
-- Consumer contract test: every registered consumer is exercised twice with the same `outbox.id` and asserted to produce one effect.
-- Monitoring: alerts on queue depth, age of the oldest `PENDING` row, and any `FAILED` row. A `FAILED` row is an operational incident with an owner.
+- Consumer contract test: every registered consumer is exercised twice with the same **`(tenant_id, topic, effect_key)`**, including once via a replay row carrying a different `id`, and asserted to produce one effect. Amended by [ERRATUM-001](ADR-0010-ERRATUM-001.md) erratum 3: the `outbox.id` form passes against a consumer that would double-send on replay.
+- Monitoring: alerts on queue depth, the age of the oldest `PENDING` row **as a maximum over per-tenant measurements** (a global minimum is not reachable in one query under RLS), and any **unacknowledged** `FAILED` row. A `FAILED` row is an operational incident with an owner. Amended by [ERRATUM-001](ADR-0010-ERRATUM-001.md) errata 2 and 4.
 - Dispatcher test: `app.tenant_id` is asserted to be set from the outbox row before any consumer code runs, and unset after.
 
 ## Related

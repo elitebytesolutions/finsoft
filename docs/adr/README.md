@@ -60,6 +60,14 @@ Proposed → Accepted → Superseded by ADR-00NN
 
 ---
 
+## Errata
+
+An erratum corrects a specific claim in an Accepted ADR without superseding it. The ADR stays Accepted and links forward; where they differ, the erratum is later.
+
+- [ADR-0010-ERRATUM-001](ADR-0010-ERRATUM-001.md) — the outbox delivery contract. Four corrections found by implementing it, two of which change what "delivered" and "replayed" mean: replay is a new row rather than a reset, and consumer deduplication keys on the business effect rather than the outbox row id. **Blocks `004_create_outbox.sql`; unsigned.**
+
+---
+
 ## Reconciliation
 
 [RECONCILIATION-2026-09.md](RECONCILIATION-2026-09.md) — every claim in ADR-0013, 0014 and 0016 checked against what the repository enforces. Ten mechanisms built, thirteen overstated claims corrected, nine deferrals recorded with reasons. Read it before reviewing any of the three: the corrections change what each record claims, so the version accepted must be the reconciled one.

@@ -170,7 +170,13 @@ The process is complete and correct. The **transactional outbox dispatcher** tha
 
 **Evidence.** `6861dc8` · `tests/integration/worker-transaction.spec.ts` proves the commit/rollback/redelivery contract at the level the system supports today.
 
-**Outstanding.** Outbox dispatcher. Deferred to the wave that introduces posting.
+**Outstanding.** The outbox dispatcher. **No longer deferred** — Wave 0 does not close until FND-011 does.
+
+The schema it needs is now built and reviewed: `004_create_outbox.sql` carries the lease and its fence, the transition graph, both attempt budgets, replay integrity and the column-scoped grants, with 40 acceptance cases in `database/tests/outbox.spec.ts` exercising them through direct SQL. [ADR-0010-ERRATUM-001](adr/ADR-0010-ERRATUM-001.md) records the four contract corrections and is unsigned.
+
+What the dispatcher must still demonstrate, per the database-guardian review: a crash after claiming; an enqueue that succeeds while the ack fails; a stale dispatcher unable to ack a reclaimed row; repeated failures reaching each cap; replay preserving evidence; and tenant enumeration respecting access boundaries. Every ack, failure and reclaim asserts `rowcount = 1` — a dispatcher that ignores how many rows it touched cannot detect that it lost its lease. `EXPLAIN (ANALYZE, BUFFERS)` on the claim query against at least 10^6 rows across 50+ tenants is required on the PR; a plan reviewed against ten rows will not be accepted.
+
+**Deferral recorded here rather than only in SQL:** the `outbox` table is **not partitioned**. The key is `created_at` RANGE. Two costs, both accepted deliberately — converting a populated forever-growing table later is a full rewrite under an exclusive lock, and this is the cheapest moment it will ever be; and once partitioned, the claim query has no `created_at` predicate and so must consider every partition on every poll, which is planning-time cost per poll, forever. A detached partition is **retained and archived, never dropped**, and detaching requires a verified backup and Database Guardian sign-off. This is in the register because a deferral that survives only in a comment nobody greps is an omission with a note.
 
 ---
 
