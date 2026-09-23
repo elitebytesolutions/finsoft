@@ -78,9 +78,31 @@ else
   echo "already exists"
 fi
 
-# Membership of `docker` is effectively root-equivalent on this host — the
-# daemon socket can mount the host filesystem. It is the minimum needed to run
-# a deployment and is the reason this user has no password and no sudo.
+# ── Read this before calling the deploy user "least privilege" ─────────────
+#
+# It is not. Membership of `docker` is ROOT-EQUIVALENT on this host: the
+# daemon runs as root and any member of the group can start a container that
+# bind-mounts / and writes to it. `deploy` has no password and no sudo, and
+# neither of those closes that path.
+#
+# What the separate identity actually buys, which is worth having but is not
+# isolation:
+#
+#   - a revocable credential. Removing one key ends CI's access without
+#     touching any human's, and leaves an obvious audit trail of what changed.
+#   - attribution. Deploy actions are that key's, not a shared root login's.
+#   - no interactive or password path, so the key is the only way in.
+#
+# What it does NOT buy: protection from a compromised workflow run. Such a run
+# can become root on this machine. The mitigations that matter for that are
+# the ones on the CI side — short-lived tokens, a pinned host key, and a
+# deploy job that cannot start unless the gates passed.
+#
+# The real fix is rootless Docker, and the tooling is present on this host
+# (dockerd-rootless-setuptool.sh). It is deliberately NOT done here: it moves
+# the daemon to a user socket and needs net.ipv4.ip_unprivileged_port_start
+# lowered for the proxy to bind :80, which is a change to make on its own and
+# verify, not one to fold into a deployment.
 usermod -aG docker "$DEPLOY_USER"
 
 install -d -o "$DEPLOY_USER" -g "$DEPLOY_USER" -m 0700 "/home/$DEPLOY_USER/.ssh"

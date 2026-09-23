@@ -45,14 +45,44 @@ services:
     environment:
       NODE_ENV: production
       API_PORT: 3001
+      # finsoft_app ONLY. An earlier version of this file also passed
+      # MIGRATION_DATABASE_URL here, which handed finsoft_migration's
+      # BYPASSRLS credential to the long-running, web-facing process — the one
+      # thing ADR-0004:59 says the running application must never hold, and
+      # packages/database/src/pool.ts:155 says in as many words.
+      #
+      # The API never reads it: MIGRATION_DATABASE_URL is consumed only by the
+      # migration runner and the codegen CLI. It now lives on the one-shot
+      # `migrate` service below, in a process that exits.
       DATABASE_URL: postgresql://finsoft_app:${POSTGRES_APP_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      MIGRATION_DATABASE_URL: postgresql://finsoft_migration:${POSTGRES_MIGRATION_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379
       APP_VERSION: ${APP_VERSION:-dev}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+    networks: [internal]
+
+  # One-shot. `profiles: [tools]` keeps it out of `up`, so it runs only when
+  # the deploy explicitly invokes it:
+  #
+  #   docker compose run --rm migrate
+  #
+  # This is the only place the BYPASSRLS credential appears, and it is gone
+  # when the container exits. Keeping it in a service definition rather than
+  # an ad-hoc `docker run` means it uses the same image digest that was just
+  # gated, on the same network, with the same database.
+  migrate:
+    image: ${API_IMAGE:?deploy must set API_IMAGE to a digest}
+    profiles: [tools]
+    restart: 'no'
+    environment:
+      NODE_ENV: production
+      MIGRATION_DATABASE_URL: postgresql://finsoft_migration:${POSTGRES_MIGRATION_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    command: ['node', 'packages/database/src/migrate/cli.ts', 'migrate']
+    depends_on:
+      postgres:
         condition: service_healthy
     networks: [internal]
 

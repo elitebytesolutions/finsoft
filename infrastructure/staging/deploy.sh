@@ -59,6 +59,19 @@ grep -E '^(API|WORKER)_IMAGE=' .env.images
 # it does.
 compose() { docker compose --env-file .env --env-file .env.images "$@"; }
 
+# The data plane first, so migrations have something to connect to.
+compose up -d postgres redis
+
+# Migrations, as a one-shot that exits. This is the only process that ever
+# holds finsoft_migration's BYPASSRLS credential, and it is gone when the
+# container stops — the API never receives it (ADR-0004:59).
+#
+# Before the application starts, deliberately: the API's readiness probe
+# refuses to report ready below REQUIRED_SCHEMA_VERSION, so starting it first
+# would mean a window of a live-but-not-ready service for no reason.
+echo "running migrations"
+compose run --rm migrate
+
 compose up -d --remove-orphans
 compose ps
 
