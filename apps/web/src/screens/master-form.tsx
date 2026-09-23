@@ -1,7 +1,6 @@
 'use client'
 import { useState } from 'react'
 import { Button, Modal } from '@finsoft/ui'
-import { money } from '@finsoft/ui'
 import type { Master, Product } from '@/mocks/api'
 
 const codeFor = (type: string) =>
@@ -400,96 +399,6 @@ export function ProductFormModal({
   return (
     <Modal title="Add product" onClose={onClose} wide>
       <ProductFields list={list} onDone={done} />
-    </Modal>
-  )
-}
-
-function EmployeeFields({ list, onDone }: { list: string[][]; onDone: (e: string[]) => void }) {
-  const [name, setName] = useState(''),
-    [designation, setDesignation] = useState('Pharmacist'),
-    [branch, setBranch] = useState('Lahore'),
-    [salary, setSalary] = useState(0),
-    [today, setToday] = useState('Present')
-  const save = () => {
-    if (!name.trim()) return alert('Employee name is required.')
-    const n =
-      Math.max(0, ...list.map((r) => parseInt(String(r[0]).split('-')[1] || '0', 10) || 0)) + 1
-    onDone([
-      `BT-${String(n).padStart(3, '0')}`,
-      name.trim(),
-      designation,
-      branch,
-      money(Math.round(Number(salary) || 0)),
-      today,
-    ])
-  }
-  return (
-    <>
-      <div className="form-grid">
-        <label>
-          Employee name *
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name" />
-        </label>
-        <label>
-          Designation
-          <select value={designation} onChange={(e) => setDesignation(e.target.value)}>
-            <option>Branch Manager</option>
-            <option>Pharmacist</option>
-            <option>Sales Executive</option>
-            <option>Accounts Officer</option>
-            <option>Store Keeper</option>
-            <option>Assistant</option>
-          </select>
-        </label>
-        <label>
-          Branch
-          <select value={branch} onChange={(e) => setBranch(e.target.value)}>
-            <option>Lahore</option>
-            <option>Rawalpindi</option>
-            <option>Faisalabad</option>
-          </select>
-        </label>
-        <label>
-          Gross salary (PKR)
-          <input type="number" value={salary} onChange={(e) => setSalary(Number(e.target.value))} />
-        </label>
-        <label>
-          Today
-          <select value={today} onChange={(e) => setToday(e.target.value)}>
-            <option>Present</option>
-            <option>Field</option>
-            <option>Leave</option>
-          </select>
-        </label>
-      </div>
-      <div className="modal-foot">
-        <Button kind="secondary" onClick={() => onDone(null as unknown as string[])}>
-          Cancel
-        </Button>
-        <Button onClick={save}>Add employee</Button>
-      </div>
-    </>
-  )
-}
-export function EmployeeFormModal({
-  open,
-  list,
-  onClose,
-  onSave,
-}: {
-  open: boolean
-  list: string[][]
-  onClose: () => void
-  onSave: (e: string[]) => void
-}) {
-  if (!open) return null
-  const done = (e: string[]) => {
-    if (e) onSave(e)
-    onClose()
-  }
-  return (
-    <Modal title="Add employee" onClose={onClose}>
-      <EmployeeFields list={list} onDone={done} />
     </Modal>
   )
 }

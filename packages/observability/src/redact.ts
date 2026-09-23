@@ -112,8 +112,27 @@ export function isDeniedKey(key: string): boolean {
 const JWT_PATTERN = /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\b/g
 const BEARER_PATTERN = /\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi
 
+/*
+ * Credentials embedded in a URL: postgresql://user:password@host/db, and the
+ * same shape for redis://, amqp://, mongodb:// and https:// with basic auth.
+ *
+ * Found by a test, not by reasoning. A `pg` connection failure puts the whole
+ * DSN in its MESSAGE — `could not connect to
+ * postgresql://finsoft_app:hunter2@db.internal:5432/finsoft` — so layer 3
+ * stripped the topology FIELDS from the error object while the message string
+ * sailed through untouched, password and all, into the log.
+ *
+ * Only the credentials are removed. The scheme and host survive, because
+ * "could not connect to [redacted]" tells an on-call engineer nothing, and a
+ * redaction that destroys the diagnosis is one that gets switched off.
+ */
+const URL_CREDENTIALS_PATTERN = /\b([a-z][a-z0-9+.-]*):\/\/[^\s:@/]+:[^\s@/]+@/gi
+
 export function redactValueShapes(value: string): string {
-  return value.replace(JWT_PATTERN, REDACTED).replace(BEARER_PATTERN, REDACTED)
+  return value
+    .replace(JWT_PATTERN, REDACTED)
+    .replace(BEARER_PATTERN, REDACTED)
+    .replace(URL_CREDENTIALS_PATTERN, `$1://${REDACTED}@`)
 }
 
 /*

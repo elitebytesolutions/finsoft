@@ -7,6 +7,7 @@ import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { REPO_ROOT, prepareTestDatabase, teardownTestDatabase } from '@finsoft/database/testing'
+import { initLogger, resetLoggerForTests } from '@finsoft/observability'
 import { AllExceptionsFilter } from './common/all-exceptions.filter'
 import { Public, TenantGuard } from './common/tenant.guard'
 import { ZodValidationPipe } from './common/zod-validation.pipe'
@@ -85,6 +86,19 @@ describe('API skeleton', () => {
      */
     await prepareTestDatabase()
 
+    /*
+     * The exception filter logs through @finsoft/observability, and
+     * getLogger() throws when the logger has not been initialised — by
+     * design, so a line written before startup named the service cannot be
+     * attributed to the wrong one. main.ts calls this during bootstrap; a
+     * test that builds the app itself has to do the same.
+     *
+     * `fatal` keeps the 5xx probes below from printing their deliberate
+     * errors over the test output.
+     */
+    resetLoggerForTests()
+    initLogger({ service: 'api-test', level: 'fatal' })
+
     const moduleRef = await Test.createTestingModule({ imports: [TestAppModule] }).compile()
     app = moduleRef.createNestApplication()
     app.setGlobalPrefix('api')
@@ -94,6 +108,7 @@ describe('API skeleton', () => {
 
   afterAll(async () => {
     await app?.close()
+    resetLoggerForTests()
     await teardownTestDatabase()
   })
 

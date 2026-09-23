@@ -57,7 +57,8 @@ import {
   type Sale,
 } from '@/mocks/api'
 import { usePersistentData } from '@/mocks/api'
-import { MasterModal, ProductFormModal, EmployeeFormModal } from './master-form'
+import { MasterModal, ProductFormModal } from './master-form'
+import { EmployeeFormModal } from './employee-form'
 import { Button, Badge, PageHead, Kpi, Panel, SearchField, Modal, Table } from '@finsoft/ui'
 import { money } from '@finsoft/ui'
 

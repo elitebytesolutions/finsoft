@@ -56,7 +56,9 @@
   background: var(--line-soft);
   color: var(--muted);
   border: 2px solid transparent;
-  transition: background var(--dur-fast, 0.15s), color var(--dur-fast, 0.15s);
+  transition:
+    background var(--dur-fast, 0.15s),
+    color var(--dur-fast, 0.15s);
 }
 
 .ew-step-label {
@@ -202,7 +204,9 @@
   padding: 0 var(--sp-4);
   font: var(--t-body-sm);
   width: 100%;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
 }
 
 .ew-fields textarea {
@@ -270,6 +274,28 @@
 .ew-prefixed input,
 .ew-prefixed select {
   border-radius: 0 var(--r-sm) var(--r-sm) 0;
+}
+
+.ew-suffixed {
+  display: flex;
+  align-items: stretch;
+}
+
+.ew-suffix {
+  display: grid;
+  place-items: center;
+  min-width: 38px;
+  padding: 0 var(--sp-3);
+  border: 1px solid var(--line);
+  border-left: 0;
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  background: var(--line-soft);
+  font: var(--t-caption);
+  color: var(--muted);
+}
+
+.ew-suffixed input {
+  border-radius: var(--r-sm) 0 0 var(--r-sm);
 }
 
 /* ---------- switches and checkboxes ---------- */
@@ -654,6 +680,12 @@
   margin-bottom: var(--sp-4);
 }
 
+.ew-review-head h3 {
+  font: var(--t-section);
+  color: var(--ink);
+  margin: 0;
+}
+
 .ew-review-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
@@ -756,6 +788,9 @@
   /* The stepper becomes current-step-only text; dots would wrap illegibly. */
   .ew-steps {
     display: none;
+  }
+  .ew-steps-compact {
+    display: block;
   }
   .ew-foot {
     flex-wrap: wrap;

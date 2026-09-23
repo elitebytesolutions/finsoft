@@ -1,8 +1,9 @@
 import 'reflect-metadata'
-import { Logger } from '@nestjs/common'
 import { NestFactory } from '@nestjs/core'
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger'
 import { closeDatabase, openDatabase } from '@finsoft/database'
+import { initLogger } from '@finsoft/observability'
+import { FinsoftNestLogger } from './common/nest-logger'
 import { AllExceptionsFilter } from './common/all-exceptions.filter'
 import { AppModule } from './app.module'
 
@@ -18,6 +19,15 @@ import { AppModule } from './app.module'
 const DEFAULT_PORT = 3001
 
 async function bootstrap(): Promise<void> {
+  /*
+   * Before anything that might log. NestJS's own bootstrap messages are
+   * routed through this logger below, and getLogger() throws if it has not
+   * been initialised — deliberately, so a line written before startup
+   * configured the service name is a loud failure rather than a line
+   * attributed to the wrong service.
+   */
+  initLogger({ service: 'api' })
+
   /*
    * Open the pool BEFORE the server listens, and fail startup if it will not
    * open.
@@ -40,7 +50,20 @@ async function bootstrap(): Promise<void> {
   await openDatabase()
 
   const app = await NestFactory.create(AppModule, { bufferLogs: true })
-  const logger = new Logger('bootstrap')
+
+  /*
+   * Every NestJS log line now goes through the redacting logger. Without
+   * this, NestJS wrote unstructured, uncorrelated, UNREDACTED text to the
+   * same stdout the JSON pipeline reads — and the exception filter's 5xx
+   * handler, which logs a full stack, was the likeliest place a pg
+   * connection error carrying host, port, database and role reached the log.
+   *
+   * bufferLogs above holds NestJS's own startup messages until this call, so
+   * they are replayed through the redactor rather than escaping before it is
+   * installed.
+   */
+  const logger = new FinsoftNestLogger('bootstrap')
+  app.useLogger(logger)
 
   /*
    * Everything is served under /api, so the reverse proxy can route on path

@@ -138,12 +138,15 @@ export function Modal({
   children,
   onClose,
   wide = false,
+  size,
   eyebrow = 'Finsoft workspace',
 }: {
   title: string
   children: ReactNode
   onClose: () => void
   wide?: boolean
+  /** Overrides `wide`. `xl` is for multi-step record forms with a summary rail. */
+  size?: 'md' | 'wide' | 'xl'
   eyebrow?: string | false
 }) {
   const ref = useRef<HTMLElement>(null)
@@ -189,7 +192,7 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-labelledby={heading}
-        className={`modal ${wide ? 'wide' : ''}`}
+        className={`modal ${size ?? (wide ? 'wide' : '')}`}
       >
         <div className="modal-head">
           <div>

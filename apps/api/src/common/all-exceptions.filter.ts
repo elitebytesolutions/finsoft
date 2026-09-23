@@ -1,4 +1,5 @@
-import { ArgumentsHost, Catch, ExceptionFilter, HttpException, Logger } from '@nestjs/common'
+import { ArgumentsHost, Catch, ExceptionFilter, HttpException } from '@nestjs/common'
+import { getLogger, redactError } from '@finsoft/observability'
 import type { Request, Response } from 'express'
 
 /*
@@ -31,8 +32,6 @@ interface ErrorBody {
 
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
-  private readonly logger = new Logger('exception')
-
   catch(exception: unknown, host: ArgumentsHost): void {
     const ctx = host.switchToHttp()
     const response = ctx.getResponse<Response>()
@@ -50,10 +49,23 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const body = this.toBody(exception, path)
 
     if (body.statusCode >= 500) {
-      // The full error, including its cause chain, server-side only.
-      this.logger.error(
+      /*
+       * The full error, including its cause chain, server-side only — and
+       * through redactError, which is the point.
+       *
+       * This is the highest-risk log line in the API: a `pg` connection
+       * failure carries host, port, database and the role it authenticated
+       * as, and none of that trips a key-name or token-shape check. It was
+       * previously written by NestJS's own Logger as raw text. Rule 20.
+       */
+      getLogger().error(
+        {
+          method: request.method,
+          path,
+          statusCode: body.statusCode,
+          err: redactError(exception),
+        },
         `${request.method} ${path} -> ${body.statusCode}`,
-        exception instanceof Error ? exception.stack : String(exception),
       )
     }
 
