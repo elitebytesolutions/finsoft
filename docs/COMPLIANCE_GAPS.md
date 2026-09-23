@@ -2,6 +2,13 @@
 
 **Status:** requires Product Owner and Architecture Guardian sign-off. Nothing here is approved until it is signed.
 
+| Sign-off | Status |
+|---|---|
+| Product Owner | ☐ not recorded |
+| Architecture Guardian | ☐ not recorded |
+
+An entry stays **open** until both boxes carry a name and a date. Acknowledging a gap is not authorising it.
+
 A register of places where a **LEVEL 0** requirement in [NON_NEGOTIABLES.md](NON_NEGOTIABLES.md) is not fully enforced by a mechanism.
 
 This file exists so that partial enforcement is visible and owned, rather than reported as complete. It does **not** grant an exemption, and being listed here is not approval — a gap stays open until the mechanism exists or the Product Owner and Architecture Guardian accept it in writing.
@@ -26,7 +33,7 @@ Gitleaks runs as a required job on every push and every pull request, over the *
 - A finding fails the run.
 - A scanner that cannot complete **also** fails the run, and reports differently. A broken scanner must never be indistinguishable from a clean repository.
 - Findings are redacted, so the value never reaches a CI log.
-- The binary is pinned to a version and a recorded SHA256, verified before it executes.
+- The binary is pinned to a version and a recorded SHA256, verified before it executes. That pins the *bytes*; it is not proof of publisher authenticity, since checksum and artifact share an origin. Signature verification is a separate change and is not claimed.
 - There is no bypass flag and no environment variable that skips it. A false positive is suppressed in a committed `.gitleaks.toml`, with a reason, which is reviewable.
 - **A failing scan prevents deployment**: `deploy-staging` lists `secrets` in its `needs`, so a leak cannot reach a running system.
 

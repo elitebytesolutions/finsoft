@@ -45,11 +45,20 @@ regexes = [
 # ---------------------------------------------------------------------------
 #
 # .env.example — it carries values named `local-dev-only-*`, which are
-# placeholders rather than credentials, and gitleaks does not currently flag
-# them. It is left OUT of this file on purpose: if someone ever pastes a real
-# password into the example, the scan must catch it. Exempting the file would
-# make the most likely place for an accidental credential the one place that
-# is never checked.
+# placeholders rather than credentials, and gitleaks does not flag them. It is
+# left OUT of this file on purpose, so that it remains in scope.
+#
+# That is worth stating accurately rather than optimistically: keeping it in
+# scope does NOT mean every real password pasted there will be caught. A
+# scanner matches known token shapes and high entropy, and an arbitrary
+# human-chosen password — `Bhatti2026!` — has neither. It would pass.
+#
+# So the reason to keep the file in scope is that it costs nothing and catches
+# the recognisable cases (an API key, a token, a connection string with
+# credentials in it). The control that actually covers the rest is that real
+# secrets never live in the repository at all: staging generates its database
+# passwords on the host, and production credentials exist only in that
+# environment's protected store (INFRASTRUCTURE §6).
 #
 # infrastructure/staging/** — the staging stack reads its database passwords
 # from a .env generated ON the host, which is not in the repository and never

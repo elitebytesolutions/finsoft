@@ -25,11 +25,36 @@
 
 set -euo pipefail
 
+# ── What has actually been verified, and how ────────────────────────────
+#
+# Both scan paths were exercised against a real failure, because the two use
+# DIFFERENT gitleaks commands and proving one says nothing about the other:
+#
+#   detect  (what CI runs)  — a synthetic commit in a DISPOSABLE repository:
+#           a token committed, then deleted in a second commit so the working
+#           tree was clean. `detect` found it in the first commit. This is the
+#           case that matters, and a worktree-only scan reports it clean.
+#
+#   protect --staged        — a planted token, staged and never committed.
+#           Caught as github-pat, value redacted, scan failed.
+#
+# The staged run CANNOT stand in for the history run: a full-history scan does
+# not see an uncommitted staged file, and `protect --staged` does not read
+# history. Each was tested on its own.
+#
 VERSION="8.30.1"
-# sha256 of gitleaks_${VERSION}_linux_x64.tar.gz, from the release's own
-# checksums file AND verified by downloading the artifact and hashing it.
-# If upstream ever re-cuts this tag, this fails rather than running whatever
-# is now behind the URL.
+# sha256 of gitleaks_${VERSION}_linux_x64.tar.gz.
+#
+# Taken from the release's checksums file and confirmed by downloading the
+# artifact and hashing it. Be precise about what that proves: it pins the
+# bytes, so a re-cut tag or a tampered CDN response fails closed rather than
+# executing whatever is now behind the URL.
+#
+# It is NOT proof of publisher authenticity. The checksum and the artifact
+# come from the same origin, so a compromise of that origin would produce a
+# matching pair. Establishing authorship needs signature verification against
+# a key held elsewhere — cosign or a release GPG key — which is a separate
+# change and is not claimed here.
 SHA256="551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
 
 REPO_ROOT=$(git rev-parse --show-toplevel)
