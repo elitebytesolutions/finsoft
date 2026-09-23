@@ -176,6 +176,28 @@ jobs:
       - name: test
         run: npm test
 
+      # A browser against the real API, started from dist — the same artefact
+      # shape the container runs. Kept in this job rather than its own so it
+      # reuses the data plane already up: the readiness route it exercises
+      # reaches PostgreSQL, so a separate job would have to stand the whole
+      # stack up again to assert the same thing.
+      - name: install browser
+        run: npx playwright install --with-deps chromium
+
+      - name: e2e
+        run: npm run test:e2e
+
+      - name: e2e report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
       - name: compose logs on failure
         if: failure()
         run: docker compose logs --no-color --tail 200

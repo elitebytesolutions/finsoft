@@ -45,3 +45,5 @@ ui-prototype/
 # One-off debugging harnesses pinned to local dev servers. Real tooling
 # lives in tools/ and is reviewed; these are not.
 /.*.mjs
+playwright-report/
+test-results/
