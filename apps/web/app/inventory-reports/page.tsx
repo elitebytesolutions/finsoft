@@ -5,5 +5,9 @@ import { InventoryReports } from '@/screens/inventory-reports'
 import { Guard } from '@/components/guard'
 
 export default function Page() {
-  return <Guard module="Reports"><InventoryReports/></Guard>
+  return (
+    <Guard module="Reports">
+      <InventoryReports />
+    </Guard>
+  )
 }

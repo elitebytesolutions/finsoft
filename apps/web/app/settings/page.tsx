@@ -5,5 +5,9 @@ import { SettingsPage } from '@/screens/control-pages'
 import { Guard } from '@/components/guard'
 
 export default function Page() {
-  return <Guard module="Admin & Control"><SettingsPage/></Guard>
+  return (
+    <Guard module="Admin & Control">
+      <SettingsPage />
+    </Guard>
+  )
 }

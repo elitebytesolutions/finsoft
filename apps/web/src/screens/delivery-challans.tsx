@@ -1,8 +1,18 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
 import {
-  CalendarDays, Check, CheckSquare, Clock3, Download, Eye,
-  Filter, MapPin, Printer, Truck, User, X,
+  CalendarDays,
+  Check,
+  CheckSquare,
+  Clock3,
+  Download,
+  Eye,
+  Filter,
+  MapPin,
+  Printer,
+  Truck,
+  User,
+  X,
 } from 'lucide-react'
 import { Badge, Button, Kpi, PageHead, Panel, SearchField } from '@finsoft/ui'
 import type { DeliveryChallan } from '@/mocks/api'
@@ -28,22 +38,38 @@ function ChallanDoc({ challan, copy = 'Original' }: { challan: DeliveryChallan; 
       {/* ── Header ── */}
       <div className="dc-doc-header">
         <div className="dc-doc-co">
-          <div className="dc-doc-co-logo"><Truck size={26} /></div>
+          <div className="dc-doc-co-logo">
+            <Truck size={26} />
+          </div>
           <div className="dc-doc-co-info">
             <h1>{CO.name}</h1>
             <p>{CO.address}</p>
             <p>Tel: {CO.phone}</p>
-            <p>NTN: {CO.ntn} &nbsp;·&nbsp; STRN: {CO.strn}</p>
+            <p>
+              NTN: {CO.ntn} &nbsp;·&nbsp; STRN: {CO.strn}
+            </p>
           </div>
         </div>
         <div className="dc-doc-title-block">
           <h2>DELIVERY CHALLAN</h2>
           <span className="dc-doc-copy-badge">{copy}</span>
           <div className="dc-doc-ref-grid">
-            <div><span>Challan No.</span><b>{challan.id}</b></div>
-            <div><span>Date</span><b>{challan.date}</b></div>
-            <div><span>Invoice Ref.</span><b>{challan.invoiceRef}</b></div>
-            <div><span>Status</span><b>{challan.status}</b></div>
+            <div>
+              <span>Challan No.</span>
+              <b>{challan.id}</b>
+            </div>
+            <div>
+              <span>Date</span>
+              <b>{challan.date}</b>
+            </div>
+            <div>
+              <span>Invoice Ref.</span>
+              <b>{challan.invoiceRef}</b>
+            </div>
+            <div>
+              <span>Status</span>
+              <b>{challan.status}</b>
+            </div>
           </div>
         </div>
       </div>
@@ -56,12 +82,18 @@ function ChallanDoc({ challan, copy = 'Original' }: { challan: DeliveryChallan; 
         <div className="dc-doc-party-block">
           <span className="dc-doc-party-label">Deliver To:</span>
           <strong>{challan.customer}</strong>
-          <p><MapPin size={11} /> {challan.address}</p>
+          <p>
+            <MapPin size={11} /> {challan.address}
+          </p>
         </div>
         <div className="dc-doc-party-block dc-doc-transport">
           <span className="dc-doc-party-label">Transport Details:</span>
-          <p><Truck size={11} /> Vehicle: <b>{challan.vehicle || '—'}</b></p>
-          <p><User size={11} /> Driver: <b>{challan.driver || '—'}</b></p>
+          <p>
+            <Truck size={11} /> Vehicle: <b>{challan.vehicle || '—'}</b>
+          </p>
+          <p>
+            <User size={11} /> Driver: <b>{challan.driver || '—'}</b>
+          </p>
         </div>
       </div>
 
@@ -83,22 +115,34 @@ function ChallanDoc({ challan, copy = 'Original' }: { challan: DeliveryChallan; 
           {challan.lines.map((l, i) => (
             <tr key={i}>
               <td className="n">{i + 1}</td>
-              <td><strong>{l.product}</strong></td>
+              <td>
+                <strong>{l.product}</strong>
+              </td>
               <td>{l.pack}</td>
               <td className="mono">{l.batch}</td>
               <td className="mono">{l.expiry}</td>
               <td className="num">{l.qty}</td>
               <td className="num">{l.bonus || '—'}</td>
-              <td className="num"><strong>{l.qty + l.bonus}</strong></td>
+              <td className="num">
+                <strong>{l.qty + l.bonus}</strong>
+              </td>
             </tr>
           ))}
         </tbody>
         <tfoot>
           <tr className="dc-doc-total-row">
-            <td colSpan={5}><strong>Total</strong></td>
-            <td className="num"><strong>{totalQty}</strong></td>
-            <td className="num"><strong>{totalBonus || '—'}</strong></td>
-            <td className="num"><strong>{totalQty + totalBonus}</strong></td>
+            <td colSpan={5}>
+              <strong>Total</strong>
+            </td>
+            <td className="num">
+              <strong>{totalQty}</strong>
+            </td>
+            <td className="num">
+              <strong>{totalBonus || '—'}</strong>
+            </td>
+            <td className="num">
+              <strong>{totalQty + totalBonus}</strong>
+            </td>
           </tr>
         </tfoot>
       </table>
@@ -106,7 +150,8 @@ function ChallanDoc({ challan, copy = 'Original' }: { challan: DeliveryChallan; 
       {/* ── Notes ── */}
       {challan.notes && (
         <div className="dc-doc-notes">
-          <strong>Notes: </strong>{challan.notes}
+          <strong>Notes: </strong>
+          {challan.notes}
         </div>
       )}
 
@@ -126,14 +171,20 @@ function ChallanDoc({ challan, copy = 'Original' }: { challan: DeliveryChallan; 
           <div className="dc-sign-area dc-sign-stamp" />
           <div className="dc-sign-label">Received By &amp; Company Stamp</div>
           <div className="dc-sign-name">
-            {challan.receivedBy ? challan.receivedBy : <span className="dc-sign-blank">Signature / Stamp</span>}
+            {challan.receivedBy ? (
+              challan.receivedBy
+            ) : (
+              <span className="dc-sign-blank">Signature / Stamp</span>
+            )}
           </div>
         </div>
       </div>
 
       {/* ── Footer ── */}
       <div className="dc-doc-foot">
-        <span>Generated by {CO.name} ERP · {new Date().toLocaleDateString('en-PK')}</span>
+        <span>
+          Generated by {CO.name} ERP · {new Date().toLocaleDateString('en-PK')}
+        </span>
         <span>This is a computer-generated delivery document. No signature required.</span>
       </div>
     </div>
@@ -150,7 +201,7 @@ function statusTone(s: ChallanStatus): 'good' | 'warn' | 'danger' | 'info' {
 
 /* ─── Main screen ─────────────────────────────────────────────────────────── */
 export function DeliveryChallans({ challans }: { challans: DeliveryChallan[] }) {
-  const today = '22 Sep 2026'   // matches demo date in mock data
+  const today = '22 Sep 2026' // matches demo date in mock data
   const [tab, setTab] = useState<Tab>('All')
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<string[]>([])
@@ -158,26 +209,33 @@ export function DeliveryChallans({ challans }: { challans: DeliveryChallan[] }) 
   const [viewItem, setViewItem] = useState<DeliveryChallan | null>(null)
   const printRef = useRef<HTMLDivElement>(null)
 
-  const visible = challans.filter(c => {
+  const visible = challans.filter((c) => {
     const matchesTab = tab === 'All' || c.status === tab
-    const matchesSearch = !search ||
+    const matchesSearch =
+      !search ||
       `${c.id} ${c.customer} ${c.invoiceRef} ${c.driver ?? ''} ${c.vehicle ?? ''}`
-        .toLowerCase().includes(search.toLowerCase())
+        .toLowerCase()
+        .includes(search.toLowerCase())
     return matchesTab && matchesSearch
   })
 
-  const countToday = challans.filter(c => c.date === today).length
-  const countPending = challans.filter(c => c.status === 'Pending').length
-  const countDelivered = challans.filter(c => c.status === 'Delivered').length
+  const countToday = challans.filter((c) => c.date === today).length
+  const countPending = challans.filter((c) => c.status === 'Pending').length
+  const countDelivered = challans.filter((c) => c.status === 'Delivered').length
 
-  const tabCount = (t: Tab) => t === 'All' ? challans.length : challans.filter(c => c.status === t).length
-  const allSelected = visible.length > 0 && visible.every(c => selected.includes(c.id))
-  const someSelected = !allSelected && visible.some(c => selected.includes(c.id))
+  const tabCount = (t: Tab) =>
+    t === 'All' ? challans.length : challans.filter((c) => c.status === t).length
+  const allSelected = visible.length > 0 && visible.every((c) => selected.includes(c.id))
+  const someSelected = !allSelected && visible.some((c) => selected.includes(c.id))
 
   const toggleAll = () =>
-    setSelected(allSelected ? selected.filter(id => !visible.some(c => c.id === id)) : [...new Set([...selected, ...visible.map(c => c.id)])])
+    setSelected(
+      allSelected
+        ? selected.filter((id) => !visible.some((c) => c.id === id))
+        : [...new Set([...selected, ...visible.map((c) => c.id)])],
+    )
   const toggle = (id: string) =>
-    setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id])
+    setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]))
 
   const doPrint = (items: DeliveryChallan[]) => {
     setPrintItems(items)
@@ -186,13 +244,17 @@ export function DeliveryChallans({ challans }: { challans: DeliveryChallan[] }) 
   /* Trigger window.print after React has rendered the print target */
   useEffect(() => {
     if (!printItems?.length) return
-    const t = setTimeout(() => { window.print?.() }, 150)
+    const t = setTimeout(() => {
+      window.print?.()
+    }, 150)
     return () => clearTimeout(t)
   }, [printItems])
 
   /* Close print overlay when print dialog is dismissed */
   useEffect(() => {
-    const after = () => { /* keep print items visible so user can re-print */ }
+    const after = () => {
+      /* keep print items visible so user can re-print */
+    }
     window.addEventListener('afterprint', after)
     return () => window.removeEventListener('afterprint', after)
   }, [])
@@ -206,10 +268,17 @@ export function DeliveryChallans({ challans }: { challans: DeliveryChallan[] }) 
         <div className="dc-print-root" ref={printRef} aria-hidden="true">
           {/* on-screen preview header */}
           <div className="dc-print-bar dc-no-print">
-            <span><Printer size={15} /> Print preview — {printItems.length} challan{printItems.length > 1 ? 's' : ''}</span>
+            <span>
+              <Printer size={15} /> Print preview — {printItems.length} challan
+              {printItems.length > 1 ? 's' : ''}
+            </span>
             <div className="dc-print-bar-actions">
-              <button className="btn primary" onClick={() => window.print?.()}><Printer size={14} /> Print now</button>
-              <button className="btn secondary" onClick={() => setPrintItems(null)}><X size={14} /> Close</button>
+              <button className="btn primary" onClick={() => window.print?.()}>
+                <Printer size={14} /> Print now
+              </button>
+              <button className="btn secondary" onClick={() => setPrintItems(null)}>
+                <X size={14} /> Close
+              </button>
             </div>
           </div>
           {printItems.map((c, i) => (
@@ -227,22 +296,43 @@ export function DeliveryChallans({ challans }: { challans: DeliveryChallan[] }) 
         description="Track outgoing deliveries and print challans for wholesale, retail and distribution runs."
         actions={
           <>
-            <Button kind="secondary"><Download /> Export</Button>
-            <Button><Truck /> New Challan</Button>
+            <Button kind="secondary">
+              <Download /> Export
+            </Button>
+            <Button>
+              <Truck /> New Challan
+            </Button>
           </>
         }
       />
 
       {/* ── KPI row ─────────────────────────────────────────────────────── */}
       <div className="kpi-grid mini">
-        <Kpi label="Today's challans" value={String(countToday)} change={today} icon={CalendarDays} />
-        <Kpi label="Pending delivery" value={String(countPending)} change="Awaiting dispatch" icon={Clock3} tone="yellow" />
-        <Kpi label="Delivered" value={String(countDelivered)} change="Confirmed receipt" icon={Check} tone="teal" />
+        <Kpi
+          label="Today's challans"
+          value={String(countToday)}
+          change={today}
+          icon={CalendarDays}
+        />
+        <Kpi
+          label="Pending delivery"
+          value={String(countPending)}
+          change="Awaiting dispatch"
+          icon={Clock3}
+          tone="yellow"
+        />
+        <Kpi
+          label="Delivered"
+          value={String(countDelivered)}
+          change="Confirmed receipt"
+          icon={Check}
+          tone="teal"
+        />
       </div>
 
       {/* ── Tabs ────────────────────────────────────────────────────────── */}
       <div className="tabs" role="tablist" aria-label="Challan status filter">
-        {TABS.map(t => (
+        {TABS.map((t) => (
           <button
             key={t}
             role="tab"
@@ -263,8 +353,12 @@ export function DeliveryChallans({ challans }: { challans: DeliveryChallan[] }) 
           onChange={setSearch}
           placeholder="Search challan no, customer, invoice ref…"
         />
-        <Button kind="secondary"><Filter size={14} /> More filters</Button>
-        <span className="record-count">{visible.length} challan{visible.length !== 1 ? 's' : ''}</span>
+        <Button kind="secondary">
+          <Filter size={14} /> More filters
+        </Button>
+        <span className="record-count">
+          {visible.length} challan{visible.length !== 1 ? 's' : ''}
+        </span>
       </div>
 
       {/* ── Bulk action bar ──────────────────────────────────────────────── */}
@@ -275,7 +369,7 @@ export function DeliveryChallans({ challans }: { challans: DeliveryChallan[] }) 
             {selected.length} challan{selected.length > 1 ? 's' : ''} selected
           </span>
           <div className="dc-bulk-actions">
-            <Button onClick={() => doPrint(challans.filter(c => selected.includes(c.id)))}>
+            <Button onClick={() => doPrint(challans.filter((c) => selected.includes(c.id)))}>
               <Printer size={14} /> Print Challan{selected.length > 1 ? 's' : ''}
             </Button>
             <button
@@ -314,7 +408,9 @@ export function DeliveryChallans({ challans }: { challans: DeliveryChallan[] }) 
                       type="checkbox"
                       aria-label="Select all visible challans"
                       checked={allSelected}
-                      ref={el => { if (el) el.indeterminate = someSelected }}
+                      ref={(el) => {
+                        if (el) el.indeterminate = someSelected
+                      }}
                       onChange={toggleAll}
                     />
                   </th>
@@ -328,7 +424,7 @@ export function DeliveryChallans({ challans }: { challans: DeliveryChallan[] }) 
                 </tr>
               </thead>
               <tbody>
-                {visible.map(c => {
+                {visible.map((c) => {
                   const firstLine = c.lines[0]
                   const extra = c.lines.length - 1
                   const totalUnits = c.lines.reduce((a, l) => a + l.qty + l.bonus, 0)
@@ -351,7 +447,9 @@ export function DeliveryChallans({ challans }: { challans: DeliveryChallan[] }) 
                       <td>
                         <div>
                           <b>{c.customer}</b>
-                          <small className="dc-address"><MapPin size={10} /> {c.address}</small>
+                          <small className="dc-address">
+                            <MapPin size={10} /> {c.address}
+                          </small>
                         </div>
                       </td>
                       <td>
@@ -360,14 +458,18 @@ export function DeliveryChallans({ challans }: { challans: DeliveryChallan[] }) 
                             {firstLine.product}
                             {extra > 0 && <span className="dc-more">+{extra} more</span>}
                           </b>
-                          <small>{totalUnits} unit{totalUnits !== 1 ? 's' : ''} total</small>
+                          <small>
+                            {totalUnits} unit{totalUnits !== 1 ? 's' : ''} total
+                          </small>
                         </div>
                       </td>
                       <td>
                         {c.vehicle ? (
                           <div>
                             <b>{c.vehicle}</b>
-                            <small><User size={10} /> {c.driver}</small>
+                            <small>
+                              <User size={10} /> {c.driver}
+                            </small>
                           </div>
                         ) : (
                           <span className="dc-na">—</span>
@@ -408,7 +510,9 @@ export function DeliveryChallans({ challans }: { challans: DeliveryChallan[] }) 
         <div
           className="overlay"
           role="presentation"
-          onMouseDown={e => { if (e.target === e.currentTarget) setViewItem(null) }}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setViewItem(null)
+          }}
         >
           <section
             role="dialog"
@@ -420,7 +524,9 @@ export function DeliveryChallans({ challans }: { challans: DeliveryChallan[] }) 
             <div className="modal-head">
               <div>
                 <Badge tone={statusTone(viewItem.status)}>{viewItem.status}</Badge>
-                <h2 id="dc-view-title" style={{ marginTop: 6 }}>{viewItem.id}</h2>
+                <h2 id="dc-view-title" style={{ marginTop: 6 }}>
+                  {viewItem.id}
+                </h2>
                 <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--muted)' }}>
                   {viewItem.customer} · {viewItem.date}
                 </p>
@@ -431,11 +537,26 @@ export function DeliveryChallans({ challans }: { challans: DeliveryChallan[] }) 
             </div>
 
             {/* Meta grid */}
-            <div className="detail-grid" style={{ gridTemplateColumns: 'repeat(4,1fr)', marginBottom: 16 }}>
-              <div><small>Invoice Ref.</small><b>{viewItem.invoiceRef}</b></div>
-              <div><small>Prepared by</small><b>{viewItem.preparedBy}</b></div>
-              <div><small>Vehicle</small><b>{viewItem.vehicle || '—'}</b></div>
-              <div><small>Driver</small><b>{viewItem.driver || '—'}</b></div>
+            <div
+              className="detail-grid"
+              style={{ gridTemplateColumns: 'repeat(4,1fr)', marginBottom: 16 }}
+            >
+              <div>
+                <small>Invoice Ref.</small>
+                <b>{viewItem.invoiceRef}</b>
+              </div>
+              <div>
+                <small>Prepared by</small>
+                <b>{viewItem.preparedBy}</b>
+              </div>
+              <div>
+                <small>Vehicle</small>
+                <b>{viewItem.vehicle || '—'}</b>
+              </div>
+              <div>
+                <small>Driver</small>
+                <b>{viewItem.driver || '—'}</b>
+              </div>
             </div>
 
             {/* Lines table */}
@@ -457,13 +578,19 @@ export function DeliveryChallans({ challans }: { challans: DeliveryChallan[] }) 
                   {viewItem.lines.map((l, i) => (
                     <tr key={i}>
                       <td>{i + 1}</td>
-                      <td><b>{l.product}</b></td>
+                      <td>
+                        <b>{l.product}</b>
+                      </td>
                       <td>{l.pack}</td>
                       <td style={{ fontFamily: 'monospace', fontSize: '0.9em' }}>{l.batch}</td>
                       <td style={{ fontFamily: 'monospace', fontSize: '0.9em' }}>{l.expiry}</td>
-                      <td style={{ textAlign: 'right' }}><b>{l.qty}</b></td>
+                      <td style={{ textAlign: 'right' }}>
+                        <b>{l.qty}</b>
+                      </td>
                       <td style={{ textAlign: 'right' }}>{l.bonus || '—'}</td>
-                      <td style={{ textAlign: 'right' }}><b>{l.qty + l.bonus}</b></td>
+                      <td style={{ textAlign: 'right' }}>
+                        <b>{l.qty + l.bonus}</b>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -474,24 +601,37 @@ export function DeliveryChallans({ challans }: { challans: DeliveryChallan[] }) 
             <div className="dc-view-footer">
               <div className="dc-view-info">
                 <MapPin size={13} />
-                <span><b>Deliver to:</b> {viewItem.customer}, {viewItem.address}</span>
+                <span>
+                  <b>Deliver to:</b> {viewItem.customer}, {viewItem.address}
+                </span>
               </div>
               {viewItem.receivedBy && (
                 <div className="dc-view-info dc-view-received">
                   <Check size={13} />
-                  <span><b>Received by:</b> {viewItem.receivedBy}</span>
+                  <span>
+                    <b>Received by:</b> {viewItem.receivedBy}
+                  </span>
                 </div>
               )}
               {viewItem.notes && (
                 <div className="dc-view-info">
-                  <span><b>Notes:</b> {viewItem.notes}</span>
+                  <span>
+                    <b>Notes:</b> {viewItem.notes}
+                  </span>
                 </div>
               )}
             </div>
 
             <div className="modal-foot">
-              <Button kind="secondary" onClick={() => setViewItem(null)}>Close</Button>
-              <Button onClick={() => { doPrint([viewItem]); setViewItem(null) }}>
+              <Button kind="secondary" onClick={() => setViewItem(null)}>
+                Close
+              </Button>
+              <Button
+                onClick={() => {
+                  doPrint([viewItem])
+                  setViewItem(null)
+                }}
+              >
                 <Printer size={14} /> Print Challan
               </Button>
             </div>

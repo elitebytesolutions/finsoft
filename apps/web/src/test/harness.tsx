@@ -25,7 +25,13 @@ import { AppFrame } from '@/components/app-frame'
 import { matchRoute } from './route-table'
 import { createRouterStore, RouterStoreContext, useRouterState } from './router-store'
 
-export function MemoryRouter({ initialEntries, children }: { initialEntries: string[]; children: ReactNode }) {
+export function MemoryRouter({
+  initialEntries,
+  children,
+}: {
+  initialEntries: string[]
+  children: ReactNode
+}) {
   // Lazy initializer: the store (and its history stack) is built once, on
   // this MemoryRouter instance's mount, and never again on re-render —
   // matching react-router-dom's real MemoryRouter, which builds its history

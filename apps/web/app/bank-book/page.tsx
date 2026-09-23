@@ -5,5 +5,9 @@ import { BankBook } from '@/screens/bank-book'
 import { Guard } from '@/components/guard'
 
 export default function Page() {
-  return <Guard module="Cash, Bank & GL"><BankBook/></Guard>
+  return (
+    <Guard module="Cash, Bank & GL">
+      <BankBook />
+    </Guard>
+  )
 }

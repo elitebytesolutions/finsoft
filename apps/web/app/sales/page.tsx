@@ -7,5 +7,14 @@ import { useFinsoft } from '@/app-context'
 
 export default function Page() {
   const f = useFinsoft()
-  return <Guard module="Sales & POS"><Sales products={f.data.products} sales={f.data.sales} onAdd={f.addSale} canCreate={f.act('sale:create')}/></Guard>
+  return (
+    <Guard module="Sales & POS">
+      <Sales
+        products={f.data.products}
+        sales={f.data.sales}
+        onAdd={f.addSale}
+        canCreate={f.act('sale:create')}
+      />
+    </Guard>
+  )
 }

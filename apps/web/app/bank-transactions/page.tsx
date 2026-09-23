@@ -5,5 +5,9 @@ import { BankTransactions } from '@/screens/bank-transactions'
 import { Guard } from '@/components/guard'
 
 export default function Page() {
-  return <Guard module="Cash, Bank & GL"><BankTransactions/></Guard>
+  return (
+    <Guard module="Cash, Bank & GL">
+      <BankTransactions />
+    </Guard>
+  )
 }

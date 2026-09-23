@@ -5,5 +5,9 @@ import { FieldSales } from '@/screens/trade-pages'
 import { Guard } from '@/components/guard'
 
 export default function Page() {
-  return <Guard module="Sales & POS"><FieldSales/></Guard>
+  return (
+    <Guard module="Sales & POS">
+      <FieldSales />
+    </Guard>
+  )
 }

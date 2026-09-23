@@ -50,7 +50,11 @@ export function createRouterStore(initialEntries: string[]): RouterStore {
   }
 
   const initial = splitEntry(history[historyIndex])
-  state = { pathname: initial.pathname, search: initial.search, params: matchRoute(initial.pathname).params }
+  state = {
+    pathname: initial.pathname,
+    search: initial.search,
+    params: matchRoute(initial.pathname).params,
+  }
 
   function navigate(to: string | number, opts?: { replace?: boolean }) {
     if (typeof to === 'number') {

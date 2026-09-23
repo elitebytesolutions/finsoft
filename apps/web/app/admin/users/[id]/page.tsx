@@ -5,5 +5,9 @@ import { UserDetail } from '@/screens/detail-pages'
 import { Guard } from '@/components/guard'
 
 export default function Page() {
-  return <Guard module="Admin & Control"><UserDetail/></Guard>
+  return (
+    <Guard module="Admin & Control">
+      <UserDetail />
+    </Guard>
+  )
 }

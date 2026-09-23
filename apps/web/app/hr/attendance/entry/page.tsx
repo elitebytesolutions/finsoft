@@ -5,5 +5,9 @@ import { AttendanceEntry } from '@/screens/attendance-entry'
 import { Guard } from '@/components/guard'
 
 export default function Page() {
-  return <Guard module="HR & Payroll"><AttendanceEntry/></Guard>
+  return (
+    <Guard module="HR & Payroll">
+      <AttendanceEntry />
+    </Guard>
+  )
 }

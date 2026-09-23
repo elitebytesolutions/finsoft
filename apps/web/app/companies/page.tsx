@@ -5,5 +5,9 @@ import { ProductCompanies } from '@/screens/companies'
 import { Guard } from '@/components/guard'
 
 export default function Page() {
-  return <Guard module="Products"><ProductCompanies/></Guard>
+  return (
+    <Guard module="Products">
+      <ProductCompanies />
+    </Guard>
+  )
 }

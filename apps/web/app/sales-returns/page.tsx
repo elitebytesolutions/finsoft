@@ -5,5 +5,9 @@ import { SalesReturn } from '@/screens/sales-return'
 import { Guard } from '@/components/guard'
 
 export default function Page() {
-  return <Guard module="Sales & POS"><SalesReturn/></Guard>
+  return (
+    <Guard module="Sales & POS">
+      <SalesReturn />
+    </Guard>
+  )
 }

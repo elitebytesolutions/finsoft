@@ -25,10 +25,22 @@ export default defineConfig({
       { find: /^react$/, replacement: path.resolve(__dirname, '../../node_modules/react') },
       { find: /^react\//, replacement: path.resolve(__dirname, '../../node_modules/react') + '/' },
       { find: /^react-dom$/, replacement: path.resolve(__dirname, '../../node_modules/react-dom') },
-      { find: /^react-dom\//, replacement: path.resolve(__dirname, '../../node_modules/react-dom') + '/' },
-      { find: '@finsoft/ui/tokens.css', replacement: path.resolve(__dirname, '../../packages/ui/src/tokens/index.css') },
-      { find: '@finsoft/ui/kit.css', replacement: path.resolve(__dirname, '../../packages/ui/src/styles/kit.css') },
-      { find: '@finsoft/ui', replacement: path.resolve(__dirname, '../../packages/ui/src/index.tsx') },
+      {
+        find: /^react-dom\//,
+        replacement: path.resolve(__dirname, '../../node_modules/react-dom') + '/',
+      },
+      {
+        find: '@finsoft/ui/tokens.css',
+        replacement: path.resolve(__dirname, '../../packages/ui/src/tokens/index.css'),
+      },
+      {
+        find: '@finsoft/ui/kit.css',
+        replacement: path.resolve(__dirname, '../../packages/ui/src/styles/kit.css'),
+      },
+      {
+        find: '@finsoft/ui',
+        replacement: path.resolve(__dirname, '../../packages/ui/src/index.tsx'),
+      },
       { find: '@', replacement: path.resolve(__dirname, './src') },
     ],
   },

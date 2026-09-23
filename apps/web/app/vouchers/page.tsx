@@ -7,5 +7,14 @@ import { useFinsoft } from '@/app-context'
 
 export default function Page() {
   const f = useFinsoft()
-  return <Guard module="Cash, Bank & GL"><VoucherRegister data={f.data} onPost={(id)=>f.patchVoucher(id,{status:'Posted' as const,posting:'Posted' as const},true)}/></Guard>
+  return (
+    <Guard module="Cash, Bank & GL">
+      <VoucherRegister
+        data={f.data}
+        onPost={(id) =>
+          f.patchVoucher(id, { status: 'Posted' as const, posting: 'Posted' as const }, true)
+        }
+      />
+    </Guard>
+  )
 }

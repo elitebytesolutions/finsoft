@@ -5,5 +5,9 @@ import { Procurement } from '@/screens/app-screens'
 import { Guard } from '@/components/guard'
 
 export default function Page() {
-  return <Guard module="Demand & PO"><Procurement/></Guard>
+  return (
+    <Guard module="Demand & PO">
+      <Procurement />
+    </Guard>
+  )
 }

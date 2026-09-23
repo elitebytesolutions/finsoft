@@ -7,5 +7,9 @@ import { useFinsoft } from '@/app-context'
 
 export default function Page() {
   const f = useFinsoft()
-  return <Guard module="Reports"><ReportsCentre data={f.data} onAddTemplate={f.addTemplate} onDelete={f.deleteTemplate}/></Guard>
+  return (
+    <Guard module="Reports">
+      <ReportsCentre data={f.data} onAddTemplate={f.addTemplate} onDelete={f.deleteTemplate} />
+    </Guard>
+  )
 }

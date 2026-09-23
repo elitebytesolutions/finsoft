@@ -5,5 +5,9 @@ import { Navigate } from '@/lib/router'
 import { Guard } from '@/components/guard'
 
 export default function Page() {
-  return <Guard module="Cash, Bank & GL"><Navigate to="/accounts" replace/></Guard>
+  return (
+    <Guard module="Cash, Bank & GL">
+      <Navigate to="/accounts" replace />
+    </Guard>
+  )
 }

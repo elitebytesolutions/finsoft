@@ -7,5 +7,9 @@ import { useFinsoft } from '@/app-context'
 
 export default function Page() {
   const f = useFinsoft()
-  return <Guard module="Products"><ProductCatalogue canCreate={f.act('master:create')}/></Guard>
+  return (
+    <Guard module="Products">
+      <ProductCatalogue canCreate={f.act('master:create')} />
+    </Guard>
+  )
 }

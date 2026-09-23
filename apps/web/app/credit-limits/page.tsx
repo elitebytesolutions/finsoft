@@ -5,5 +5,9 @@ import { CreditLimitsTerms } from '@/screens/credit-limits'
 import { Guard } from '@/components/guard'
 
 export default function Page() {
-  return <Guard module="Cash, Bank & GL"><CreditLimitsTerms/></Guard>
+  return (
+    <Guard module="Cash, Bank & GL">
+      <CreditLimitsTerms />
+    </Guard>
+  )
 }
