@@ -612,19 +612,6 @@ export default tseslint.config(
   },
 
   /* ---------------------------------------------------------------- *
-   * CLI entrypoints. A command-line tool's output IS stdout, so the
-   * file that legitimately owns the thing no-console bans gets a scoped
-   * override rather than fourteen inline disables.
-   *
-   * Narrow on purpose: only cli.ts, not the modules it calls. Library
-   * code still has no business printing.
-   * ---------------------------------------------------------------- */
-  {
-    files: ['packages/*/src/**/cli.ts'],
-    rules: { 'no-console': 'off' },
-  },
-
-  /* ---------------------------------------------------------------- *
    * Long-running services log through @finsoft/observability, never
    * through console. ADR-0016, INFRASTRUCTURE.md §8.
    *
@@ -642,7 +629,31 @@ export default tseslint.config(
    * exits silently into a crash loop.
    * ---------------------------------------------------------------- */
   {
-    files: ['apps/api/src/**/*.ts', 'apps/worker/src/**/*.ts', 'modules/**/*.ts'],
+    files: [
+      'apps/api/src/**/*.ts',
+      'apps/worker/src/**/*.ts',
+      'modules/**/*.ts',
+      /*
+       * The five packages ADR-0016 §2 rules on. They MAY log — a connection
+       * pool that cannot report a failed connection is worse than one that
+       * can — but only through @finsoft/observability.
+       *
+       * Added because §2 said "never via `console`" while nothing implemented
+       * it: for `packages/**` the repo-wide rule stood, so `console.error`
+       * was legal and `console.log` was a warning, and the ADR's own named
+       * first consumer used it. A boundary stated in a LEVEL 1 record with no
+       * mechanism is the failure this reconciliation exists to remove.
+       *
+       * `packages/database/src/generate` and `migrate` are not carved out
+       * here: the `cli.ts` override above already covers the entrypoints, and
+       * the library code beneath them has no business printing.
+       */
+      'packages/database/src/**/*.ts',
+      'packages/auth/src/**/*.ts',
+      'packages/permissions/src/**/*.ts',
+      'packages/reporting/src/**/*.ts',
+      'packages/validation/src/**/*.ts',
+    ],
     /*
      * The full array, not the bare severity. Passing `'error'` alone raises
      * the severity and KEEPS the options from the earlier block, so
@@ -654,6 +665,43 @@ export default tseslint.config(
      * outright. An empty options OBJECT is what clears the inherited ones.
      */
     rules: { 'no-console': ['error', {}] },
+  },
+
+  /* ---------------------------------------------------------------- *
+   * The two carve-outs, and they must come LAST.
+   *
+   * Flat config REPLACES rule options between blocks rather than merging
+   * them, and the later block wins. These sat BEFORE the service block
+   * above, so extending that block to packages/** silently re-banned
+   * console in all three CLIs — 23 errors in files whose entire job is to
+   * print. Order is the mechanism here, not decoration.
+   * ---------------------------------------------------------------- */
+  {
+    /*
+     * CLI entrypoints. A command-line tool's output IS stdout, so the file
+     * that legitimately owns the thing no-console bans gets a scoped
+     * override rather than fourteen inline disables.
+     *
+     * Narrow on purpose: only cli.ts, not the modules it calls. Library code
+     * still has no business printing.
+     */
+    files: ['packages/*/src/**/cli.ts'],
+    rules: { 'no-console': 'off' },
+  },
+  {
+    /*
+     * A test that asserts on what reached stdout has to be able to name
+     * `console` — `guards.test.ts` replaces `console.error` to prove the
+     * pool's error listener redacts the password out of a driver message.
+     * Banning it there would ban the test that proves the ban matters.
+     *
+     * Scoped to test files only. This is not a general exemption for test
+     * code: everything else in the ruleset still applies to it, including
+     * the decimal-library and tenant-predicate rules, which is the whole
+     * reason the restricted-import rules are repo-wide.
+     */
+    files: ['**/*.test.ts', '**/*.spec.ts'],
+    rules: { 'no-console': 'off' },
   },
 
   prettier,

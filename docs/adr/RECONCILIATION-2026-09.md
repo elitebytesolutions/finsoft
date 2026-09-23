@@ -31,7 +31,21 @@ Full detail lives in each ADR's own Compliance section. This file is the index a
 | R9 | 0016 | **`packages/database`'s idle-client error listener printed the password.** `describeTarget` was already safe, but a `pg` connection failure puts the DSN it tried — credentials included — into its **message**, which is neither a denied key nor a token shape | `redactValueShapes()` applied at `packages/database/src/pool.ts`. Tested through the **real listener** by emitting `'error'` on the pool; negative-controlled by reverting the call, which fails with the password in the assertion output |
 | R10 | 0016 | **No rule banned `console`** in the applications, so the choke point was one `console.log` away from being optional | `no-console: ['error', {}]` for `apps/api/src/**`, `apps/worker/src/**`, `modules/**`. The empty options object is load-bearing: raising the severity alone inherits `allow: ['warn', 'error']`, which permits the two levels an incident is actually logged at |
 
-**R1 is the one to remember.** It is not a typo; it is a rule that looked correct in review, passed CI every day, and enforced nothing. Every other finding here was found by looking for more of it.
+### Round 2 — found by the guardian re-review, built in the same pass
+
+| # | ADR | Finding | Evidence |
+|---|---|---|---|
+| R11 | 0013 | **R1 was not closed.** `dist` was still in the same `exclude` pattern, unanchored, and `node_modules/kysely/dist/index.js` matches it — so `kysely-is-allowlisted` stayed inert *through the review that found R1 and was explicitly hunting for more of it*. Five files import `kysely`; the graph held zero `kysely` edges | Pattern anchored so build output is excluded only outside `node_modules`. Graph 295 to 303 modules, 595 to 678 dependencies, still clean. `kysely` edges 0 to 5 |
+| R12 | 0013 | **`zod` produced zero edges** despite four importers. It resolves to `index.d.cts`, and no declaration extension was in `enhancedResolveOptions.extensions`. Same class as R11, different mechanism: any future rule naming a types-first dependency would have been inert | `.d.ts`, `.d.cts`, `.d.mts`, `.cts`, `.mts`, `.json` added. `zod` edges 0 to 4 |
+| R13 | 0013 | **`sql.raw` and `Migrator` claimed a negative control that did not exist.** Each appeared in the repository exactly twice — in its own selector and in its own message | Both negative-tested. `sql.raw` also carries a **positive** control asserting the `sql` tag is still allowed, so the rule cannot be satisfied by banning the sanctioned form |
+| R14 | 0013 / 0016 | **D7 built, not deferred.** The depcruise negative-control harness — nine rules, each proved to fire against a probe written at a path it targets, cruised against the real ruleset | `tests/security/depcruise-negative-control.spec.ts`, 20 cases. Discriminates: a probe violating nothing fires nothing, a probe violating one rule does not trip the others. **Restoring either historical `exclude` pattern turns it red** — verified |
+| R15 | 0016 | **The logger boundary had no importer side.** `observability-imports-almost-nothing` constrained what the logger imports; nothing constrained who imports it, so the first `packages/database` edge was legal only because nobody had written a rule | `observability-importers-are-allowlisted` — the kernels, `shared-types`, `ui` and `validation` may not reach it. Required by the Architecture Guardian as the condition of accepting the edge |
+| R16 | 0016 | **"Never via `console`" had no mechanism** for the five packages section 2 rules on. The repo-wide warn-level rule stood, so `console.error` was legal — and the ADR's own named first consumer used it | `no-console` raised to error with the allowances cleared for those five, negative-tested per package, with `cli.ts` and test-file carve-outs placed **last** in the flat config (placing them earlier silently re-banned `console` in all three CLIs) |
+| R17 | 0014 | **Two-thirds of the freeze claim was untested.** "direct assignment throws" and "`toFixed` is pinned with a non-writable, non-configurable descriptor" had no assertion; the code was right and the claim was unearned. The cited file, `decimal.test.ts`, does not exist | `money.test.ts` asserts both — the descriptor as a descriptor, the throw as behaviour — plus a test asserting what is **not** frozen, so the narrowing in I8 is checkable rather than merely stated |
+
+**R1 and R11 are the pair to remember.** R1 was not a typo; it was a rule that looked correct in review, passed CI every day, and enforced nothing. R11 is the same defect surviving the review that found R1 — because the fix was applied to the token (`node_modules`) instead of to the mechanism: an `exclude` pattern written for our build output will also match a dependency's published directory, since that is what publishing looks like.
+
+Neither was caught by anyone reading the config. Both were caught by someone asking what the rule had ever matched. That question is now R14, and it is why the harness stopped being a deferral.
 
 ---
 
@@ -69,19 +83,34 @@ Nothing in this section is approved by having been written down.
 | D4 | 0013 / 0014 | `numeric` round-trip integration test, and the negative type test | Both need a `numeric` column; migrations 001–004 create none. Deferred to the wave that adds the first monetary column, where they become writable and non-vacuous |
 | D5 | 0014 | Property-based generation over `Money.from`'s rejections | Needs a property-testing dependency. **Tooling decision — `fast-check` adoption — pending, Product Owner** |
 | D6 | 0014 | Lint rule forbidding float egress (`.toNumber()`, `Number()` on a decimal receiver) | Deferred **in favour of the cheaper fix**: making `Amount.value` internal closes the whole class and costs nothing, since nothing outside the package reads it. Recorded as the next change to `packages/validation` rather than as a rule to write |
-| D7 | 0016 | depcruise negative-control harness | `lint-boundaries.spec.ts` covers ESLint rules only. The four boundary rules were verified by hand, once. **R1 is the argument for building this**, and it is the highest-value item in this table |
 | D8 | 0016 | A distinguishable `sessionCorrelationId` minting format | So the guard can reject a value it did not mint rather than accepting any UUID (I10). Not urgent: no session concept exists until ADR-0009, Wave 1, and no session identifier of any kind appears in a log line today |
-| D9 | 0016 | `packages/database`'s error listener as a **log line** rather than `console.error` | The credential leak is closed (R9); the structured-logging migration is not. The listener runs inside an `'error'` handler and `getLogger()` throws before `initLogger()`, so a CLI or a test would turn a recoverable idle-socket error into a throw from an error handler. Needs a logger lifecycle `packages/database` does not have |
+| D9 | 0016 | `packages/database`'s error listener as a **log line** rather than `console.error`. Now carries a scoped `eslint-disable` with a stated reason, so it is visible rather than silently legal | The credential leak is closed (R9); the structured-logging migration is not. The listener runs inside an `'error'` handler and `getLogger()` throws before `initLogger()`, so a CLI or a test would turn a recoverable idle-socket error into a throw from an error handler. Needs a logger lifecycle `packages/database` does not have |
 
 ---
 
-## Raised for the Architecture Guardian
+**D7 was withdrawn from this table.** It was filed as debt and called "the highest-value item"; the guardian reclassified it as a blocker on the grounds that R11 is the bill for not having it, arriving inside the review that identified it. Built as R14.
 
-**R9 adds the first `packages/database → packages/observability` edge.** It is legal under the rules as written — `observability-imports-almost-nothing` constrains what observability imports, not who imports it — and consistent with ADR-0016 §2, since observability sits beneath everything that logs.
+---
 
-The consequence worth a decision rather than an assumption: **a kernel imports `packages/database`, so a kernel now transitively links against observability.** It still cannot log — `kernel-imports-only-allowed` blocks the direct import and is unchanged — but "the kernels do not reach the logger" is now a statement about the import graph, not about its transitive closure.
+## Guardian rulings
 
-Flagged, not assumed. If the Guardian rejects the edge, the fallback is to drop the driver's message and emit `name`, `code` and the safe target instead — which closes the leak at the cost of diagnosability on unusual errors.
+### Architecture Guardian — the `packages/database` to `packages/observability` edge
+
+**ACCEPT WITH A REQUIRED CHANGE.** The fallback — dropping the driver's message and emitting `name`, `code` and the safe target — was explicitly rejected: it closes the leak by destroying the diagnosis, and a control that destroys the diagnosis is one the next on-call engineer removes.
+
+The reasoning, recorded because it sets a precedent: *"and NOTHING else" has always been a statement about direct edges, and the mechanism that enforces it has always been a direct-edge allow-list.* `packages/database` already carries `pg`, `kysely` and `node:async_hooks` behind it; a kernel that transitively links a TCP driver and a query compiler is not meaningfully compromised by also linking a JSON formatter. The containment that made this acceptable is not the cruiser config: **`packages/database/src/index.ts` re-exports nothing from observability**, so `getLogger` is not nameable through the allowed edge.
+
+Corrected in the same ruling: the transitive link is **prospective, not present**. Both kernels are empty, with no declared dependencies and no outbound edges. ADR-0016 section 2 now states it in the future tense.
+
+**The required change**, now built as R15: the edge was legal only because nobody had written a rule, and that is the posture that produced R1 and R11.
+
+### Database Guardian — migration 004 manifest immutability
+
+The `CHECKSUMS` line for `004_create_outbox.sql` was committed twice with different values (`c8d8b8c8...` in `1dd0044`, edited to `f9c09068...` in `71de5db`), which `renderManifest`'s "never edit an existing line" forbids. Ruled **amend 004 in place**, on the grounds that ADR-0013 binds on *applied* and IMPLEMENTATION section 11 on *released*, and 004 is neither: both commits are on an unmerged branch, `main` and `develop` are at the initial commit, and staging's `schema_migrations` holds 001-003 only.
+
+Four conditions attached: pre-merge only; the double-commit recorded as a stated exception in the file's revision history with both SHAs and both checksums; ledger evidence attached to the PR showing 004 absent; and **once** — a third revision goes to 005 whatever the branch state says.
+
+Tracked as part of the outbox work, not closed here.
 
 ---
 

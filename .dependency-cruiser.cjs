@@ -137,6 +137,42 @@ module.exports = {
       to: { path: '^packages/observability/' },
     },
     {
+      /*
+       * The importer side of the logger boundary. ADR-0016.
+       *
+       * `observability-imports-almost-nothing` constrains what the logger
+       * imports; until this rule existed, nothing constrained who imports IT.
+       * `packages/database` was added as the first importer — to redact a pg
+       * driver message that was printing a password — and it was legal only
+       * because nobody had written a rule, which is the same posture that let
+       * the `exclude` defect survive two reviews.
+       *
+       * So the permission is now an allow-list by exclusion: the packages
+       * named here may NOT reach the logger, and the next first-party package
+       * that wants it has to change this line. That is a decision, not a
+       * default.
+       *
+       * The kernels are the load-bearing entries. `kernel-imports-only-allowed`
+       * already blocks them, but only while they stay empty of everything
+       * except the three allowed packages; this states the prohibition
+       * directly so it survives the kernels taking their `packages/database`
+       * dependency. Note that the transitive reach through `packages/database`
+       * is real and accepted: its `index.ts` re-exports nothing from
+       * observability, so `getLogger` is not nameable through the allowed
+       * edge.
+       */
+      name: 'observability-importers-are-allowlisted',
+      severity: 'error',
+      comment:
+        'ADR-0016: the logger is reachable from apps, modules (outside domain) and the ' +
+        'lower-level packages that may log. A kernel, shared-types, ui and validation may ' +
+        'not reach it. Adding an importer is an edit to this rule, not a new import.',
+      from: {
+        path: '^packages/(accounting-kernel|inventory-kernel|shared-types|ui|validation)/',
+      },
+      to: { path: '^packages/observability/' },
+    },
+    {
       name: 'observability-imports-almost-nothing',
       severity: 'error',
       comment:
@@ -263,15 +299,58 @@ module.exports = {
      * A clean report from a cruiser that cannot see the thing it is looking for.
      */
     doNotFollow: { path: 'node_modules' },
+    /*
+     * The same defect, a second time, and it survived the review that found
+     * the first one.
+     *
+     * Removing `node_modules` from `exclude` was not enough: `dist` was still
+     * here, unanchored, and `node_modules/kysely/dist/index.js` matches it.
+     * So `kysely-is-allowlisted` went on matching nothing while the graph
+     * looked healthy — five files import `kysely` (`kysely.ts`,
+     * `repository.ts`, `transaction.ts`, `testing/harness.ts` and the
+     * generated schema) and the graph contained zero `kysely` edges.
+     *
+     * The lesson is not "remember dist". It is that an `exclude` pattern
+     * written for first-party build output will silently also match a
+     * DEPENDENCY's published directory, because that is what publishing
+     * looks like. So the pattern is anchored: build output is excluded only
+     * OUTSIDE node_modules. Anything under node_modules is left to
+     * `doNotFollow`, which keeps the node and its edges and merely stops
+     * traversing into it.
+     *
+     * `tools/depcruise-negative-control.spec.ts` fails if either rule stops
+     * matching its probe, so a third occurrence is a red test, not a clean
+     * report.
+     */
     exclude: {
-      path: '(^|/)(\\.next|dist|coverage|ui-prototype|tools/parity)(/|$)',
+      path: '^(ui-prototype|tools/parity)(/|$)|^(\\.next|dist|coverage)(/|$)|^(apps|packages|modules|tools|tests)/[^/]+/(\\.next|dist|coverage)(/|$)',
     },
     tsConfig: { fileName: 'tsconfig.base.json' },
     tsPreCompilationDeps: true,
     enhancedResolveOptions: {
       exportsFields: ['exports'],
       conditionNames: ['import', 'require', 'node', 'default', 'types'],
-      extensions: ['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs'],
+      /*
+       * `.d.ts` and its `.cts`/`.mts` forms are here because a types-first
+       * package resolves to a declaration file and to nothing else. `zod`
+       * ships `index.d.cts`; without these it produced ZERO edges despite
+       * four importers, so any future rule naming it would have been inert
+       * in exactly the way `kysely-is-allowlisted` was.
+       */
+      extensions: [
+        '.js',
+        '.jsx',
+        '.ts',
+        '.tsx',
+        '.mjs',
+        '.cjs',
+        '.d.ts',
+        '.d.cts',
+        '.d.mts',
+        '.cts',
+        '.mts',
+        '.json',
+      ],
     },
     reporterOptions: {
       text: { highlightFocused: true },

@@ -80,7 +80,8 @@ function report(label: string, samples: number[]): void {
   const p50 = percentile(samples, 50).toFixed(1)
   const p95 = percentile(samples, 95).toFixed(1)
   const max = Math.max(...samples).toFixed(1)
-  // eslint-disable-next-line no-console -- the measurement IS the output of this suite
+  // The measurement IS the output of this suite. no-console is off for test
+  // files; this line is the reason that carve-out is scoped rather than removed.
   console.log(`  ${label}: p50 ${p50}ms · p95 ${p95}ms · max ${max}ms (${samples.length} samples)`)
 }
 

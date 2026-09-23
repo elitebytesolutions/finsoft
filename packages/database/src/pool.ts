@@ -258,6 +258,7 @@ export function getPool(): Pool {
      * error handler. Routing it through the logger needs a lifecycle this
      * package does not have yet — recorded as debt in ADR-0016.
      */
+    // eslint-disable-next-line no-console -- ADR-0016 debt, explained above: unreachable from the logger
     console.error(
       `[database] idle client error against ${describeTarget(connectionString)}: ` +
         redactValueShapes(error.message),

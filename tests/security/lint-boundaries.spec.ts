@@ -150,6 +150,48 @@ describe('the money and DDL guards (ADR-0011, ADR-0013)', () => {
     expect(matching(messages, 'DDL belongs in database/migrations')).toHaveLength(1)
   })
 
+  it('catches sql.raw, which does not parameterise', async () => {
+    /*
+     * Added because ADR-0013's Compliance claimed this rule had a negative
+     * control and it did not — `sql.raw` appeared nowhere in the repository
+     * except in the selector and its own message. A rule whose only two
+     * occurrences are its own definition has never been observed to fire.
+     */
+    const messages = await messagesFor(
+      'modules/sales/infrastructure/repo.ts',
+      `import { sql } from 'kysely'
+       export const q = (t: string) => sql.raw('select * from ' + t)`,
+    )
+    expect(matching(messages, 'sql.raw does not parameterise')).toHaveLength(1)
+  })
+
+  it('leaves the sql TAG alone, which is the sanctioned form', async () => {
+    /*
+     * Without this the rule above would pass against a selector that banned
+     * every use of `sql`, which would be unusable and would be "fixed" by
+     * deleting it.
+     */
+    const messages = await messagesFor(
+      'modules/sales/infrastructure/repo.ts',
+      `import { sql } from 'kysely'
+       export const q = (id: string) => sql\`select * from t where id = \${id}\``,
+    )
+    expect(matching(messages, 'sql.raw does not parameterise')).toHaveLength(0)
+  })
+
+  it("catches Kysely's Migrator, which would take DDL out of the .sql files", async () => {
+    /*
+     * Same reason as sql.raw: the claimed negative control did not exist.
+     * `Migrator` appeared only in the selector and in one comment.
+     */
+    const messages = await messagesFor(
+      'packages/database/src/x.ts',
+      `import { Migrator } from 'kysely'
+       export const m = (db: any) => new Migrator({ db, provider: null as any })`,
+    )
+    expect(matching(messages, "Kysely's Migrator is not used")).toHaveLength(1)
+  })
+
   it('catches clearWhere stripping the tenant predicate', async () => {
     const messages = await messagesFor(
       'modules/sales/infrastructure/repo.ts',
@@ -221,6 +263,42 @@ describe('services log through the logger, not console (ADR-0016)', () => {
         `console.${method} must be banned in a service`,
       ).toHaveLength(1)
     }
+  })
+
+  /*
+   * ADR-0016 §2 rules that these five packages may log, through
+   * @finsoft/observability and never through console. The rule below is what
+   * makes the second half of that sentence true: until it existed, §2 stated
+   * a boundary in a LEVEL 1 record with no mechanism behind it, the repo-wide
+   * `['warn', { allow: ['warn', 'error'] }]` stood for packages/**, and the
+   * ADR's own named first consumer — packages/database/src/pool.ts — used
+   * console.error legally.
+   */
+  it.each([
+    'packages/database/src/pool.ts',
+    'packages/auth/src/session.ts',
+    'packages/permissions/src/check.ts',
+    'packages/reporting/src/trial-balance.ts',
+    'packages/validation/src/money.ts',
+  ])('bans console.error in %s, the packages ADR-0016 §2 rules on', async (filePath) => {
+    const messages = await messagesFor(filePath, `export const f = () => console.error('x')`)
+    expect(
+      matching(messages, 'Unexpected console statement'),
+      'ADR-0016 §2: these packages log through @finsoft/observability, never through console',
+    ).toHaveLength(1)
+  })
+
+  it('leaves the kernels and shared packages on the repo-wide rule', async () => {
+    /*
+     * Deliberately NOT extended to them: a kernel may not log at all, which is
+     * a dependency-cruiser rule, not a console rule. Banning console there too
+     * would make the weaker mechanism look like the one doing the work.
+     */
+    const messages = await messagesFor(
+      'packages/accounting-kernel/src/post.ts',
+      `export const f = () => console.error('x')`,
+    )
+    expect(matching(messages, 'Unexpected console statement')).toHaveLength(0)
   })
 
   it('still allows console in a CLI, which legitimately owns stdout', async () => {

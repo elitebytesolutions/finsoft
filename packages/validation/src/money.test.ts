@@ -29,6 +29,72 @@ describe('the configured constructor (ADR-0014)', () => {
     expect(new FinDecimal('2.5').toDecimalPlaces(0).toString()).toBe('3')
   })
 
+  it('cannot be repointed by direct assignment either', () => {
+    /*
+     * `.set()` is the documented way in; direct assignment is the way in that
+     * a lint rule cannot see, because `FinDecimal.rounding = 1` is an
+     * ordinary member assignment. Object.freeze covers both, and this asserts
+     * the half the ADR claimed without testing.
+     *
+     * The module is ESM, so this file is strict-mode and the write THROWS.
+     * In sloppy mode it would fail silently, which is why the value is
+     * re-asserted afterwards rather than only the throw.
+     */
+    expect(() => {
+      ;(FinDecimal as unknown as { rounding: number }).rounding = 3 // ROUND_DOWN
+    }).toThrow(TypeError)
+
+    expect(FinDecimal.rounding, 'the configuration must be unchanged').toBe(Decimal.ROUND_HALF_UP)
+    expect(new FinDecimal('2.5').toDecimalPlaces(0).toString()).toBe('3')
+  })
+
+  it('pins toFixed, which every money value is serialised through', () => {
+    /*
+     * Object.freeze(FinDecimal) leaves the PROTOTYPE writable, so
+     * `FinDecimal.prototype.toFixed = () => '0.00'` would silently replace the
+     * serialisation of every amount in the system. decimal.ts pins the one
+     * method with a non-writable, non-configurable descriptor — freezing the
+     * whole prototype does not work, because decimal.js assigns
+     * `x.constructor` on every instance it builds.
+     *
+     * Asserted as a descriptor AND as behaviour: the descriptor is the
+     * mechanism, the throw is what a caller actually meets.
+     */
+    const descriptor = Object.getOwnPropertyDescriptor(FinDecimal.prototype, 'toFixed')
+
+    expect(descriptor).toBeDefined()
+    expect(descriptor?.writable, 'a writable toFixed can be replaced wholesale').toBe(false)
+    expect(descriptor?.configurable, 'a configurable toFixed can be redefined').toBe(false)
+
+    expect(() => {
+      ;(FinDecimal.prototype as unknown as { toFixed: unknown }).toFixed = () => '0.00'
+    }).toThrow(TypeError)
+
+    expect(new FinDecimal('1234.5').toFixed(4)).toBe('1234.5000')
+  })
+
+  it('leaves the rest of the prototype writable, deliberately', () => {
+    /*
+     * The counterpart to the test above, and the reason ADR-0014's freeze
+     * claim had to be narrowed: this is NOT a sealed object. Pinning one
+     * method is what the serialisation rule needs; claiming more than that
+     * would be the overstatement the reconciliation exists to remove.
+     *
+     * Restored in `finally` so no later test inherits the corruption.
+     */
+    const original = FinDecimal.prototype.toDecimalPlaces
+    try {
+      ;(FinDecimal.prototype as unknown as { toDecimalPlaces: unknown }).toDecimalPlaces = () =>
+        'replaced'
+      expect(
+        new FinDecimal('2.5').toDecimalPlaces(0) as unknown,
+        'a deliberate act can still replace an unpinned method — stated, not claimed away',
+      ).toBe('replaced')
+    } finally {
+      ;(FinDecimal.prototype as unknown as { toDecimalPlaces: unknown }).toDecimalPlaces = original
+    }
+  })
+
   it('is isolated from the global Decimal', () => {
     // Deliberately corrupts the global constructor to prove the clone does
     // not follow it. Restored in `finally` so no other test inherits it.

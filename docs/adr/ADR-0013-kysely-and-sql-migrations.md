@@ -157,11 +157,20 @@ Every bullet states what enforces it. Where a mechanism does not exist the bulle
 
 - **`pg` and `Pool` construction appear only in `packages/database`.** `.dependency-cruiser.cjs` `pg-driver-is-database-package-only`.
 
-  This rule was **inert from the day it was written until 2026-09-23.** `options.exclude` listed `node_modules` alongside `doNotFollow`; `exclude` removes the node *and the edges to it*, so no `^node_modules/` rule could ever match. `npm run depcruise` reported a clean graph of 273 modules while `pool.ts` — which imports `pg` on line 1 — showed one dependency, `env.ts`. Fixed, and both this rule and `one-decimal-library` were then observed to fire against probe files.
-- **`kysely` is importable only by the allowlist.** `kysely-is-allowlisted`, same file, same fix.
+  This rule was **inert from the day it was written until 2026-09-23.** `options.exclude` listed `node_modules` alongside `doNotFollow`; `exclude` removes the node *and the edges to it*, so no `^node_modules/` rule could ever match. `npm run depcruise` reported a clean graph of 273 modules while `pool.ts` — which imports `pg` on line 1 — showed one dependency, `env.ts`.
+- **`kysely` is importable only by the allowlist.** `kysely-is-allowlisted`.
+
+  **The same defect, twice.** Removing `node_modules` from `exclude` was not enough: `dist` was still in the same pattern, unanchored, and `node_modules/kysely/dist/index.js` matches it. So this rule stayed inert **through the review that found the first defect and was explicitly hunting for more of it** — five files import `kysely` and the graph contained zero `kysely` edges. `zod` was in the same state for a different reason: it resolves to `index.d.cts`, and `.d.cts` was not in `enhancedResolveOptions.extensions`, so four importers produced no edges.
+
+  The lesson is not "remember `dist`". It is that an `exclude` pattern written for **our** build output will also match a **dependency's published directory**, because that is what publishing looks like. The pattern is now anchored so build output is excluded only outside `node_modules`, and the repaired graph went 295 modules / 595 dependencies to 303 / 678.
+
+  Neither occurrence was caught by a person reading the config; both were caught by someone asking what the rule had ever matched. That is now a test — see the harness bullet below — and it is the reason the harness is a precondition of this record rather than a deferral.
 - **`modules/*/domain/**` may not import `packages/database` or `kysely`.** `domain-has-no-infrastructure-deps`.
-- **`db.schema.*` and Kysely's `Migrator` are forbidden.** `eslint.config.mjs`, with a negative control.
-- **`sql.raw` is forbidden.** `eslint.config.mjs`, with a negative control.
+- **`db.schema.*` and Kysely's `Migrator` are forbidden.** `eslint.config.mjs`, both negative-tested.
+- **`sql.raw` is forbidden.** `eslint.config.mjs`, negative-tested — and paired with a positive control asserting the `sql` **tag** is still allowed, so the rule cannot be satisfied by banning the sanctioned form.
+
+  `sql.raw` and `Migrator` previously claimed a negative control that did not exist: each appeared in the repository exactly twice, in its own selector and in its own message. A rule whose only occurrences are its own definition has never been observed to fire.
+- **Every boundary rule is proved to fire against a file that violates it.** `tests/security/depcruise-negative-control.spec.ts` writes a probe at a path each rule targets, cruises it against the real ruleset — importing `.dependency-cruiser.cjs` rather than restating it — and asserts the named rule fires. It discriminates: a probe that violates nothing produces no violations, and a probe that violates one rule does not trip the others. Restoring either historical `exclude` pattern turns it red.
 - **`set_config('app.tenant_id', …)` appears only in `packages/database`** — in a plain string, in a **template literal**, and in an `sql` tag.
 
   The original selector matched `Literal` only, and a template literal's text is a `TemplateElement`. It therefore missed the sql`` form, which is what `packages/database` itself writes and what anyone copying it would write. The harness exercised only the double-quoted case, so it certified a rule that missed the realistic one. Both forms are now covered and both are negative-tested.
