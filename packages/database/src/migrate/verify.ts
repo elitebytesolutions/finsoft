@@ -38,8 +38,17 @@ export function verifyMigrations(root = process.cwd()): Finding[] {
   }
 
   /* ---------------------------------------------------------------- *
-   * The committed manifest. An existing line changing means an applied
-   * migration was edited.
+   * The committed manifest.
+   *
+   * An existing line changing means THE FILE changed. It does NOT on its
+   * own mean an APPLIED migration was edited — this check compares file to
+   * manifest, so regenerating both together passes cleanly. The manifest is
+   * a review aid whose diff has to be read.
+   *
+   * `assertAppliedUnchanged` in apply.ts is the control that catches an
+   * edited migration, because it compares file hashes against
+   * `schema_migrations` in the TARGET DATABASE. See ADR-0013's corrections;
+   * this comment asserted the retracted claim.
    * ---------------------------------------------------------------- */
   const manifestPath = checksumsPath(root)
   if (!existsSync(manifestPath)) {

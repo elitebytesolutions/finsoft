@@ -160,9 +160,11 @@ Every bullet states what enforces it. Where a mechanism does not exist the bulle
   This rule was **inert from the day it was written until 2026-09-23.** `options.exclude` listed `node_modules` alongside `doNotFollow`; `exclude` removes the node *and the edges to it*, so no `^node_modules/` rule could ever match. `npm run depcruise` reported a clean graph of 273 modules while `pool.ts` — which imports `pg` on line 1 — showed one dependency, `env.ts`.
 - **`kysely` is importable only by the allowlist.** `kysely-is-allowlisted`.
 
-  **The same defect, twice.** Removing `node_modules` from `exclude` was not enough: `dist` was still in the same pattern, unanchored, and `node_modules/kysely/dist/index.js` matches it. So this rule stayed inert **through the review that found the first defect and was explicitly hunting for more of it** — five files import `kysely` and the graph contained zero `kysely` edges. `zod` was in the same state for a different reason: it resolves to `index.d.cts`, and `.d.cts` was not in `enhancedResolveOptions.extensions`, so four importers produced no edges.
+  **The same defect, twice.** Removing `node_modules` from `exclude` was not enough: `dist` was still in the same pattern, unanchored, and `node_modules/kysely/dist/index.js` matches it. So this rule stayed inert **through the review that found the first defect and was explicitly hunting for more of it** — six files import `kysely` and the graph contained zero `kysely` edges.
 
-  The lesson is not "remember `dist`". It is that an `exclude` pattern written for **our** build output will also match a **dependency's published directory**, because that is what publishing looks like. The pattern is now anchored so build output is excluded only outside `node_modules`, and the repaired graph went 295 modules / 595 dependencies to 303 / 678.
+  **Erratum, recorded at the Database Guardian's signature.** An earlier version of this bullet added that `zod` was inert for a related reason — that it resolves to `index.d.cts` and no declaration extension was configured, so four importers produced no edges. **That is false and this repository already knew it was false**: measured against the exact pre-fix config, `zod` resolves under the six runtime extensions and produces its four edges, because `exportsFields` and the `types` condition hand enhanced-resolve an exact path and the extension list is never consulted. The config change made on that theory was reverted; see `.dependency-cruiser.cjs` and the standing guard in `depcruise-negative-control.spec.ts`. Read literally, the withdrawn sentence would send the next reviewer to re-add extensions that were deliberately removed — in the bullet that is this record's flagship honesty exhibit.
+
+  The lesson is not "remember `dist`". It is that an `exclude` pattern written for **our** build output will also match a **dependency's published directory**, because that is what publishing looks like. The pattern is now anchored so build output is excluded only outside `node_modules`, and the repaired graph went 295 modules / 595 dependencies to **304 / 678**.
 
   Neither occurrence was caught by a person reading the config; both were caught by someone asking what the rule had ever matched. That is now a test — see the harness bullet below — and it is the reason the harness is a precondition of this record rather than a deferral.
 - **`modules/*/domain/**` may not import `packages/database` or `kysely`.** `domain-has-no-infrastructure-deps`.
@@ -209,6 +211,20 @@ Every bullet states what enforces it. Where a mechanism does not exist the bulle
 - Filenames strictly sequential, no gaps, no duplicates.
 - Forward-only; the runner refuses a file whose recorded hash differs from the applied one.
 - The migration ledger is not writable by the application role (migration 003).
+
+## Signatures
+
+`Deciders: Product Owner, Architecture Guardian, Database Guardian`. All three are required; none may be entered on another's behalf.
+
+| | |
+|---|---|
+| **Architecture Guardian** | ✅ **ACCEPTED**, 2026-09-23, at `b4271b0`, subject to three text corrections which are landed: the harness proves nine of seventeen rules and names the eight it does not; the `.dependency-cruiser.cjs` path citation is corrected; the stale test count is removed. |
+| **Database Guardian** | ✅ **SIGNED** — see the line below. |
+| **Product Owner** | ☐ not recorded |
+
+> Database Guardian — FinSoft Database Guardian, 2026-09-23 — signed at 5486e48 on verified evidence: the exclude pattern is anchored and both recurrences are pinned by test (verify:controls R1 and R11 both go red when the historical patterns are restored); nine of seventeen depcruise rules are proved to fire and the eight unproven are named exactly; the CHECKSUMS claim is correctly reduced to file-vs-manifest agreement with assertAppliedUnchanged named as the control that actually catches an edited migration; D3 is closed by a real CI gate. D1, D2 and D4 are accepted as disclosed debt, D2 confirmed open at both layers. Signed subject to three non-substantive errata being recorded, none of which changes a decision: (1) the zod sentence in "Boundaries — enforced" is withdrawn — zod was never inert, it resolves under the six runtime extensions and produces four importer edges, as .dependency-cruiser.cjs and depcruise-negative-control.spec.ts already record; (2) the repaired graph reads 304 modules / 678 dependencies, not 303 / 678; (3) kysely has six importers, not five.
+
+**All three errata are landed** in the bullets above. The status stays `Proposed` until the Product Owner's box carries a name and a date.
 
 ## Related
 

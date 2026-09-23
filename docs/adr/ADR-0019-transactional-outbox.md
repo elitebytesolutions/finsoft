@@ -27,6 +27,8 @@ The cost is visible and was accepted: most of what follows is ADR-0010's text un
 
 Corrections 3 and 4 are argued at length in their own sections below, because they change the delivery contract and **silently redefining a delivery contract is how a system ends up sending an invoice twice and having no record of which send was which.**
 
+> **Standing note, recorded at the Accounting Guardian's review rather than as a signature line.** This record needs no Accounting Guardian signature, because an outbox row carries no monetary figure, resolves no period and performs no costing — the dispatcher dispatches, it does not post. **Any future change that puts a monetary figure in an outbox payload, or that lets a dispatcher or consumer write to a financial table, requires the Accounting Guardian's signature.** The FBR e-invoicing integration is where that pressure will arrive: there will be a good-sounding argument for putting the invoice total in the payload to avoid a re-read. That change is theirs; this one is not.
+
 **What is unchanged:** at-least-once delivery; consumer idempotency being mandatory (only its *key* changes); the row being written inside the posting transaction and dispatched after it commits; the payload carrying identifiers and never financial truth; no BYPASSRLS dispatcher; the transaction never holding a network call open.
 
 ## Context
@@ -262,6 +264,20 @@ Because every external interaction is already a row plus a consumer, moving noti
 - Dispatcher requirement: **every ack, failure and reclaim asserts `rowcount = 1`.** A dispatcher that fires an update and ignores how many rows it touched cannot detect that it lost its lease, which is the entire content of the fence.
 - Dispatcher requirement: `EXPLAIN (ANALYZE, BUFFERS)` on the claim query against at least 10^6 rows across 50 or more tenants, attached to the dispatcher's pull request. A plan reviewed against ten rows is not evidence — the planner picks a sequential scan for a handful of rows whatever the indexes say.
 - Schema verification: `database/tests/outbox.spec.ts`, through **direct SQL** rather than a repository, because every guarantee here has to hold against a psql session, a migration, an admin script and a future import. Rule 21 contemplates humans with direct access, and a control that only works when called through the right TypeScript is not a control.
+
+## Signatures
+
+`Deciders: Product Owner, Architecture Guardian`. The Accounting Guardian reviewed this record for accounting touchpoints and confirmed none bind — see the standing note in the summary above, which is recorded at review rather than as a signature line.
+
+| | |
+|---|---|
+| **Architecture Guardian** | ✅ **ACCEPTED**, 2026-09-23, subject to three corrections outside this record — all landed: the committed `generated/schema.d.ts` was stale (ADR-0013 deferral D3's first live instance, in the commit that caused it, with every gate green); a line-number citation into a superseded record; and a "no DDL changed" claim in `004`'s revision note, when `COMMENT ON` is DDL and writes `pg_description`. |
+| **Accounting Guardian** | — not required. Confirmed at review. |
+| **Product Owner** | ☐ not recorded |
+
+**ADR-0010's status flips to `Superseded by ADR-0019` in the same change that flips this one to `Accepted`.** The two move together, as ADR-0007 and ADR-0015 do. `database/migrations/004_create_outbox.sql` must not merge before both — it already cites this supersession in the present tense, which is the Database Guardian's condition C2.
+
+**Status stays `Proposed`.** A record carrying two of three signatures and an `Accepted` status would claim more than it has, which is the defect class this document was rejected over the first time. The status flips when the last box carries a name and a date, and not before.
 
 ## Related
 

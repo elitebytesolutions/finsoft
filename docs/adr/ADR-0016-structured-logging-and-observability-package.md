@@ -196,6 +196,17 @@ Accepted by the Architecture Guardian on the reasoning that "and NOTHING else" h
 - **A distinguishable `sessionCorrelationId` format**, so the guard can reject a value it did not mint rather than accepting any UUID.
 - **`packages/database`'s error listener is still `console.error`**, not a log line — the credential leak is closed, the structured-logging migration is not. See §2 above for why it needs a logger lifecycle this package does not have.
 
+## Signatures
+
+`Deciders: Product Owner, Architecture Guardian`. No third guardian: this record touches no accounting, costing, period or money representation, and the Accounting Guardian's standing boundary is stated in ADR-0019 rather than here.
+
+| | |
+|---|---|
+| **Architecture Guardian** | ✅ **ACCEPTED**, 2026-09-23, subject to two stale paragraphs being corrected — both landed. §2 asserted that no depcruise negative-control harness existed, and the debt list repeated it; the harness exists, is cited by name, and proves all five rules in §2's table. A LEVEL 1 record asserting a control is absent is the mirror of asserting one that is not there. |
+| **Product Owner** | ☐ not recorded |
+
+**Status stays `Proposed`.** A record carrying two of three signatures and an `Accepted` status would claim more than it has, which is the defect class this document was rejected over the first time. The status flips when the last box carries a name and a date, and not before.
+
 ## Related
 
 - [../INFRASTRUCTURE.md](../INFRASTRUCTURE.md) §8 — the observability stack this implements the first third of

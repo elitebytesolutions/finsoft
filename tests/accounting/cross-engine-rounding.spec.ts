@@ -142,6 +142,17 @@ describe('Money.round agrees with PostgreSQL numeric', () => {
       [5, 3],
       [10, 3],
       [100, 7],
+      /*
+       * The three negative-dividend cases, added at the Accounting
+       * Guardian's signature review. Every case above uses a positive
+       * dividend, so none of them proved the remainder carries the
+       * DIVIDEND's sign — which is the whole reason modulo: ROUND_DOWN is
+       * in the configuration. Asserted against the engine rather than
+       * against our own expectation of it.
+       */
+      [-11, 3],
+      [11, -3],
+      [-11, -3],
     ] as const) {
       const sql = await withGlobal((tx) =>
         scalarOn<string>(tx, 'select ($1::numeric % $2::numeric)::text', [a, b]),

@@ -110,9 +110,27 @@ const PROBE = '9007199254740993'
  * ADR-0013:68 asks for one positive check rather than four negative greps:
  * `setTypeParser`, `pg.defaults`, the `types` option on Pool/Client and a
  * `pg-types` dependency are each a way to rewire this, and a lint rule per
- * hole will eventually miss one. Asking the driver what it will actually do
- * catches all of them, including one introduced by a transitive dependency
- * at import time.
+ * hole will eventually miss one.
+ *
+ * WHAT THIS CATCHES, AND WHAT IT DOES NOT. This reads the MODULE-GLOBAL
+ * parser, so it catches `setTypeParser`, `pg.defaults`, and a rewiring
+ * introduced by a transitive dependency at import time — including one that
+ * ran before this process reached here.
+ *
+ * It does NOT catch a per-`Pool` or per-`Client` `types` option, because
+ * that installs a parser on the instance and never touches the global one.
+ * The assertion would pass while that pool returned numbers.
+ *
+ * An earlier version of this comment claimed it "catches all of them,
+ * including ... the `types` option on Pool/Client", and the error message
+ * below said the same. ADR-0013's deferral D2 records the hole correctly —
+ * it is open at BOTH layers, here and in lint — and the code contradicted
+ * the ADR that governs it. Corrected rather than left, because this is the
+ * one function standing between a JS float and a money column.
+ *
+ * What keeps it closed today is that nothing in the repository constructs a
+ * second Pool (`pg-driver-is-database-package-only`) and `pg-types` appears
+ * in no `package.json`. That is circumstance, not a control.
  *
  * Called at pool construction. The process refuses to start if it fails —
  * there is no degraded mode in which money is allowed through a float.
@@ -129,7 +147,10 @@ export function assertExactNumericParsing(): void {
       throw new Error(
         `ADR-0011 violated before a single query ran: ${label} parses "${PROBE}" into ` +
           `${typeof parsed} ${String(parsed)}, not the identical string. ` +
-          'Something has called setTypeParser, set pg.defaults, or passed a `types` option. ' +
+          'Something has called setTypeParser or set pg.defaults — or a transitive ' +
+          'dependency did at import time. (A per-Pool `types` option would NOT trip this ' +
+          'check: it installs an instance parser and never touches the global one. ' +
+          'ADR-0013 deferral D2.) ' +
           'Money and 64-bit identifiers must reach TypeScript as strings and be parsed only ' +
           'by Money.from — a JS number cannot hold them exactly.',
       )

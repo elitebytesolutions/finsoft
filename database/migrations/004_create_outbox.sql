@@ -27,11 +27,25 @@
 -- This file has been revised TWICE. Both revisions predate any release, and
 -- the record belongs here rather than only in a reflog.
 --
---   draft 1   commit 1dd0044
---             CHECKSUMS c8d8b8c826be34dabc2c2727036ae223a6fbb5f7c107bc7ca3f12c4c3508b5fa
---   draft 2   commit 71de5db
---             CHECKSUMS f9c090681cb0f69ac15a67809a7254067994730092628ca6e5796307eeb89cd6
---   this file the third, after the second database-guardian review
+-- EVERY COMMITTED VERSION, with its SHA and its manifest line. The earlier
+-- form of this block listed the first two and described the rest in prose,
+-- which is the file's own evidentiary standard applied to everyone except
+-- itself. Database Guardian condition C3.
+--
+--   #  commit    CHECKSUMS entry for 004                                      what changed
+--   1  d3a9a94   (no manifest line yet)                                        created
+--   2  1dd0044   c8d8b8c826be34dabc2c2727036ae223a6fbb5f7c107bc7ca3f12c4c3508b5fa  first manifest line
+--   3  71de5db   f9c090681cb0f69ac15a67809a7254067994730092628ca6e5796307eeb89cd6  revised after review 1
+--   4  4053f57   9f38828abb1383269f99efc3344ab780fc51f57fbc38545d265a8eae42da58e3  the 12 changes from review 2
+--   5  06ad0c8   f26fe704323f771b0c751cafad60c83f626132c23e92563ba445a4ba1cc10eb2  A1 append, A2 effect_key shape
+--   6  b4271b0   081cc0f55be3a3c661d131f75dd26a1dea22fcee0279589987d97484ac47e054  citations repointed to ADR-0019
+--   7  5486e48   ac6474d2e6b2d83b428e918a14f28ab37ffdb43a1cb3e2f1a70553eb8140438d  revision note corrected
+--   8  this one  see CHECKSUMS                                                 C1-C4 recorded
+--
+-- SEVEN COMMITTED VERSIONS BEFORE THIS ONE, not the "three drafts" an earlier
+-- version of this note implied. The narrower count came from thinking of a
+-- draft as a review cycle rather than as a committed manifest line, and the
+-- manifest does not care which it was.
 --
 -- THE MANIFEST LINE WAS EDITED, which `renderManifest` forbids in terms:
 -- "Never edit an existing line." That rule is an operational restatement of
@@ -108,7 +122,62 @@
 -- Not moved to 005: a migration whose entire content is a citation change
 -- would permanently add a row to a forward-only chain in exchange for
 -- prose, and split this table's comments across two files for the life of
--- the database.
+-- the database. The Database Guardian reached the same conclusion
+-- independently: "I would not accept that migration if it were submitted on
+-- its own merits, so I will not create it to satisfy a procedural reflex."
+--
+-- ---------------------------------------------------------------------------
+-- RE-GRANTED, with four conditions. Database Guardian, 2026-09-23.
+--
+-- Verified independently before re-granting: stripping comment lines and
+-- COMMENT ON statements, and diffing with all other string literals intact,
+-- leaves exactly two differences between 06ad0c8 and this file -- both
+-- RAISE EXCEPTION message strings. No column, type, default, CHECK
+-- (including the topic and effect_key regexes, checked specifically because
+-- a regex change hides well in a comment-heavy diff), foreign key, unique
+-- constraint, index, trigger definition, policy or grant differs.
+--
+--   C1  THE COUNTER RESETS AND DOES NOT ACCUMULATE. The next committed
+--       revision of this file goes to 005 unconditionally -- including
+--       another citation-only change -- and no further disposition is
+--       available on this branch. This commit is the one C3 mandates, so
+--       the counter starts from it.
+--
+--   C2  THIS FILE MUST NOT MERGE before ADR-0019 is Accepted and ADR-0010's
+--       status is flipped to Superseded. It already asserts that
+--       supersession in the PRESENT TENSE -- "ADR-0019 (which supersedes
+--       ADR-0010)", "ADR-0019 requires FAILED at the cap" -- while ADR-0019
+--       is still Proposed. The migration is ahead of the record it cites,
+--       and if ADR-0019 is amended in review the citations are wrong a
+--       second time. That is the only foreseeable cause of a further edit,
+--       and C2 removes the path in advance rather than adjudicating it
+--       afterwards.
+--
+--   C3  Every committed version recorded with its SHA and manifest line.
+--       Done, above.
+--
+--   C4  The D3 codegen-diff gate stays in the CI test job with no
+--       continue-on-error. AND THE LIMIT OF THAT GATE, STATED HERE BECAUSE
+--       THE EARLIER NOTE IMPLIED THE LOOP WAS CLOSED AND IT IS NOT:
+--
+--         COMMENT ON text  -> pg_description -> generated/schema.d.ts
+--                          -> CAUGHT by the codegen diff.
+--
+--         RAISE EXCEPTION text -> pg_proc.prosrc -> nothing generated,
+--                          no test asserting the changed fragments
+--                          -> CAUGHT BY NOTHING.
+--
+--       Both message strings changed in b4271b0 and no gate in this
+--       repository would have noticed. The outbox suite matches on
+--       /DONE is terminal/ and /must carry the original topic, effect_key
+--       and correlation_id/, fragments that did not change. That class of
+--       migration edit is still invisible.
+--
+-- The staging-ledger evidence above rests on an attestation the Database
+-- Guardian did not verify and declined access to verify. It is re-asserted
+-- on the pull request, which is where it can be checked by someone who has
+-- that access.
+-- ---------------------------------------------------------------------------
 --
 -- ---------------------------------------------------------------------------
 -- What the second review changed, and why each one mattered

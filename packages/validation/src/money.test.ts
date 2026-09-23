@@ -118,6 +118,28 @@ describe('the configured constructor (ADR-0014)', () => {
     expect(new FinDecimal(11).mod(3).toNumber()).toBe(11 % 3)
   })
 
+  it.each([
+    [11, 3, '2'],
+    [-11, 3, '-2'],
+    [11, -3, '2'],
+    [-11, -3, '-2'],
+  ])('carries the DIVIDEND sign: %d mod %d = %s', (a, b, expected) => {
+    /*
+     * The negative dividend is the only case that proves the property, and
+     * it was the case this file did not have — every modulo assertion above
+     * uses a positive dividend, while ADR-0014 claimed all four were
+     * covered. Caught by the Accounting Guardian at signature.
+     *
+     * Why the sign matters more than the magnitude: apportioning a credit
+     * note must leave a NEGATIVE residual, to post against a negative total.
+     * Under ROUND_HALF_UP the sign inverts on exactly these inputs — wrong
+     * in the direction that still lets the containing entry balance, which
+     * is the worst kind of wrong.
+     */
+    expect(new FinDecimal(a).mod(b).toString()).toBe(expected)
+    expect(new FinDecimal(a).mod(b).toNumber(), 'and JavaScript agrees').toBe(a % b)
+  })
+
   it('keeps 38-39 significant digits exact at the numeric(19,6) ceiling', () => {
     const ceiling = '9999999999999.999999'
     const squared = new FinDecimal(ceiling).times(ceiling)
