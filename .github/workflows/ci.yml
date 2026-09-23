@@ -169,6 +169,26 @@ jobs:
       - name: migrate test cluster
         run: npm run db:migrate:test
 
+      # ADR-0013 deferral D3, closed after it produced a live instance.
+      #
+      # Repointing a migration's citations changed two COMMENT ON strings;
+      # the committed generated/schema.d.ts kept the old text and typecheck,
+      # lint, depcruise, the migration ledger and 617 tests all stayed green.
+      # It was caught by a reviewer reading the file.
+      #
+      # assertGeneratedTypesAreExact catches a MALFORMED committed schema. It
+      # cannot catch a STALE one, because staleness is a fact about the
+      # database, not about the file. So the file is regenerated against the
+      # freshly-migrated database and any diff fails the run.
+      - name: schema types match the migrated database
+        run: |
+          npm run db:codegen
+          if ! git diff --quiet -- packages/database/src/generated/schema.d.ts; then
+            echo "::error::generated/schema.d.ts is stale. Run 'npm run db:codegen' and commit the result."
+            git --no-pager diff -- packages/database/src/generated/schema.d.ts
+            exit 1
+          fi
+
       # Per-workspace suites, then the gate: smoke, schema, security,
       # accounting. `npm test` is the whole thing — running vitest directly
       # at the root is NOT equivalent, because it globs build output and the

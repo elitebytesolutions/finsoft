@@ -81,14 +81,34 @@
 -- After merge, the next correction is 005. No further amendment to this file
 -- is available on this branch without a new Database Guardian disposition.
 --
--- EDITED ONCE MORE, COMMENTS ONLY, AND SAID SO HERE RATHER THAN QUIETLY.
+-- EDITED ONCE MORE, AND SAID SO HERE RATHER THAN QUIETLY.
+--
 -- The Product Owner ruled that README rule 4 stands as written, so the
 -- ADR-0010 erratum was withdrawn and ADR-0019 supersedes ADR-0010 instead.
--- Every reference in this file was repointed. NO DDL CHANGED — the schema
--- this applies is byte-identical in behaviour, and only the citations moved.
--- Flagged for Database Guardian confirmation rather than assumed, because
--- "it was only a comment" is how a once-only disposition stops meaning
--- anything.
+-- Every reference in this file was repointed.
+--
+-- NO STRUCTURAL DDL CHANGED — no column, constraint, index, trigger,
+-- policy or grant differs. What did change is `COMMENT ON` text and
+-- `RAISE EXCEPTION` message strings.
+--
+-- The first draft of this note said "NO DDL CHANGED", which was wrong:
+-- COMMENT ON *is* DDL and writes pg_description. It was not inert either —
+-- the change propagated into the committed generated/schema.d.ts, which
+-- went stale and passed every gate. That is ADR-0013 deferral D3's first
+-- live instance, in the same commit that caused it.
+--
+-- Ruled a REVISION by the Architecture Guardian: the bytes change, the
+-- checksum changes, and assertAppliedUnchanged cannot tell a comment from
+-- a column, which is the only definition with operational meaning. ADR-0013
+-- does not bind because 004 has not merged and immutability attaches on
+-- APPLY. The once-only disposition is the Database Guardian's alone to
+-- re-grant, and this is flagged to them rather than assumed — "it was only
+-- a comment" is how a once-only disposition stops meaning anything.
+--
+-- Not moved to 005: a migration whose entire content is a citation change
+-- would permanently add a row to a forward-only chain in exchange for
+-- prose, and split this table's comments across two files for the life of
+-- the database.
 --
 -- ---------------------------------------------------------------------------
 -- What the second review changed, and why each one mattered
@@ -668,7 +688,7 @@ COMMENT ON FUNCTION outbox_enforce_replay() IS
 --
 -- ADR-0003 requires tenant_id first on every index of a tenant-owned table.
 --
--- ADR-0019 CORRECTION 2. ADR-0010:152 specified
+-- ADR-0019 CORRECTION 2. ADR-0010 specified
 -- (status, available_at). ADR-0003 binds harder, and a dispatch query can
 -- only ever see one tenant's rows anyway because RLS confines it, so
 -- tenant_id leads.

@@ -197,7 +197,11 @@ Every bullet states what enforces it. Where a mechanism does not exist the bulle
 
 - **A lint rule for SQL assembled by string concatenation** outside the `sql` tag. Does not exist. `"select … where tenant_id = " + t` in a module lints clean today.
 - **A lint rule for the `types` option on `Pool`, `Client` or query config**, and for `pg-types` in any `package.json`. Neither exists. The runtime assertion covers `setTypeParser` and `pg.defaults` but **not** a per-`Pool` `types` map, which does not alter the module-global parser — so that one hole is open at both layers.
-- **A codegen drift check in CI.** There is no codegen step in the workflow, so nothing compares the committed schema types against the live schema. `assertGeneratedTypesAreExact` now runs against the committed file, which catches a malformed one but not a stale one.
+- **A codegen drift check in CI. NO LONGER HYPOTHETICAL — it has produced a live instance.** There is no codegen step in the workflow, so nothing compares the committed schema types against the live schema. `assertGeneratedTypesAreExact` runs against the committed file, which catches a malformed one but not a stale one.
+
+  **It went stale on 2026-09-23**, in commit `b4271b0`. Repointing `004_create_outbox.sql`'s citations from ADR-0010 to ADR-0019 changed two `COMMENT ON` strings; the committed `generated/schema.d.ts` kept the old text, and **typecheck, lint, depcruise, `db:migrate:verify` and 617 tests all stayed green**. It was caught by a reviewer reading the file, which is exactly the detection mechanism this deferral says is missing.
+
+  A deferral that has produced a real instance is a different item from one that has not. This is now the highest-priority entry in this list, and the fix is small: run `npm run db:codegen` in CI against the migrated test database and fail on a non-empty `git diff`.
 - **The `numeric` round-trip integration test and the negative type test.** Both need a `numeric` column; migrations 001–004 create none. Deferred to the wave that adds the first monetary column.
 
 ### Migrations — enforced

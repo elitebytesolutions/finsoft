@@ -25,7 +25,7 @@ export type Timestamp = ColumnType<Date, Date | string, Date | string>;
 
 export interface Outbox {
   /**
-   * A human has taken responsibility for this FAILED row. The ADR-0010 alert is defined over UNACKNOWLEDGED failed rows; without this it would fire forever from the first one and be muted.
+   * A human has taken responsibility for this FAILED row. The ADR-0019 alert is defined over UNACKNOWLEDGED failed rows; without this it would fire forever from the first one and be muted.
    */
   acknowledged_at: Timestamp | null;
   acknowledged_by: string | null;
@@ -35,7 +35,7 @@ export interface Outbox {
   attempts: Generated<number>;
   available_at: Generated<Timestamp>;
   /**
-   * When a dispatcher claimed the row. LEASE INTERVAL: 5 minutes is the contract value, and the dispatcher MUST read it from configuration rather than hard-coding it — a crash test that cannot shorten the lease cannot run in under five minutes.
+   * When a dispatcher claimed the row. LEASE INTERVAL: 5 minutes is the contract value, and the dispatcher MUST read it from configuration rather than hard-coding it — a crash test that cannot shorten the lease cannot run in under five minutes. ORDERING INVARIANT: the lease interval must exceed the maximum per-topic consumer timeout WITH MARGIN, and the dispatcher asserts this at startup over its registered consumers and refuses to start otherwise. Without it a merely SLOW consumer loses its row to the reaper every time, burns the reclaim budget and lands on FAILED carrying "lease expired 5 times without an ack" — a poison-message verdict on a consumer that works, which is the diagnostic confusion the separate reclaims counter exists to prevent.
    */
   claimed_at: Timestamp | null;
   /**
@@ -60,7 +60,7 @@ export interface Outbox {
   lease_id: string | null;
   occurred_at: Timestamp;
   /**
-   * Identifiers and minimal facts, at most 4096 bytes. Never an amount, an account or any figure that must agree with the ledger (ADR-0010). Immutable after insert.
+   * Identifiers and minimal facts, at most 4096 bytes. Never an amount, an account or any figure that must agree with the ledger (ADR-0019). Immutable after insert.
    */
   payload: Json;
   /**
