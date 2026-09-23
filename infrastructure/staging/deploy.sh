@@ -29,21 +29,44 @@ trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
 # is being redirected, so a denied registry pull wrote API_IMAGE= (empty) and
 # the deploy continued to compose, which then failed with a confusing
 # interpolation error several steps from the real cause.
+# `exit` inside a command substitution exits only that SUBSHELL, so the first
+# version of this — which called resolve() from inside the here-doc that wrote
+# .env.images — printed FATAL and carried on regardless, producing an empty
+# API_IMAGE= and a compose interpolation error three steps later. Twice.
+#
+# So resolution happens into plain variables, checked in the parent shell,
+# BEFORE anything is written. A digest that cannot be resolved stops the
+# deploy where the problem is.
 resolve() {
   local name="ghcr.io/${REPO}-$1:${SHA}" digest
-  docker pull -q "$name" >/dev/null 2>&1 ||
-    { echo "FATAL: cannot pull $name (is the token missing read:packages?)" >&2; exit 1; }
-  digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$name" 2>/dev/null) || digest=""
-  [ -n "$digest" ] ||
-    { echo "FATAL: $name has no repo digest" >&2; exit 1; }
-  printf '%s' "$digest"
+
+  # A pull can fail transiently — registry 5xx, a slow manifest, a network
+  # blip — and retrying is cheaper than a failed deploy that needs a human.
+  local attempt
+  for attempt in 1 2 3; do
+    if docker pull -q "$name" >/dev/null 2>&1; then
+      digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$name" 2>/dev/null || true)
+      [ -n "$digest" ] && { printf '%s' "$digest"; return 0; }
+    fi
+    [ "$attempt" -lt 3 ] && sleep $((attempt * 5))
+  done
+
+  echo "FATAL: cannot resolve $name after 3 attempts." >&2
+  echo "  Login succeeded but the pull was denied? The package is probably not" >&2
+  echo "  linked to the repository — see org.opencontainers.image.source in" >&2
+  echo "  the images job, and check the package's visibility." >&2
+  return 1
 }
+
+API_IMAGE=$(resolve api) || exit 1
+WORKER_IMAGE=$(resolve worker) || exit 1
+WEB_IMAGE=$(resolve web) || exit 1
 
 {
   echo "# Written by CI on $(date -u +%FT%TZ). Digests, never tags."
-  echo "API_IMAGE=$(resolve api)"
-  echo "WORKER_IMAGE=$(resolve worker)"
-  echo "WEB_IMAGE=$(resolve web)"
+  echo "API_IMAGE=${API_IMAGE}"
+  echo "WORKER_IMAGE=${WORKER_IMAGE}"
+  echo "WEB_IMAGE=${WEB_IMAGE}"
   echo "APP_VERSION=${SHA}"
 } >.env.images
 
