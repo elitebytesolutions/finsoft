@@ -2,7 +2,7 @@ import 'reflect-metadata'
 import { Logger } from '@nestjs/common'
 import { NestFactory } from '@nestjs/core'
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger'
-import { closeDatabase } from '@finsoft/database'
+import { closeDatabase, openDatabase } from '@finsoft/database'
 import { AllExceptionsFilter } from './common/all-exceptions.filter'
 import { AppModule } from './app.module'
 
@@ -18,6 +18,27 @@ import { AppModule } from './app.module'
 const DEFAULT_PORT = 3001
 
 async function bootstrap(): Promise<void> {
+  /*
+   * Open the pool BEFORE the server listens, and fail startup if it will not
+   * open.
+   *
+   * Without this the pool opened lazily on the first query, which moved three
+   * assertions from boot to whichever user made that request:
+   *
+   *   - the connecting role is subject to RLS. Pointed at finsoft_migration
+   *     or a superuser, every policy in the database is off for this process
+   *     and the system looks perfectly healthy while each tenant sees all
+   *     rows. This is the one that matters.
+   *   - numeric and int8 still arrive as strings (ADR-0013). A rewired type
+   *     parser returns floats for money.
+   *   - the connection string works at all.
+   *
+   * An orchestrator restarting a process that refuses to boot is the
+   * behaviour wanted here; a process that starts, reports healthy, and fails
+   * every request is not.
+   */
+  await openDatabase()
+
   const app = await NestFactory.create(AppModule, { bufferLogs: true })
   const logger = new Logger('bootstrap')
 

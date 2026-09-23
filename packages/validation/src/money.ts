@@ -48,6 +48,30 @@ export class Amount<K extends Kind> {
 
   /** @internal Use Money.from, Quantity.from, and so on. */
   constructor(kind: K, value: Dec) {
+    /*
+     * NaN and Infinity are rejected HERE, at construction, not at the
+     * boundary on the way out.
+     *
+     * The scale guard below could not catch them: `decimalPlaces()` returns
+     * NaN for a non-finite value, `NaN > 4` is false, and the check fell
+     * straight through to `toFixed` — which happily produced the string
+     * "NaN". That string is accepted by PostgreSQL as `'NaN'::numeric`, and
+     * in PostgreSQL `NaN = NaN` is TRUE, so a journal entry whose every line
+     * was NaN would satisfy a database-level SUM(debit) = SUM(credit) check.
+     *
+     * An entry that balances because both sides are not-a-number is the
+     * worst possible failure of Invariant 1: it passes the control designed
+     * to catch it.
+     */
+    if (!value.isFinite()) {
+      throw new AmountError(
+        `${kind} cannot be ${value.isNaN() ? 'NaN' : 'Infinity'}. A non-finite amount ` +
+          'serialises to a string PostgreSQL accepts as numeric, where NaN = NaN is TRUE — ' +
+          'so an entry of NaN lines would satisfy a SUM(debit) = SUM(credit) check while ' +
+          'balancing nothing (NON_NEGOTIABLES Invariant 1).',
+      )
+    }
+
     this.kind = kind
     this.value = value
     this.scale = SPEC[kind].scale
@@ -83,6 +107,18 @@ export class Amount<K extends Kind> {
   }
 
   private fixedOrThrow(via: string): string {
+    /*
+     * Belt and braces. The constructor rejects non-finite values, so this is
+     * unreachable through the sanctioned path — but `value` is a public
+     * readonly field holding a mutable decimal, and the scale check below
+     * silently passes anything non-finite (NaN > scale is false).
+     */
+    if (!this.value.isFinite()) {
+      throw new AmountError(
+        `${this.kind}.${via}() refused: the value is not finite. See the constructor.`,
+      )
+    }
+
     if (this.value.decimalPlaces() > this.scale) {
       throw new AmountError(
         `${this.kind}.${via}() refused: the value carries ${this.value.decimalPlaces()} decimal ` +

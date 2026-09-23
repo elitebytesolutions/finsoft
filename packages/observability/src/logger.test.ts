@@ -204,3 +204,45 @@ describe('root logger lifecycle', () => {
     expect(initLogger({ service: 'api' })).toBe(initLogger({ service: 'worker' }))
   })
 })
+
+describe('the message path is redacted too', () => {
+  /*
+   * pino applies formatters.log to the merge OBJECT only, so until the
+   * logMethod hook existed a secret interpolated into the MESSAGE went
+   * straight to the output. That is the most likely leak in practice:
+   * `logger.error(\`auth failed: ${header}\`)` is what someone writes while
+   * debugging the thing that is going wrong.
+   */
+  const JWT =
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk'
+
+  it('redacts a token concatenated into the message', () => {
+    const { stream, line } = capture()
+    pino(baseOptions({ service: 'api' }), stream).info(`auth failed with ${JWT}`)
+
+    expect(String(line().msg)).toContain(REDACTED)
+    expect(JSON.stringify(line())).not.toContain('eyJ')
+  })
+
+  it('redacts a token passed as an interpolation argument', () => {
+    const { stream, line } = capture()
+    pino(baseOptions({ service: 'api' }), stream).info({ ok: 1 }, 'token %s', JWT)
+
+    expect(JSON.stringify(line())).not.toContain('eyJ')
+    expect(line().ok).toBe(1)
+  })
+
+  it('redacts a bearer credential in a message', () => {
+    const { stream, line } = capture()
+    pino(baseOptions({ service: 'api' }), stream).warn('header was Bearer abc123def456ghi789')
+
+    expect(JSON.stringify(line())).not.toContain('abc123def456ghi789')
+  })
+
+  it('leaves an ordinary message intact', () => {
+    const { stream, line } = capture()
+    pino(baseOptions({ service: 'api' }), stream).info('posted sale INV-2026-000123')
+
+    expect(line().msg).toBe('posted sale INV-2026-000123')
+  })
+})

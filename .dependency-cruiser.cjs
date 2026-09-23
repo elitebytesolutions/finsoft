@@ -213,8 +213,29 @@ module.exports = {
       name: 'not-to-dev-dep',
       severity: 'error',
       comment: 'Production code may not depend on a devDependency.',
-      from: { path: '^(apps|packages|modules)/', pathNot: '\\.(spec|test)\\.[tj]sx?$' },
-      to: { dependencyTypes: ['npm-dev'] },
+      from: {
+        path: '^(apps|packages|modules)/',
+        /*
+         * Test and build-configuration files legitimately use devDependencies
+         * — that is what a devDependency is. Excluded: spec files, vitest and
+         * playwright configs, and anything under a `test/` directory.
+         */
+        pathNot:
+          '\\.(spec|test)\\.[tj]sx?$|(^|/)(vitest|playwright)[^/]*\\.config\\.[tj]s$|(^|/)test/',
+      },
+      to: {
+        dependencyTypes: ['npm-dev'],
+        /*
+         * A TYPE-ONLY import of a devDependency is not a runtime dependency —
+         * it is erased before the code runs. `import type { Response } from
+         * 'express'` against @types/express is correct and must not be
+         * flagged; an ordinary import of the same module would still be.
+         *
+         * Needed because tsPreCompilationDeps is on, which is what lets the
+         * kernel and boundary rules see type-only edges they SHOULD catch.
+         */
+        dependencyTypesNot: ['type-only'],
+      },
     },
     {
       name: 'no-deprecated-core',
@@ -225,9 +246,25 @@ module.exports = {
   ],
 
   options: {
+    /*
+     * `doNotFollow` keeps a node in the graph and stops traversing INTO it.
+     * `exclude` removes the node AND THE EDGES TO IT.
+     *
+     * node_modules must be in the first and NOT the second. It was in both,
+     * and the consequence was silent and total: every rule whose `to.path`
+     * targets `^node_modules/` could never fire, because no such module was
+     * in the graph to match. That is `pg-driver-is-database-package-only`,
+     * `kysely-is-allowlisted`, `one-decimal-library` and `not-to-dev-dep` —
+     * including the two import boundaries ADR-0013 exists to enforce.
+     *
+     * The symptom was invisible: `npm run depcruise` reported "no dependency
+     * violations found" across 273 modules, and `packages/database/src/pool.ts`
+     * — which imports `pg` on line 1 — showed exactly one dependency, `env.ts`.
+     * A clean report from a cruiser that cannot see the thing it is looking for.
+     */
     doNotFollow: { path: 'node_modules' },
     exclude: {
-      path: '(^|/)(node_modules|\\.next|dist|coverage|ui-prototype|tools/parity)(/|$)',
+      path: '(^|/)(\\.next|dist|coverage|ui-prototype|tools/parity)(/|$)',
     },
     tsConfig: { fileName: 'tsconfig.base.json' },
     tsPreCompilationDeps: true,

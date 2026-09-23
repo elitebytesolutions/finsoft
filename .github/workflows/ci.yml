@@ -372,6 +372,28 @@ jobs:
           HOST: ${{ vars.STAGING_HOST }}
         run: bash infrastructure/staging/smoke.sh "http://$HOST"
 
+      # A real browser against the real deployment, which curl cannot stand in
+      # for: smoke.sh proves each endpoint answers, not that a document loaded
+      # from the web origin can reach the API through the proxy. That is the
+      # arrangement ADR-0009's SameSite=Strict refresh cookie depends on.
+      #
+      # Runs HERE and not in the pull-request suite, so an unrelated change
+      # never fails because staging happened to be restarting.
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: install browser
+        run: npx playwright install --with-deps chromium
+
+      - name: browser against the deployed origin
+        env:
+          E2E_BASE_URL: http://${{ vars.STAGING_HOST }}
+        run: npx playwright test --config tests/e2e/playwright.deployed.config.ts
+
   # ------------------------------------------------------------------ #
   # Advisory, and deliberately not a gate — see the note below.
   # ------------------------------------------------------------------ #

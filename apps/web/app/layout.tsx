@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next'
 import type { ReactNode } from 'react'
 import '@finsoft/ui/tokens.css'
 import '@finsoft/ui/kit.css'
+import '@finsoft/ui/employee-wizard.css'
 import { FinsoftProvider } from '@/app-context'
 import { AppFrame } from '@/components/app-frame'
 

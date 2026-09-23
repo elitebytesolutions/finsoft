@@ -12,7 +12,7 @@
  * under Node's type stripping with no build step — the same way packages/* do.
  */
 
-import { closeDatabase } from '@finsoft/database'
+import { closeDatabase, openDatabase } from '@finsoft/database'
 import { initLogger, newRequestId } from '@finsoft/observability'
 import type { Server } from 'node:http'
 
@@ -27,6 +27,14 @@ async function bootstrap(): Promise<void> {
   const config: WorkerConfig = loadConfig()
 
   const logger = initLogger({ service: 'worker' })
+
+  /*
+   * Same reasoning as apps/api: open eagerly so the role check, the numeric
+   * parser assertion and the connection itself are verified at boot rather
+   * than by whichever job happens to touch the database first. A worker that
+   * cannot reach PostgreSQL should not start consuming a queue.
+   */
+  await openDatabase()
 
   let shuttingDown = false
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { Decimal } from 'decimal.js'
 import { FinDecimal, Rounding } from './decimal.ts'
-import { AmountError, Money, Percentage, Quantity, UnitCost } from './money.ts'
+import { Amount, AmountError, Money, Percentage, Quantity, UnitCost } from './money.ts'
 
 /*
  * These tests are the Compliance section of ADR-0014, executed.
@@ -314,5 +314,49 @@ describe('Golden Scenario A (NON_NEGOTIABLES §3)', () => {
     expect(Money.serialize(recomputed)).toBe('9533.3334')
     expect(Money.serialize(Money.subtract(recomputed, carriedValue))).toBe('0.0001')
     expect(Money.equals(recomputed, carriedValue)).toBe(false)
+  })
+})
+
+describe('a non-finite amount cannot exist', () => {
+  /*
+   * The failure this closes is specific and severe.
+   *
+   * `decimalPlaces()` returns NaN for a non-finite decimal, and `NaN > 4` is
+   * false — so the over-scale guard passed it straight through to `toFixed`,
+   * which produced the string "NaN". PostgreSQL accepts `'NaN'::numeric`, and
+   * in PostgreSQL `NaN = NaN` is TRUE.
+   *
+   * So a journal entry whose every line was NaN would satisfy a database
+   * SUM(debit) = SUM(credit) constraint. An entry that balances because both
+   * sides are not-a-number passes the very control meant to catch it, which
+   * is the worst shape an Invariant 1 failure can take.
+   */
+  it.each([NaN, Infinity, -Infinity])('refuses %s at construction', (bad) => {
+    expect(() => new Amount('Money', new FinDecimal(bad))).toThrow(AmountError)
+  })
+
+  it('names why, rather than failing obscurely', () => {
+    expect(() => new Amount('Money', new FinDecimal(NaN))).toThrow(/NaN = NaN is TRUE/)
+  })
+
+  it.each(['Quantity', 'UnitCost', 'Percentage'] as const)('applies to %s too', (kind) => {
+    expect(() => new Amount(kind, new FinDecimal(NaN))).toThrow(AmountError)
+  })
+
+  it('never lets "NaN" reach a serialised form', () => {
+    /*
+     * Asserted at the boundary as well as the constructor. `value` is a
+     * public readonly field holding a mutable decimal, so the constructor is
+     * not the only way a non-finite value could arrive here.
+     */
+    const money = Money.from('1.00')
+    expect(Money.serialize(money)).not.toContain('NaN')
+    expect(JSON.stringify({ amount: money })).not.toContain('NaN')
+  })
+
+  it('still accepts every finite amount', () => {
+    for (const good of ['0', '-0.0001', '9999999999999.9999', '2.5']) {
+      expect(() => Money.from(good)).not.toThrow()
+    }
   })
 })

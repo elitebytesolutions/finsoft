@@ -15,7 +15,12 @@ const BASE_URL = `http://127.0.0.1:${PORT}`
 
 export default defineConfig({
   testDir: '.',
-  testMatch: '**/*.spec.ts',
+  /*
+   * Excludes *.deployed.spec.ts, which run against a real deployment and are
+   * driven by playwright.deployed.config.ts after the deploy step. Matching
+   * them here would make every pull request depend on staging being up.
+   */
+  testMatch: /(?<!\.deployed)\.spec\.ts$/,
   // A browser test that hangs should fail, not stall the pipeline.
   timeout: 30_000,
   expect: { timeout: 10_000 },

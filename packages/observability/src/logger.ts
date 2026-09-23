@@ -18,7 +18,7 @@
 import { pino, type DestinationStream, type Logger as PinoLogger, type LoggerOptions } from 'pino'
 
 import { getCorrelation } from './context.ts'
-import { redact } from './redact.ts'
+import { redact, redactValueShapes } from './redact.ts'
 
 export type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal'
 
@@ -93,6 +93,33 @@ export const baseOptions = (config: LoggerConfig): LoggerOptions => ({
      * One choke point, not two.
      */
     log: (object) => redact(object) as Record<string, unknown>,
+  },
+
+  /*
+   * The MESSAGE path, which formatters.log does not cover.
+   *
+   * pino applies `formatters.log` to the merge OBJECT only. The message
+   * string and any %s interpolation arguments go straight to the output, so
+   * until this hook existed:
+   *
+   *   log.info('auth failed: ' + header)      → emitted the header verbatim
+   *   log.info({ok: 1}, 'token %s', jwt)      → emitted the jwt verbatim
+   *
+   * That is the most likely leak in practice, because interpolating a value
+   * into a message is exactly what someone writes while debugging the thing
+   * that is going wrong.
+   *
+   * Only the VALUE-SHAPE layer applies here. Key-name denial is meaningless
+   * for free text, and the bounds belong to structured data — a truncated
+   * message would hide the end of the sentence that explains the incident.
+   */
+  hooks: {
+    logMethod(args: unknown[], method: (...a: unknown[]) => void): void {
+      method.apply(
+        this,
+        args.map((arg) => (typeof arg === 'string' ? redactValueShapes(arg) : arg)),
+      )
+    },
   },
 
   /*
