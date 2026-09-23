@@ -207,6 +207,20 @@ jobs:
           file: infrastructure/docker/Dockerfile.${{ matrix.image }}
           push: true
           tags: ghcr.io/${{ github.repository }}-${{ matrix.image }}:${{ github.sha }}
+          # `org.opencontainers.image.source` is what LINKS the package to
+          # this repository, and the link is what makes a workflow's
+          # GITHUB_TOKEN able to read it.
+          #
+          # Without it the deploy failed with "denied" after a successful
+          # login, which is a confusing pair. The package names here are
+          # finsoft-api / finsoft-worker / finsoft-web and the repository is
+          # finsoft; because the names do not match, GitHub does not infer the
+          # link, and an unlinked package in a user namespace inherits no
+          # repository permissions at all.
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ github.event.repository.updated_at }}
           # GitHub Actions cache, so an unchanged image is not rebuilt from
           # scratch on every run.
           cache-from: type=gha,scope=${{ matrix.image }}
