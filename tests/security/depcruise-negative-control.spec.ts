@@ -257,3 +257,49 @@ describe('the exclusion that broke the rules twice', () => {
     expect(excluded.test(path)).toBe(true)
   })
 })
+
+describe('a types-first dependency is visible to the rules', () => {
+  /*
+   * A STANDING GUARD, not a negative control — and the distinction is the
+   * point.
+   *
+   * A review flagged that `zod`, which resolves to `index.d.cts`, produced no
+   * edges because no declaration extension was configured, and that any rule
+   * naming a types-first dependency would therefore be inert in the way
+   * `kysely-is-allowlisted` was. It was a plausible third instance of the
+   * defect that had already appeared twice.
+   *
+   * It does not reproduce. Measured against the exact pre-fix config, `zod`
+   * resolves with the six runtime extensions alone, because `exportsFields`
+   * and the `types` condition hand enhanced-resolve an exact path and the
+   * extension list is never consulted. Adding the declaration extensions
+   * moved the graph by minus one module and zero dependencies. The config
+   * change was reverted; this test is what is left, and it is worth keeping
+   * on its own terms: types-first resolution IS load-bearing for every
+   * `^node_modules/` rule, and nothing else asserts it.
+   *
+   * `zod` is the probe because it is the types-first dependency the
+   * repository actually has. If it is ever removed, replace the probe rather
+   * than deleting the test.
+   */
+  it('produces edges for zod, which resolves to a .d.cts file', async () => {
+    const result = await cruise(['packages/validation/src/schemas.ts'], {
+      ...config.options,
+      ruleSet: { forbidden: config.forbidden },
+      validate: true,
+    })
+
+    if (typeof result.output === 'string') throw new Error('expected a cruise result object')
+
+    const resolved = result.output.modules.flatMap((m) =>
+      m.dependencies.map((d) => d.resolved as string),
+    )
+
+    expect(
+      resolved.filter((r) => r.includes('node_modules/zod')),
+      'zod resolved to nothing. Check enhancedResolveOptions.extensions for the declaration ' +
+        'extensions (.d.ts/.d.cts/.d.mts) — without them a types-first package is invisible ' +
+        'to every rule, and depcruise still reports a clean graph.',
+    ).not.toHaveLength(0)
+  })
+})

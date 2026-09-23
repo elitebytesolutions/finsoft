@@ -36,7 +36,6 @@ Full detail lives in each ADR's own Compliance section. This file is the index a
 | # | ADR | Finding | Evidence |
 |---|---|---|---|
 | R11 | 0013 | **R1 was not closed.** `dist` was still in the same `exclude` pattern, unanchored, and `node_modules/kysely/dist/index.js` matches it — so `kysely-is-allowlisted` stayed inert *through the review that found R1 and was explicitly hunting for more of it*. Five files import `kysely`; the graph held zero `kysely` edges | Pattern anchored so build output is excluded only outside `node_modules`. Graph 295 to 303 modules, 595 to 678 dependencies, still clean. `kysely` edges 0 to 5 |
-| R12 | 0013 | **`zod` produced zero edges** despite four importers. It resolves to `index.d.cts`, and no declaration extension was in `enhancedResolveOptions.extensions`. Same class as R11, different mechanism: any future rule naming a types-first dependency would have been inert | `.d.ts`, `.d.cts`, `.d.mts`, `.cts`, `.mts`, `.json` added. `zod` edges 0 to 4 |
 | R13 | 0013 | **`sql.raw` and `Migrator` claimed a negative control that did not exist.** Each appeared in the repository exactly twice — in its own selector and in its own message | Both negative-tested. `sql.raw` also carries a **positive** control asserting the `sql` tag is still allowed, so the rule cannot be satisfied by banning the sanctioned form |
 | R14 | 0013 / 0016 | **D7 built, not deferred.** The depcruise negative-control harness — nine rules, each proved to fire against a probe written at a path it targets, cruised against the real ruleset | `tests/security/depcruise-negative-control.spec.ts`, 20 cases. Discriminates: a probe violating nothing fires nothing, a probe violating one rule does not trip the others. **Restoring either historical `exclude` pattern turns it red** — verified |
 | R15 | 0016 | **The logger boundary had no importer side.** `observability-imports-almost-nothing` constrained what the logger imports; nothing constrained who imports it, so the first `packages/database` edge was legal only because nobody had written a rule | `observability-importers-are-allowlisted` — the kernels, `shared-types`, `ui` and `validation` may not reach it. Required by the Architecture Guardian as the condition of accepting the edge |
@@ -89,6 +88,41 @@ Nothing in this section is approved by having been written down.
 ---
 
 **D7 was withdrawn from this table.** It was filed as debt and called "the highest-value item"; the guardian reclassified it as a blocker on the grounds that R11 is the bill for not having it, arriving inside the review that identified it. Built as R14.
+
+---
+
+## Evidence: every control proved to fail when its mechanism is removed
+
+A green suite proves the tests pass. It does not prove they would notice the thing they were written to notice — and this repository has twice shipped a rule that looked correct, passed CI every day and enforced nothing.
+
+**Graph sizes are not evidence.** "295 modules became 303" says something changed; it does not say which named rule can now fire. `tools/verify-controls.mjs` produces the only evidence that settles it: patch out one mechanism, run one test file, assert a NAMED test fails, restore the file. It ends by comparing the bytes of every file it touched against what it read at the start, so a half-patched tree is an error rather than a surprise.
+
+Run with `npm run verify:controls`. Result at commit `22296e3` plus this change — **10/10**:
+
+| # | Mechanism removed | The named test that failed |
+|---|---|---|
+| R1 | `options.exclude` lists `node_modules` again | `pg-driver-is-database-package-only`, `kysely-is-allowlisted`, `one-decimal-library` |
+| R11 | `options.exclude` lists `dist` unanchored again | `kysely-is-allowlisted` |
+| R15 | `observability-importers-are-allowlisted` disabled | `observability-importers-are-allowlisted` |
+| R13a | the `sql.raw` selector removed | `catches sql.raw, which does not parameterise` |
+| R13b | the `Migrator` selector removed | `catches Kysely's Migrator` |
+| R16 | `no-console` not extended to the five packages | `bans console.error in packages/database/src/pool.ts` |
+| R2 | the `TemplateElement` selector removed | `app.tenant_id in a TEMPLATE LITERAL` |
+| R9 | `redactValueShapes` removed from the pool listener | `redacts the credentials out of the driver message` |
+| R5 | `Amount`'s non-finite rejection removed | the NaN / Infinity rejection cases |
+| R17 | `toFixed` left writable on the prototype | `pins toFixed, which every money value is serialised through` |
+
+Each `expect` is a specific test name rather than "any failure", because a patch that breaks a suite for an unrelated reason — a syntax error, say — would otherwise read as proof.
+
+### One finding was withdrawn: R12 did not reproduce
+
+The re-review flagged that `zod`, which resolves to `index.d.cts`, produced no edges because no declaration extension was configured — a plausible third instance of the defect that had already appeared twice, and it was recorded here as a required fix.
+
+**Measured against the exact pre-fix config, it is false.** `zod` resolves to `node_modules/zod/index.d.cts` with the six runtime extensions alone, because `exportsFields` and the `types` condition hand enhanced-resolve an exact path and the extension list is never consulted. Adding `.d.ts`, `.d.cts`, `.d.mts`, `.cts`, `.mts` and `.json` moved the graph by **minus one module and zero dependencies**, and gave no rule any coverage it did not already have. Side by side on the pre-fix config: `kysely` 0 edges, `zod` 1 edge.
+
+The config change is reverted. Config added on a theory that measurement contradicts is how a file accumulates settings nobody can justify — and a fix recorded against a defect that does not exist is the same overclaim as a mechanism recorded against a rule that cannot fire, which is what this document exists to remove.
+
+What survives is a standing assertion in the harness that a types-first dependency resolves at all. It passed before the change and after it, so it is a regression guard, not a negative control, and it is labelled as one. Types-first resolution is genuinely load-bearing for every `^node_modules/` rule and nothing else asserted it.
 
 ---
 

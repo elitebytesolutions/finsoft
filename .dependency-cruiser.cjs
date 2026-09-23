@@ -331,26 +331,27 @@ module.exports = {
       exportsFields: ['exports'],
       conditionNames: ['import', 'require', 'node', 'default', 'types'],
       /*
-       * `.d.ts` and its `.cts`/`.mts` forms are here because a types-first
-       * package resolves to a declaration file and to nothing else. `zod`
-       * ships `index.d.cts`; without these it produced ZERO edges despite
-       * four importers, so any future rule naming it would have been inert
-       * in exactly the way `kysely-is-allowlisted` was.
+       * The six runtime extensions, unchanged.
+       *
+       * A review flagged that `zod` — which resolves to `index.d.cts` —
+       * produced no edges without declaration extensions here, and that any
+       * future rule naming a types-first dependency would be inert in the
+       * way `kysely-is-allowlisted` was. Tested against the exact pre-fix
+       * config: it does not reproduce. `zod` resolves to
+       * `node_modules/zod/index.d.cts` with these six and nothing else,
+       * because `exportsFields` and the `types` condition give enhanced-
+       * resolve an exact path, so the extension list is never consulted.
+       * Adding `.d.ts`/`.d.cts`/`.d.mts`/`.cts`/`.mts`/`.json` changed the
+       * graph by minus one module and zero dependencies, and gave no rule
+       * any coverage it did not already have.
+       *
+       * Reverted rather than kept: config added on a theory that measurement
+       * contradicts is how a file accumulates settings nobody can justify.
+       * `tests/security/depcruise-negative-control.spec.ts` keeps a standing
+       * assertion that a types-first dependency resolves, so a real
+       * regression here is caught rather than argued about.
        */
-      extensions: [
-        '.js',
-        '.jsx',
-        '.ts',
-        '.tsx',
-        '.mjs',
-        '.cjs',
-        '.d.ts',
-        '.d.cts',
-        '.d.mts',
-        '.cts',
-        '.mts',
-        '.json',
-      ],
+      extensions: ['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs'],
     },
     reporterOptions: {
       text: { highlightFocused: true },
