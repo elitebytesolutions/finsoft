@@ -208,8 +208,27 @@ describe('a rolled back transaction dispatches nothing', () => {
   })
 })
 
-describe('a retry does not duplicate the effect', () => {
-  it('applies it exactly once across a failure and a redelivery', async () => {
+/*
+ * ── What the next test does and does not establish ──────────────────────
+ *
+ * It proves that THIS handler's effect, which is idempotent by construction,
+ * survives a real BullMQ redelivery after a real failure. That is worth
+ * having: it exercises the retry path rather than simulating it, and it
+ * fails if the handler is later made non-idempotent.
+ *
+ * It is NOT a general exactly-once delivery guarantee, and no such guarantee
+ * exists. BullMQ is at-least-once and ADR-0010 accepts that: a worker killed
+ * mid-job, a lost acknowledgement or a network partition all redeliver. The
+ * obligation that creates sits on every HANDLER, individually, and a passing
+ * test here says nothing about a handler written next week.
+ *
+ * When the outbox dispatcher lands, the property that actually needs proving
+ * is that each outbox row is marked DONE exactly once under concurrent
+ * dispatchers — which is a different test, against a table that does not
+ * exist yet.
+ */
+describe('a retry does not duplicate this handler effect', () => {
+  it('applies it once across a failure and a redelivery', async () => {
     const tenant = await createTenantFixture('WTC')
     const effectId = randomUUID()
 
@@ -228,7 +247,7 @@ describe('a retry does not duplicate the effect', () => {
 
     expect(
       applied.get(effectId),
-      'at-least-once delivery means the handler WILL see a redelivery; it must be idempotent',
+      'at-least-once delivery means this handler WILL see a redelivery; it must be idempotent',
     ).toBe(1)
 
     expect(tenant.tenantId).toBeTruthy()

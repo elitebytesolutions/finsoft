@@ -106,4 +106,27 @@ echo "  GET / renders: $(echo "$BODY" | grep -oE '<title>[^<]*</title>' | head -
 echo "$BODY" | grep -qi 'localhost:3001\|127.0.0.1:3001' &&
   fail "the page references the API by host:port — it is not being served same-origin"
 
+# ---------------------------------------------------------------------------
+# 6. One origin, two applications.
+#
+#    This is the proxy integration, asserted rather than assumed: the SAME
+#    base URL serves the Next.js app at / and the API under /api, and the API
+#    is not reachable on a port of its own (checked in step 4). That is the
+#    arrangement ADR-0009's SameSite=Strict refresh cookie requires, and it is
+#    the part a browser would exercise.
+#
+#    What this does NOT prove, and must not be read as proving: that the web
+#    application CALLS the API. It does not. apps/web is currently driven
+#    entirely by @/mocks/api and issues no requests to /api/* at all, so there
+#    is no Next→proxy→API request path in existence to test. When the first
+#    real call lands, the test for it belongs here.
+# ---------------------------------------------------------------------------
+API_FROM_WEB_ORIGIN=$(curl -fsS --max-time 10 "$BASE/api/health/ready") ||
+  fail "/api/health/ready is not reachable from the web origin — the proxy is not routing /api"
+
+echo "$API_FROM_WEB_ORIGIN" | grep -q '"status":"ready"' ||
+  fail "the API answered on the web origin but is not ready"
+
+echo "  one origin serves both: / is Next, /api is the API"
+
 printf '\n\033[32mSMOKE PASSED\033[0m\n'
