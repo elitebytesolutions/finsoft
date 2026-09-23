@@ -23,6 +23,7 @@
     "db:reset": "docker compose down -v && docker compose up -d",
     "db:logs": "docker compose logs -f",
     "db:verify": "node tools/db/verify.mjs",
+    "db:outbox-plan": "node --env-file-if-exists=.env tools/db/outbox-plan.mjs",
     "db:psql": "docker compose exec postgres psql -U finsoft_bootstrap -d finsoft",
     "db:migrate": "node --env-file-if-exists=.env packages/database/src/migrate/cli.ts migrate",
     "db:migrate:status": "node --env-file-if-exists=.env packages/database/src/migrate/cli.ts status",

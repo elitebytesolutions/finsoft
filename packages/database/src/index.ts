@@ -40,6 +40,30 @@ export type { Database, GlobalDatabase, GlobalTableName, TenantTableName } from 
 
 export { assertExactNumericParsing } from './pool.ts'
 export { closeDatabase, openDatabase } from './lifecycle.ts'
+/*
+ * The outbox repository. ADR-0019.
+ *
+ * Exported because apps/worker runs the dispatcher and ADR-0013's second
+ * import boundary forbids it building the SQL itself. What is exported is
+ * row movement and nothing else: this package does not know what a side
+ * effect is, what a consumer is, or that Redis exists.
+ */
+export {
+  ackDispatched,
+  attemptsExhausted,
+  backoffSeconds,
+  claimBatch,
+  listTenantIdsForDispatch,
+  oldestPendingAgeSeconds,
+  reclaimExpired,
+  reclaimsExhausted,
+  recordFailure,
+  ATTEMPT_CAP,
+  LeaseLostError,
+  RECLAIM_CAP,
+} from './outbox.ts'
+export type { ClaimedOutboxRow, FailureRecord, ReclaimResult } from './outbox.ts'
+
 export { readSchemaHealth } from './health.ts'
 export type { SchemaHealth } from './health.ts'
 export { DatabaseConfigError } from './env.ts'

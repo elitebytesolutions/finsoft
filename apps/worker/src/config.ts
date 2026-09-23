@@ -11,6 +11,25 @@ export interface WorkerConfig {
   readonly concurrency: number
   readonly shutdownTimeoutMs: number
   readonly healthPort: number
+  readonly outbox: OutboxConfig
+}
+
+export interface OutboxConfig {
+  /**
+   * How long a claim is good for, and what the reaper measures against.
+   *
+   * Configuration rather than a constant because `004`'s COMMENT ON
+   * `claimed_at` requires it: the lease must exceed the longest consumer
+   * timeout with margin, and that ordering is only checkable if the value can
+   * move. `assertLeaseExceedsConsumers` refuses to start the worker
+   * otherwise — a consumer slower than its lease loses the row to the reaper
+   * every time and lands on FAILED with a poison-message verdict it did not
+   * earn.
+   */
+  readonly leaseSeconds: number
+  /** Per-tenant batch cap. Without it one backlogged tenant owns the cycle. */
+  readonly batchSize: number
+  readonly idlePollMs: number
 }
 
 /*
@@ -28,6 +47,11 @@ const DEFAULT_SHUTDOWN_TIMEOUT_MS = 20_000
 
 const DEFAULT_CONCURRENCY = 5
 const DEFAULT_HEALTH_PORT = 3002
+
+/* The contract value in `004`'s COMMENT ON outbox.claimed_at. */
+const DEFAULT_OUTBOX_LEASE_SECONDS = 300
+const DEFAULT_OUTBOX_BATCH_SIZE = 50
+const DEFAULT_OUTBOX_IDLE_POLL_MS = 2_000
 
 function requireEnv(name: string): string {
   const value = process.env[name]
@@ -54,5 +78,10 @@ export function loadConfig(): WorkerConfig {
     concurrency: numberFromEnv('WORKER_CONCURRENCY', DEFAULT_CONCURRENCY),
     shutdownTimeoutMs: numberFromEnv('WORKER_SHUTDOWN_TIMEOUT_MS', DEFAULT_SHUTDOWN_TIMEOUT_MS),
     healthPort: numberFromEnv('WORKER_HEALTH_PORT', DEFAULT_HEALTH_PORT),
+    outbox: {
+      leaseSeconds: numberFromEnv('OUTBOX_LEASE_SECONDS', DEFAULT_OUTBOX_LEASE_SECONDS),
+      batchSize: numberFromEnv('OUTBOX_BATCH_SIZE', DEFAULT_OUTBOX_BATCH_SIZE),
+      idlePollMs: numberFromEnv('OUTBOX_IDLE_POLL_MS', DEFAULT_OUTBOX_IDLE_POLL_MS),
+    },
   }
 }

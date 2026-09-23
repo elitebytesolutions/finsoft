@@ -20,6 +20,9 @@ import { loadConfig, type WorkerConfig } from './config.ts'
 import { startHealthServer } from './health.ts'
 import { HEARTBEAT_JOB, handleHeartbeat, type HeartbeatPayload } from './jobs/heartbeat.ts'
 import { OutageTracker } from './outage.ts'
+import { ConsumerRegistry } from './outbox/consumers.ts'
+import { OutboxDispatcher } from './outbox/dispatcher.ts'
+import { startOutboxLoop } from './outbox/loop.ts'
 import { QUEUES, createQueue, createWorker } from './queue.ts'
 import { withJobContext } from './runner.ts'
 
@@ -98,11 +101,39 @@ async function bootstrap(): Promise<void> {
     },
   })
 
+  /*
+   * The outbox dispatcher. ADR-0019, and this worker's reason to exist.
+   *
+   * THE REGISTRY IS EMPTY, and that is correct rather than unfinished.
+   * ADR-0019 is explicit that a consumer lands with the code that raises its
+   * topic: nothing can post a sale until Wave 5, and a consumer registered
+   * for an effect nothing can request would be a handler nobody can reach
+   * carrying an idempotency guard nobody can test.
+   *
+   * So the loop runs, enumerates every tenant, reaps expired leases and
+   * finds nothing to claim. That is the correct behaviour for a system with
+   * no side effects yet, and it means the machinery is exercised on every
+   * deployment rather than first run in anger in Wave 5.
+   *
+   * A row whose topic has no consumer does NOT sit quietly: it fails, retries
+   * to the cap and surfaces as a FAILED row with an owner. An effect promised
+   * inside a posting transaction and silently skipped is the quietest
+   * possible way to lose an invoice.
+   */
+  const consumers = new ConsumerRegistry()
+  const dispatcher = new OutboxDispatcher(config.outbox, consumers, logger)
+  const outbox = startOutboxLoop(dispatcher, { idlePollMs: config.outbox.idlePollMs }, logger)
+
   logger.info(
     {
       concurrency: config.concurrency,
       healthPort: config.healthPort,
       queues: Object.values(QUEUES),
+      outbox: {
+        leaseSeconds: config.outbox.leaseSeconds,
+        batchSize: config.outbox.batchSize,
+        consumers: consumers.entries.length,
+      },
     },
     'worker started',
   )
@@ -136,8 +167,18 @@ async function bootstrap(): Promise<void> {
     }, config.shutdownTimeoutMs)
     forced.unref()
 
-    void worker
-      .close()
+    /*
+     * The outbox loop stops BEFORE the database closes, and is awaited.
+     *
+     * Order matters here for the same reason it does for BullMQ: a cycle
+     * interrupted between the side effect and the ack leaves a row IN_FLIGHT
+     * whose lease has to expire before anyone can touch it. Correct and
+     * recoverable, and a wholly avoidable delay — plus a reclaim charged
+     * against a row whose consumer worked perfectly.
+     */
+    void outbox
+      .stop()
+      .then(() => worker.close())
       .then(() => Promise.all([queue.close(), closeDatabase()]))
       .then(() => new Promise<void>((resolve) => health.close(() => resolve())))
       .then(() => {

@@ -164,9 +164,13 @@ This corrects a conflicting report. The enforcement rules **were** completed in 
 
 **Acceptance criteria.** A job carries the correlation id of the request that produced it · shutdown waits for in-flight jobs · liveness never touches Redis · no fiscal-period bypass.
 
-**Status: partial.**
+**Status: complete.**
 
-The process is complete and correct. The **transactional outbox dispatcher** that [ADR-0019](adr/ADR-0019-transactional-outbox.md) specifies — this worker's actual reason to exist — is not built: it needs an `outbox` table, and a migration needs database-guardian review.
+The process and the **transactional outbox dispatcher** that [ADR-0019](adr/ADR-0019-transactional-outbox.md) specifies — this worker's actual reason to exist — are both built.
+
+`packages/database/src/outbox.ts` holds every statement, because ADR-0013's second import boundary confines query construction to `packages/database`, the kernels, `packages/reporting` and module infrastructure layers, and `apps/**` is not on that list. `apps/worker/src/outbox/` holds the dispatcher, the consumer registry and the polling loop, and builds no SQL. That split is why the fence is asserted in one place instead of at every call site. **The placement of the repository is flagged for the Architecture Guardian rather than assumed** — `transaction.ts` already named the dispatcher's tenant enumeration among the sanctioned `withGlobal` uses, which is the precedent it rests on.
+
+**The consumer registry is empty, and that is correct rather than unfinished.** ADR-0019 is explicit that a consumer lands with the code that raises its topic; nothing can post a sale until Wave 5. So the loop runs, enumerates every tenant, reaps expired leases and finds nothing to claim — which exercises the machinery on every deployment rather than first running it in anger in Wave 5. A row whose topic has no consumer does **not** sit quietly: it fails, retries to the cap, and surfaces as a FAILED row with an owner.
 
 **Evidence.** `6861dc8` · `tests/integration/worker-transaction.spec.ts` proves the commit/rollback/redelivery contract at the level the system supports today.
 
@@ -174,7 +178,18 @@ The process is complete and correct. The **transactional outbox dispatcher** tha
 
 The schema it needs is now built and reviewed: `004_create_outbox.sql` carries the lease and its fence, the transition graph, both attempt budgets, replay integrity and the column-scoped grants, with 40 acceptance cases in `database/tests/outbox.spec.ts` exercising them through direct SQL. [ADR-0019](adr/ADR-0019-transactional-outbox.md) supersedes ADR-0010 and carries the four contract corrections. It is unsigned, and the migration does not merge before it is signed.
 
-What the dispatcher must still demonstrate, per the database-guardian review: a crash after claiming; an enqueue that succeeds while the ack fails; a stale dispatcher unable to ack a reclaimed row; repeated failures reaching each cap; replay preserving evidence; and tenant enumeration respecting access boundaries. Every ack, failure and reclaim asserts `rowcount = 1` — a dispatcher that ignores how many rows it touched cannot detect that it lost its lease. `EXPLAIN (ANALYZE, BUFFERS)` on the claim query against at least 10^6 rows across 50+ tenants is required on the PR; a plan reviewed against ten rows will not be accepted.
+**All six failure paths are demonstrated** in `tests/integration/outbox-dispatcher.spec.ts`, driven through the real dispatcher rather than the repository — the repository's contract was already proved in `database/tests/outbox.spec.ts`, and what was unproven is whether the dispatcher *honours* it. A repository that asserts `rowcount = 1` does nothing for a caller that catches the throw and carries on.
+
+| | |
+|---|---|
+| Crash after claiming | The row is reclaimed, redelivered, and the effect is performed. Charged to `reclaims`, not `attempts` |
+| Enqueue succeeds, ack fails | The ack is refused, the row returns to PENDING, and the consumer's dedup guard means the effect still happens exactly once |
+| A stale dispatcher cannot ack a reclaimed row | `LeaseLostError`, zero rows touched, the live claim untouched — and the dispatcher counts it rather than charging the row a failed attempt |
+| Repeated failures reach the cap | Both roads: 10 consumer failures, and 5 dispatcher deaths with the consumer never running once. Plus a topic nobody consumes, which fails loudly instead of sitting PENDING forever |
+| Replay preserves evidence | The amended consumer contract test — twice with the same `(tenant_id, topic, effect_key)`, **including once via a replay row with a different `id`**. The original's `dispatched_at` is unchanged |
+| Tenant enumeration | Each tenant under its own context, nothing crossing, a **SUSPENDED** tenant still served, and the batch cap bounding each one |
+
+**`EXPLAIN (ANALYZE, BUFFERS)` at scale**: `npm run db:outbox-plan` seeds 50 tenants x 20,000 rows — mostly DONE, because rule 4 means DONE rows never leave and an all-PENDING table would be a kinder test than reality — and asserts the plan. At **1,002,062 rows across 65 tenants**: `Index Scan using outbox_pending_idx`, the RLS predicate as the **leading index condition** rather than a filter above the scan, **no Sort node** (which is what justifies the index's third column), 4 buffer reads, 0.118 ms. The output belongs on the dispatcher PR.
 
 **Deferral recorded here rather than only in SQL:** the `outbox` table is **not partitioned**. The key is `created_at` RANGE. Two costs, both accepted deliberately — converting a populated forever-growing table later is a full rewrite under an exclusive lock, and this is the cheapest moment it will ever be; and once partitioned, the claim query has no `created_at` predicate and so must consider every partition on every poll, which is planning-time cost per poll, forever. A detached partition is **retained and archived, never dropped**, and detaching requires a verified backup and Database Guardian sign-off. This is in the register because a deferral that survives only in a comment nobody greps is an omission with a note.
 

@@ -897,10 +897,21 @@ describe('tenant enumeration: scoped, bounded, and nobody starves', () => {
      */
     await asTenant(
       tenant,
+      /*
+       * available_at a century out, deliberately. These rows exist to give
+       * the planner a table worth indexing; they are not work.
+       *
+       * Dated now(), they became DUE — and the dispatcher enumerates every
+       * tenant of any status, so `tests/integration/outbox-dispatcher.spec.ts`
+       * picked up 2000 rows for a topic no consumer handles and failed every
+       * one of them. The bulk rows still populate outbox_pending_idx, because
+       * it is partial on status and keyed on available_at whatever the value
+       * is, so the plan assertion is unaffected.
+       */
       `INSERT INTO outbox (tenant_id, topic, payload, effect_key, occurred_at,
-                           correlation_id, created_by, updated_by)
+                           available_at, correlation_id, created_by, updated_by)
        SELECT $1, 'BULK_PROBE', '{"n":1}'::jsonb, 'BULK-' || g, now(),
-              gen_random_uuid(), $2, $2
+              now() + interval '100 years', gen_random_uuid(), $2, $2
          FROM generate_series(1, 2000) AS g`,
       [tenant.tenantId, tenant.ownerId],
     )
