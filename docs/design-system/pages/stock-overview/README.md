@@ -42,7 +42,7 @@ Body       per view (below)
 | Figure | Rule |
 |---|---|
 | On hand | right, unit in the header; `danger` when negative, `warn` below reorder |
-| Value | right, money; **avg cost × qty**, server-computed |
+| Value | right, money; the **carried inventory value** — `value_on_hand` from the costing scope, server-computed. **Never `avg cost × qty`** (ADR-0015 §7) |
 | Days remaining | right; `danger` ≤ 30, `warn` ≤ 90 |
 | Health | Healthy `good` · Low `warn` · Out `danger` · Expiring `warn` · Excess `info` |
 | Variance (count) | right, signed, in brackets when negative, `--money-negative` |

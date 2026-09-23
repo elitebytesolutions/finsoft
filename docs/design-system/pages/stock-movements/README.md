@@ -18,6 +18,7 @@ equivalent of the account ledger, and it is the screen that settles arguments ab
 ```
 PageHead      "Stock Movements" · [product picker] [warehouse v] [date range v] [Export]
 ProductHeader product · pack · class · company · current on-hand · avg cost · value
+              (value = carried value_on_hand, never on-hand × avg cost — ADR-0015 §7)
 KpiRow        Opening qty · Received · Issued · Closing qty · Movements
 FilterBar     type · batch · reference · user · reason
 LedgerTable   Date · Type · Reference · Batch · Route / warehouse · Qty in · Qty out ·

@@ -7,5 +7,9 @@ import { useFinsoft } from '@/app-context'
 
 export default function Page() {
   const f = useFinsoft()
-  return <Guard module="Inventory"><InventoryWorkspace data={f.data} view="transfer" onPost={f.postStockMovement}/></Guard>
+  return (
+    <Guard module="Inventory">
+      <InventoryWorkspace data={f.data} view="transfer" onPost={f.postStockMovement} />
+    </Guard>
+  )
 }

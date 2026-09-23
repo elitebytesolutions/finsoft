@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next'
 import type { ReactNode } from 'react'
 import '@finsoft/ui/tokens.css'
 import '@finsoft/ui/kit.css'
+import '@finsoft/ui/employee-wizard.css'
 import { FinsoftProvider } from '@/app-context'
 import { AppFrame } from '@/components/app-frame'
 
@@ -24,7 +25,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             the stack but never fetched, so it resolves to the local UI font —
             fetching it here would change every glyph in the app. */}
         <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&display=swap" rel="stylesheet" />
+        <link
+          href="https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&display=swap"
+          rel="stylesheet"
+        />
       </head>
       {/* suppressHydrationWarning covers this element's OWN attributes only; it does
           not cascade to children, so a genuine mismatch inside the app still reports.

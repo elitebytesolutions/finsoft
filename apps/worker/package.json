@@ -1,0 +1,21 @@
+{
+  "name": "@finsoft/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/main.ts",
+  "scripts": {
+    "dev": "node --watch src/main.ts",
+    "start": "node src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@finsoft/database": "0.1.0",
+    "@finsoft/observability": "0.1.0",
+    "bullmq": "5.81.5"
+  },
+  "devDependencies": {
+    "vitest": "4.1.11"
+  }
+}

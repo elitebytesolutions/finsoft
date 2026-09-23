@@ -1,0 +1,18 @@
+node_modules/
+.next/
+dist/
+coverage/
+ui-prototype/
+package-lock.json
+packages/ui/src/styles/kit.css
+packages/database/src/generated/
+database/migrations/
+*.md
+
+# tools/parity drives ui-prototype, which is no longer version-controlled.
+# Dead code, slated for removal in FND-017 - not ours to restyle.
+tools/parity/
+
+# dotenv files have no Prettier parser
+.env
+.env.*

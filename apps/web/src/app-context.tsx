@@ -31,7 +31,11 @@ export function FinsoftProvider({ children }: { children: ReactNode }) {
   }, [])
   const setRole = (next: string) => {
     setRoleState(next)
-    try { localStorage.setItem('finsoft-role', next) } catch { /* storage can be unavailable */ }
+    try {
+      localStorage.setItem('finsoft-role', next)
+    } catch {
+      /* storage can be unavailable */
+    }
   }
 
   const allowed = useMemo(() => roles[role] || [], [role])

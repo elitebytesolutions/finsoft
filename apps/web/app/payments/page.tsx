@@ -7,5 +7,13 @@ import { useFinsoft } from '@/app-context'
 
 export default function Page() {
   const f = useFinsoft()
-  return <Guard module="Cash, Bank & GL"><PaymentsCentre data={f.data} onAddPayment={f.addPayment} canCreate={f.act('payment:create')}/></Guard>
+  return (
+    <Guard module="Cash, Bank & GL">
+      <PaymentsCentre
+        data={f.data}
+        onAddPayment={f.addPayment}
+        canCreate={f.act('payment:create')}
+      />
+    </Guard>
+  )
 }

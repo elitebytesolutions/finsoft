@@ -4,5 +4,5 @@
 import { Navigate } from '@/lib/router'
 
 export default function Page() {
-  return <Navigate to="/dashboard" replace/>
+  return <Navigate to="/dashboard" replace />
 }

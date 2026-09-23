@@ -57,7 +57,7 @@ Modularity is enforced by *boundaries in code*, not by network hops. `modules/*`
 
 ### What may be extracted later
 
-Only work that sits **outside the posting transaction**, behind the outbox (ADR-0010):
+Only work that sits **outside the posting transaction**, behind the outbox (ADR-0019):
 
 ```
 notifications (email, SMS)      document generation (PDF invoices, statements)
@@ -110,7 +110,7 @@ Microservice decomposition of the core domains is explicitly out of scope for v1
 - [ADR-0002](ADR-0002-postgresql-and-redis.md) — PostgreSQL as the single system of record
 - [ADR-0005](ADR-0005-central-double-entry-posting-engine.md) — the posting engine that owns the transaction's accounting half
 - [ADR-0008](ADR-0008-inventory-movement-ledger-and-fefo.md) — the inventory kernel that owns its stock half
-- [ADR-0010](ADR-0010-transactional-outbox.md) — the seam that makes later extraction safe
+- [ADR-0019](ADR-0019-transactional-outbox.md) — the seam that makes later extraction safe
 - [../NON_NEGOTIABLES.md](../NON_NEGOTIABLES.md) — rules 1, 2, 11, 14, 19
 - [../ARCHITECTURE.md](../ARCHITECTURE.md) — §1 shape of the system, §2 repository layout, §5 dependency rules
 - [../PRD.md](../PRD.md) — §9 microservice decomposition out of scope for v1

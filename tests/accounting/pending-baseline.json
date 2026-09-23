@@ -1,0 +1,15 @@
+{
+  "$comment": [
+    "FinancialInvariantSuite invariants that cannot yet be executed, because the",
+    "posting engine, fiscal calendar and stock ledger they describe do not exist.",
+    "",
+    "This list is a RATCHET. It may shrink and may never grow.",
+    "financial-invariant-suite.spec.ts fails if an invariant becomes pending that is",
+    "not listed here, and equally if one listed here has become enforced and the line",
+    "was not removed. Shrinking it is a deliberate act with a commit attached.",
+    "",
+    "Never add an id to this file to make a failing suite green. A failing invariant",
+    "is a financial incident (NON_NEGOTIABLES §4), not a baseline to be widened."
+  ],
+  "pending": [1, 2, 3, 4, 5, 6, 8, 9, 10]
+}

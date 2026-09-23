@@ -1,9 +1,13 @@
 # ADR-0010: Transactional outbox for all external side effects
 
-**Status:** Accepted
+**Status:** Accepted — **would be superseded by [ADR-0019](ADR-0019-transactional-outbox.md)** once that is accepted; the two statuses change together, as ADR-0007 and ADR-0015 do
 **Date:** 2026-09-22
 **Deciders:** Product Owner, Architecture Guardian
 **Authority:** LEVEL 1 — reversing this requires a superseding ADR
+
+> **Read [ADR-0019](ADR-0019-transactional-outbox.md) instead.** Implementing this record found four claims in it that are wrong — not decisions to revisit, facts that do not hold. Two change the delivery contract: **replay is a new row, not a reset of the original**, and **consumer deduplication keys on `(tenant_id, topic, effect_key)`, never on `outbox.id`**. A consumer written from the table below will double-send on every replay.
+>
+> Nothing here has been edited. [README rule 4](README.md) permits a head-of-file notice and forbids touching the decision, the rationale or the consequences, so the text below is exactly as it was accepted and the corrections live in the superseding record. That is the point: the reasoning trail is what makes a wrong decision useful later.
 
 ## Context
 

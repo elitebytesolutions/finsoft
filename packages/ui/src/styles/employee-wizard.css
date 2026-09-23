@@ -1,0 +1,806 @@
+/* Employee wizard — the multi-step record form.
+ *
+ * Written entirely in tokens (docs/design-system/01-foundations.md). kit.css is
+ * the prototype stylesheet moved verbatim and is grandfathered raw hex; this file
+ * is new surface, so it carries none. Everything is prefixed `ew-` and scoped to
+ * the wizard. Reused from the kit: .modal, .modal-foot, .mf-*, .form-grid.
+ */
+
+/* ---------- shell ---------- */
+
+.modal.xl {
+  width: min(1080px, 100%);
+  padding: var(--sp-7);
+}
+
+.ew-sub {
+  font: var(--t-body-sm);
+  color: var(--muted);
+  margin: var(--sp-1) 0 0;
+}
+
+/* Shown only where the full stepper is hidden, so the step is never implicit. */
+.ew-steps-compact {
+  display: none;
+  font: var(--t-label);
+  color: var(--brand-700);
+  margin-bottom: var(--sp-5);
+}
+
+/* ---------- stepper ---------- */
+
+.ew-steps {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: var(--sp-7);
+  padding: 0 var(--sp-2);
+}
+
+.ew-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-2);
+  flex: none;
+  width: 92px;
+  text-align: center;
+}
+
+.ew-step-dot {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--r-pill);
+  display: grid;
+  place-items: center;
+  font: var(--t-badge);
+  background: var(--line-soft);
+  color: var(--muted);
+  border: 2px solid transparent;
+  transition:
+    background var(--dur-fast, 0.15s),
+    color var(--dur-fast, 0.15s);
+}
+
+.ew-step-label {
+  font: var(--t-caption);
+  color: var(--muted);
+}
+
+.ew-step.is-current .ew-step-dot {
+  background: var(--brand-500);
+  color: var(--surface);
+}
+
+.ew-step.is-current .ew-step-label {
+  color: var(--brand-700);
+  font-weight: 700;
+}
+
+.ew-step.is-done .ew-step-dot {
+  background: var(--brand-500);
+  color: var(--surface);
+}
+
+.ew-step.is-done .ew-step-label {
+  color: var(--ink-2);
+}
+
+/* The connector sits between dots, aligned to their centre line. */
+.ew-step-line {
+  flex: 1;
+  height: 2px;
+  background: var(--line);
+  margin-top: 14px;
+  min-width: var(--sp-4);
+}
+
+.ew-step-line.is-done {
+  background: var(--brand-500);
+}
+
+/* ---------- two-column body ---------- */
+
+.ew-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: var(--gap-section);
+  align-items: start;
+}
+
+.ew-body.is-single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* ---------- section card ---------- */
+
+.ew-card {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: var(--pad-card);
+  margin-bottom: var(--gap-card);
+  background: var(--surface);
+}
+
+.ew-card:last-child {
+  margin-bottom: 0;
+}
+
+.ew-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-5);
+}
+
+.ew-card-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--r-sm);
+  background: var(--brand-050);
+  color: var(--brand-600);
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+
+.ew-card-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.ew-card-head h3 {
+  font: var(--t-section);
+  margin: 0;
+  color: var(--ink);
+}
+
+.ew-card-head p {
+  font: var(--t-caption);
+  color: var(--muted);
+  margin: var(--sp-0\.5) 0 0;
+}
+
+/* ---------- fields ---------- */
+
+.ew-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--sp-4) var(--sp-5);
+}
+
+.ew-fields.cols-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ew-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+/* Only the field's own label stacks. A control in `footer` keeps its own layout. */
+.ew-field-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+.ew-fields .full {
+  grid-column: 1 / -1;
+}
+
+.ew-label {
+  font: var(--t-label);
+  color: var(--ink-2);
+}
+
+.ew-label .req {
+  color: var(--tone-danger);
+  margin-left: var(--sp-0\.5);
+}
+
+.ew-fields input,
+.ew-fields select,
+.ew-fields textarea {
+  height: 40px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-sunken);
+  color: var(--ink);
+  padding: 0 var(--sp-4);
+  font: var(--t-body-sm);
+  width: 100%;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+
+.ew-fields textarea {
+  height: auto;
+  min-height: 74px;
+  padding: var(--sp-3) var(--sp-4);
+  resize: vertical;
+  font-family: var(--font-sans);
+}
+
+.ew-fields input:focus,
+.ew-fields select:focus,
+.ew-fields textarea:focus {
+  border-color: var(--brand-500);
+  box-shadow: 0 0 0 3px var(--brand-050);
+  outline: 0;
+  background: var(--surface);
+}
+
+.ew-fields input::placeholder,
+.ew-fields textarea::placeholder {
+  color: var(--muted-2);
+  font-weight: 400;
+}
+
+.ew-hint {
+  font: var(--t-caption);
+  color: var(--muted);
+}
+
+.ew-error {
+  font: var(--t-caption);
+  color: var(--tone-danger);
+}
+
+.ew-fields input[aria-invalid='true'],
+.ew-fields select[aria-invalid='true'] {
+  border-color: var(--tone-danger);
+}
+
+/* Money inputs: right-aligned tabular figures, per 01-foundations §1.3. */
+.ew-money input {
+  text-align: right;
+  font-variant-numeric: var(--figures);
+}
+
+.ew-prefixed {
+  display: flex;
+  align-items: stretch;
+}
+
+.ew-prefix {
+  display: grid;
+  place-items: center;
+  min-width: 38px;
+  padding: 0 var(--sp-3);
+  border: 1px solid var(--line);
+  border-right: 0;
+  border-radius: var(--r-sm) 0 0 var(--r-sm);
+  background: var(--line-soft);
+  font: var(--t-caption);
+  color: var(--muted);
+}
+
+.ew-prefixed input,
+.ew-prefixed select {
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+}
+
+.ew-suffixed {
+  display: flex;
+  align-items: stretch;
+}
+
+.ew-suffix {
+  display: grid;
+  place-items: center;
+  min-width: 38px;
+  padding: 0 var(--sp-3);
+  border: 1px solid var(--line);
+  border-left: 0;
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  background: var(--line-soft);
+  font: var(--t-caption);
+  color: var(--muted);
+}
+
+.ew-suffixed input {
+  border-radius: var(--r-sm) 0 0 var(--r-sm);
+}
+
+/* ---------- switches and checkboxes ---------- */
+
+.ew-switch {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  font: var(--t-body-sm);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.ew-switch input {
+  width: 36px;
+  height: 20px;
+  appearance: none;
+  border-radius: var(--r-pill);
+  background: var(--line);
+  position: relative;
+  cursor: pointer;
+  flex: none;
+  transition: background 0.15s;
+}
+
+.ew-switch input::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  transition: transform 0.15s;
+}
+
+.ew-switch input:checked {
+  background: var(--brand-500);
+}
+
+.ew-switch input:checked::after {
+  transform: translateX(16px);
+}
+
+.ew-switch input:focus-visible {
+  outline: 2px solid var(--brand-600);
+  outline-offset: 2px;
+}
+
+.ew-check {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font: var(--t-body-sm);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.ew-check input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--brand-500);
+  flex: none;
+}
+
+.ew-checks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-3);
+  margin-top: var(--sp-4);
+}
+
+/* ---------- salary components ---------- */
+
+.ew-components {
+  margin-top: var(--sp-5);
+  border-top: 1px solid var(--line-soft);
+  padding-top: var(--sp-5);
+}
+
+.ew-components-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: var(--sp-3);
+}
+
+.ew-components-head p {
+  font: var(--t-label);
+  color: var(--ink-2);
+  margin: 0;
+}
+
+.ew-component-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) 110px 120px 92px 32px;
+  gap: var(--sp-3);
+  align-items: center;
+  margin-bottom: var(--sp-3);
+}
+
+.ew-component-row input,
+.ew-component-row select {
+  height: 36px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  background: var(--surface-sunken);
+  padding: 0 var(--sp-3);
+  font: var(--t-body-sm);
+  color: var(--ink);
+  width: 100%;
+}
+
+.ew-component-row input[type='number'] {
+  text-align: right;
+  font-variant-numeric: var(--figures);
+}
+
+/* ---------- right rail ---------- */
+
+.ew-rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-card);
+  position: sticky;
+  top: 0;
+}
+
+.ew-rail-card {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: var(--sp-5);
+  background: var(--surface);
+}
+
+.ew-rail-card.is-accent {
+  background: var(--well-green);
+  border-color: var(--brand-100);
+}
+
+.ew-rail-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-4);
+}
+
+.ew-rail-head h4 {
+  font: var(--t-body);
+  margin: 0;
+  color: var(--ink);
+}
+
+.ew-rail-head p {
+  font: var(--t-caption);
+  color: var(--muted);
+  margin: var(--sp-0\.5) 0 0;
+}
+
+.ew-rail-head svg {
+  width: 16px;
+  height: 16px;
+  color: var(--brand-600);
+  flex: none;
+  margin-top: var(--sp-0\.5);
+}
+
+/* ---------- payroll summary ---------- */
+
+.ew-sum-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--sp-4);
+  padding: var(--sp-2) 0;
+  font: var(--t-body-sm);
+  color: var(--ink-2);
+}
+
+.ew-sum-row b {
+  font-variant-numeric: var(--figures);
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.ew-sum-row.is-total {
+  border-top: 1px solid var(--brand-100);
+  margin-top: var(--sp-2);
+  padding-top: var(--sp-3);
+  color: var(--brand-800);
+}
+
+.ew-sum-row.is-deduction b {
+  color: var(--money-negative);
+}
+
+.ew-sum-group {
+  font: var(--t-label);
+  color: var(--muted);
+  margin: var(--sp-4) 0 var(--sp-1);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.ew-net {
+  background: var(--well-green);
+  border: 1px solid var(--brand-100);
+  border-radius: var(--r-sm);
+  padding: var(--sp-5);
+  margin-top: var(--sp-4);
+  text-align: center;
+}
+
+.ew-net span {
+  font: var(--t-caption);
+  color: var(--ink-2);
+  display: block;
+}
+
+.ew-net b {
+  font: var(--t-kpi);
+  color: var(--brand-800);
+  font-variant-numeric: var(--figures);
+  display: block;
+  margin: var(--sp-1) 0;
+}
+
+/* The estimate disclaimer is not decoration — it is why this panel is allowed. */
+.ew-estimate-note {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: flex-start;
+  background: var(--well-yellow);
+  border: 1px solid var(--tone-warn-bg);
+  border-radius: var(--r-xs);
+  padding: var(--sp-3);
+  margin-top: var(--sp-4);
+  font: var(--t-caption);
+  color: var(--tone-warn);
+}
+
+.ew-estimate-note svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  margin-top: 1px;
+}
+
+/* ---------- capability / checklist lists ---------- */
+
+.ew-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.ew-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  font: var(--t-body-sm);
+  color: var(--ink-2);
+}
+
+.ew-list svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  margin-top: 2px;
+}
+
+.ew-list .ok {
+  color: var(--tone-good);
+}
+
+.ew-list .no {
+  color: var(--muted-2);
+}
+
+.ew-list-title {
+  font: var(--t-label);
+  color: var(--muted);
+  margin: var(--sp-5) 0 var(--sp-3);
+}
+
+.ew-list-title:first-child {
+  margin-top: 0;
+}
+
+/* ---------- documents ---------- */
+
+.ew-doc-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--gap-card);
+}
+
+.ew-doc {
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.ew-doc-title {
+  font: var(--t-label);
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+.ew-doc-body {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-height: 46px;
+}
+
+.ew-doc-thumb {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--r-xs);
+  background: var(--line-soft);
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  flex: none;
+}
+
+.ew-doc-meta {
+  min-width: 0;
+  flex: 1;
+}
+
+.ew-doc-meta b {
+  font: var(--t-body-sm);
+  color: var(--ink);
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ew-doc-meta span {
+  font: var(--t-caption);
+  color: var(--muted);
+}
+
+.ew-doc-state {
+  flex: none;
+  color: var(--tone-good);
+}
+
+.ew-doc-drop {
+  border: 1px dashed var(--line);
+  border-radius: var(--r-sm);
+  padding: var(--sp-5);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-2);
+  text-align: center;
+  color: var(--muted);
+  font: var(--t-caption);
+}
+
+/* ---------- review ---------- */
+
+.ew-review-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-4);
+}
+
+.ew-review-head h3 {
+  font: var(--t-section);
+  color: var(--ink);
+  margin: 0;
+}
+
+.ew-review-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: var(--sp-4) var(--sp-5);
+}
+
+.ew-review-grid div {
+  min-width: 0;
+}
+
+.ew-review-grid small {
+  font: var(--t-caption);
+  color: var(--muted);
+  display: block;
+  margin-bottom: var(--sp-0\.5);
+}
+
+.ew-review-grid b {
+  font: var(--t-body-sm);
+  color: var(--ink);
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.ew-review-grid b.num {
+  font-variant-numeric: var(--figures);
+}
+
+.ew-confirm {
+  display: flex;
+  gap: var(--sp-3);
+  align-items: flex-start;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: var(--sp-4);
+  font: var(--t-body-sm);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.ew-confirm input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--brand-500);
+  flex: none;
+  margin-top: 1px;
+}
+
+/* ---------- footer ---------- */
+
+.ew-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--gap-btn);
+  padding-top: var(--sp-5);
+  margin-top: var(--sp-6);
+  border-top: 1px solid var(--line);
+}
+
+.ew-foot-right {
+  display: flex;
+  gap: var(--gap-btn);
+  margin-left: auto;
+}
+
+.ew-foot-msg {
+  font: var(--t-caption);
+  color: var(--muted);
+}
+
+/* ---------- responsive: 07-responsive.md ---------- */
+
+@media (max-width: 1080px) {
+  .ew-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ew-rail {
+    position: static;
+  }
+  .ew-doc-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .ew-fields,
+  .ew-fields.cols-2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ew-doc-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ew-checks {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ew-component-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  /* The stepper becomes current-step-only text; dots would wrap illegibly. */
+  .ew-steps {
+    display: none;
+  }
+  .ew-steps-compact {
+    display: block;
+  }
+  .ew-foot {
+    flex-wrap: wrap;
+  }
+}

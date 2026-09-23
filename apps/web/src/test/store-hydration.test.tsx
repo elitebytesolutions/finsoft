@@ -43,7 +43,11 @@ describe('mocks/store.ts SSR-safe localStorage hydration', () => {
       }),
     )
 
-    render(<MemoryRouter initialEntries={['/purchasing']}><App/></MemoryRouter>)
+    render(
+      <MemoryRouter initialEntries={['/purchasing']}>
+        <App />
+      </MemoryRouter>,
+    )
 
     // Present only if the post-mount restore(localStorage.getItem(...))
     // effect ran and its setData(...) update actually reached the render —
@@ -52,9 +56,13 @@ describe('mocks/store.ts SSR-safe localStorage hydration', () => {
     expect(screen.getByText('Canary Supplier Co')).toBeInTheDocument()
   })
 
-  it('falls back to the seed when localStorage holds nothing (the ported suite\'s implicit path)', () => {
+  it("falls back to the seed when localStorage holds nothing (the ported suite's implicit path)", () => {
     localStorage.clear()
-    render(<MemoryRouter initialEntries={['/purchasing']}><App/></MemoryRouter>)
+    render(
+      <MemoryRouter initialEntries={['/purchasing']}>
+        <App />
+      </MemoryRouter>,
+    )
     expect(screen.queryByText('PUR-CANARY-0001')).not.toBeInTheDocument()
     expect(screen.getByText('Getz Pharma')).toBeInTheDocument()
   })

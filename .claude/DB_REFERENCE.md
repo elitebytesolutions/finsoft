@@ -23,6 +23,11 @@ Read these before copying any table below into a migration:
 | `DECIMAL`/`NUMERIC` mixed precisions per table | Money representation is fixed by ADR-0011 |
 | Modules write `stock_movements` and journal rows directly | Modules raise events; only the kernels write the ledgers (ADR-0005, ADR-0008) |
 | `avcost` stored on `products` | Weighted-average costing rules live in ADR-0007 |
+| `v_current_stock` computed `stock_value` as `SUM(qty_in - qty_out) * avcost` | **The recomputation ADR-0015 §7 forbids.** Inventory value is the sum of signed stored value movements; average cost is a separate rate. Replaced in place by `v_stock_balances` / `v_available_stock` / `v_negative_stock` |
+| Stock views filtered with `HAVING SUM(...) > 0` | Correct for a **picker**, wrong for an **authoritative** view. A balance view that hides negatives makes a negative-stock exception report permanently empty (ADR-0017) |
+| `CHECK (discount_amount <= quantity * rate * discount_limit_pct / 100)` | A CHECK passes when its expression is NULL, and those columns are nullable — so it admitted any discount, including one that drives `cost_per_unit` negative |
+| `cost_per_unit` divides by `total_qty`, which is NULL when `loose_per_pack = 0` | Prove the received quantity positive before dividing |
+| No availability enforcement on posting | Stock sufficiency is checked **inside the posting transaction, under the ADR-0018 locks** — a pre-save check lets two sales each sell 8 of the same 10 units (ADR-0017) |
 | Legacy `status VARCHAR(1)` enums, `MUSER`/`MTIME` lineage | Append-only audit record per financial mutation |
 | Oracle-flavoured tablespaces (`APP_DATA`, `APP_INDEX`) | See [docs/INFRASTRUCTURE.md](../docs/INFRASTRUCTURE.md) for the real storage/role model |
 
@@ -231,12 +236,60 @@ Bhatti Traders used MAX+1 with zero sequences → duplicate invoice numbers (Bug
   ALTER TABLE journal_entries ADD CONSTRAINT chk_jv_balanced
     CHECK (total_debit = total_credit);
 
-  -- Discount cannot exceed limit
+  -- ⚠ REJECTED — do not copy:
+  --   CHECK (discount_amount <= (quantity * rate * discount_limit_pct / 100))
+  -- A CHECK passes when its expression evaluates to NULL. If rate or
+  -- discount_limit_pct is NULL the comparison is NULL and the constraint
+  -- admits ANY discount — including one that exceeds the line and drives
+  -- net_amount, and therefore cost_per_unit, negative. The columns are not
+  -- declared NOT NULL, so this is reachable, not theoretical.
+  ALTER TABLE sale_lines
+    ALTER COLUMN quantity             SET NOT NULL,
+    ALTER COLUMN rate                 SET NOT NULL,
+    ALTER COLUMN discount_amount      SET NOT NULL,
+    ALTER COLUMN discount_limit_pct   SET NOT NULL;
+
+  ALTER TABLE sale_lines ADD CONSTRAINT chk_disc_nonneg
+    CHECK (discount_amount >= 0 AND discount_limit_pct >= 0 AND rate >= 0);
+
+  -- Discount may not exceed the DISCOUNTABLE amount. Stated as a product,
+  -- not a division, so there is no rounding step and no zero denominator.
   ALTER TABLE sale_lines ADD CONSTRAINT chk_disc_limit
-    CHECK (discount_amount <= (quantity * rate * discount_limit_pct / 100));
+    CHECK (discount_amount * 100 <= quantity * rate * discount_limit_pct);
+
+  -- Never divide by a received quantity without proving it positive first.
+  -- grn_lines.total_qty is GENERATED with NULLIF(loose_per_pack, 0), so it
+  -- is NULL when loose_per_pack = 0 — and cost_per_unit = net_amount /
+  -- total_qty then yields NULL rather than an error.
+  ALTER TABLE grn_lines ADD CONSTRAINT chk_grn_total_qty_positive
+    CHECK (total_qty IS NOT NULL AND total_qty > 0);
+
+  -- Cost per unit is never negative. This is the constraint that actually
+  -- catches the discount-exceeds-amount case at the point it does damage.
+  ALTER TABLE grn_lines ADD CONSTRAINT chk_grn_cost_nonneg
+    CHECK (cost_per_unit >= 0 AND net_amount >= 0);
 
   -- Fiscal period must be open to post
   -- (Enforced via trigger — see triggers section)
+
+  -- ⚠ Do NOT add nonnegative constraints to signed columns.
+  -- inventory_value_delta, rounding_amount, negative_stock_variance and
+  -- journal line amounts are SIGNED by design: outflows and reversals are
+  -- legitimately negative (ADR-0015 §5, §8; ADR-0006). A blanket
+  -- "amount >= 0" sweep across money columns would block every reversal in
+  -- the system. Nonnegativity belongs on INPUT quantities, rates and
+  -- discounts — not on ledger deltas.
+
+  -- ⚠ Bonus quantity does NOT cause negative cost, and must not be
+  -- constrained as though it did. cost_per_unit = net_amount / total_qty,
+  -- and bonus_qty appears only in the DENOMINATOR (total_qty). Adding
+  -- positive bonus can only reduce the magnitude of the rate; it cannot
+  -- change its sign. The sign comes from net_amount, i.e. from discount
+  -- exceeding the line — which chk_grn_cost_nonneg above now catches.
+  -- An arbitrary `bonus_qty <= pack_qty * 2` rule was proposed and is
+  -- REJECTED: it treats a symptom that does not exist, and it would reject
+  -- legitimate supplier deals. Unusual bonus ratios are a configurable
+  -- WARNING or approval threshold in the application, not a CHECK.
 
   -- Place code must be S or W
   ALTER TABLE stock_movements ADD CONSTRAINT chk_place
@@ -1469,15 +1522,39 @@ CREATE TABLE config.settings (
 ##### Stock views (derived — never cached)
 
 ```sql
--- Current stock (all places, including zero)
-  CREATE VIEW transactions.v_current_stock AS
+-- ⚠ REJECTED — do not copy. Retained to show what must not be built.
+  --
+  --   COALESCE(SUM(m.qty_in - m.qty_out), 0) * p.avcost AS stock_value
+  --
+  -- That is quantity × a rounded average: the recomputation ADR-0015 §7
+  -- forbids, and the defect that ADR record exists to prevent. It also
+  -- reads `avcost` off `products`, which ADR-0015 closes. Three separate
+  -- views replace it, because "current stock" was doing three jobs at once
+  -- and the authoritative one must never filter.
+
+  -- 1. AUTHORITATIVE balances — ALL of them, including unexpected negatives.
+  --    Never filtered. A negative here is a fact to be reported, not hidden.
+  CREATE VIEW transactions.v_stock_balances AS
   SELECT p.product_id, p.product_code, p.product_name, p.company_name,
        COALESCE(SUM(m.qty_in - m.qty_out), 0) AS current_qty,
-       p.avcost,
-       COALESCE(SUM(m.qty_in - m.qty_out), 0) * p.avcost AS stock_value
+       COALESCE(SUM(m.inventory_value_delta), 0) AS stock_value
   FROM masters.products p
   LEFT JOIN transactions.stock_movements m ON p.product_id = m.product_id
-  GROUP BY p.product_id, p.product_code, p.product_name, p.company_name, p.avcost;
+  GROUP BY p.product_id, p.product_code, p.product_name, p.company_name;
+  -- stock_value is the SUM OF SIGNED STORED VALUE MOVEMENTS. Never a product
+  -- of quantity and a rate. Average cost is a separate rate and is not here.
+
+  -- 2. PICKER — eligible positive stock only. Filtering is correct HERE and
+  --    only here, because its job is "what may I sell", not "what is true".
+  CREATE VIEW transactions.v_available_stock AS
+  SELECT * FROM transactions.v_stock_balances WHERE current_qty > 0;
+
+  -- 3. EXCEPTION REPORT — reads the AUTHORITATIVE view, not the picker.
+  --    Sourcing this from a view that excludes negatives makes it
+  --    permanently empty, which is how a corruption report becomes a
+  --    corruption concealer.
+  CREATE VIEW transactions.v_negative_stock AS
+  SELECT * FROM transactions.v_stock_balances WHERE current_qty < 0;
 
   -- Shop stock (place='S', >0, with batch+expiry)
   CREATE VIEW transactions.v_shop_stock AS

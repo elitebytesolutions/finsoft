@@ -50,6 +50,20 @@ History    "Previous Vouchers": Voucher No · Date · Type · Total Items · Tot
 Rate is the current weighted-average cost, read-only, so the value of what is being written off is
 visible before posting.
 
+**This multiplication is legitimate and must not be "corrected".** A write-off is an outward
+movement, and its value is `round(quantity x unit_cost, 4)` -- rounding boundary 2 in ADR-0015 §3.
+What ADR-0015 §7 forbids is valuing the stock that *remains* as `quantity_on_hand x average_cost`.
+Costing an outward movement at the average is the rule; recomputing the balance from it is the
+defect.
+
+**When a write-off removes the LAST units, the sell-out residual rule applies** (ADR-0015 §5): the
+carried value is flushed to zero and any difference between it and the computed outward value is
+posted as the residual leg, in the same entry. Quantity and value reach zero together. The debit is
+the expense account this voucher names, not Cost of Goods Sold, but the flush itself is identical
+to a sale's. A write-off that zeroes the quantity while leaving a few paise of value behind is the
+bug this rule exists to prevent, and the confirmation dialog's total must reflect the flushed
+figure, not the pre-flush product.
+
 ## 5. Actions
 
 | Action | Kind | Permission | Confirm | Result |

@@ -1,0 +1,66 @@
+# Secret scanning configuration. NON_NEGOTIABLES rule 20.
+#
+# Every entry here is a REVIEWED exception with a stated reason. That is the
+# point of suppressing in a committed file rather than passing a flag: a flag
+# on a command line is invisible in review and permanent by accident, whereas
+# this diff has to be read and approved by someone.
+#
+# Before adding anything, the test is not "is this noisy" but "is this
+# provably not a credential". If a value could authenticate as anything,
+# anywhere, it is rotated — not allowlisted.
+
+[extend]
+# Gitleaks' full default rule set, then our additions. Never replaced: an
+# allowlist that silently drops the defaults is how a scanner keeps passing
+# while checking less and less.
+useDefault = true
+
+# ---------------------------------------------------------------------------
+# Reviewed exceptions
+# ---------------------------------------------------------------------------
+
+[[allowlists]]
+description = """
+The public example JWT from RFC 7519 / jwt.io, used as a fixture in the
+observability redaction tests.
+
+It is the canonical documentation token — HS256, signed with the literal
+secret "your-256-bit-secret", payload {"sub":"1234567890"} — and it
+authenticates to nothing. It exists in that file precisely so the tests can
+prove the LOGGER redacts a JWT shape before it reaches an aggregator
+(ADR-0016, layer 2). A rule that forbids its own counter-example gets the
+counter-example deleted, and then nothing proves the redaction works.
+
+Scoped as narrowly as the format allows: this exact string, in that one file.
+Any other JWT-shaped value, there or anywhere else, still fails the scan.
+"""
+condition = "AND"
+paths = ['''packages/observability/src/redact\.test\.ts$''']
+regexes = [
+  '''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJzdWIiOiIxMjM0NTY3ODkwIn0\.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk''',
+]
+
+# ---------------------------------------------------------------------------
+# Deliberately NOT allowlisted
+# ---------------------------------------------------------------------------
+#
+# .env.example — it carries values named `local-dev-only-*`, which are
+# placeholders rather than credentials, and gitleaks does not flag them. It is
+# left OUT of this file on purpose, so that it remains in scope.
+#
+# That is worth stating accurately rather than optimistically: keeping it in
+# scope does NOT mean every real password pasted there will be caught. A
+# scanner matches known token shapes and high entropy, and an arbitrary
+# human-chosen password — `Bhatti2026!` — has neither. It would pass.
+#
+# So the reason to keep the file in scope is that it costs nothing and catches
+# the recognisable cases (an API key, a token, a connection string with
+# credentials in it). The control that actually covers the rest is that real
+# secrets never live in the repository at all: staging generates its database
+# passwords on the host, and production credentials exist only in that
+# environment's protected store (INFRASTRUCTURE §6).
+#
+# infrastructure/staging/** — the staging stack reads its database passwords
+# from a .env generated ON the host, which is not in the repository and never
+# passes through CI. There is nothing here to exempt, and that is the design
+# (INFRASTRUCTURE §6).

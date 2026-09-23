@@ -28,7 +28,9 @@ function toSegments(key: string): Segment[] {
   if (rel === '') return []
   return rel.split('/').map((part) => {
     const dynamic = /^\[(?:\.\.\.)?([^\]]+)\]$/.exec(part)
-    return dynamic ? { type: 'param' as const, name: dynamic[1] } : { type: 'static' as const, value: part }
+    return dynamic
+      ? { type: 'param' as const, name: dynamic[1] }
+      : { type: 'static' as const, value: part }
   })
 }
 
@@ -49,7 +51,10 @@ function toSegments(key: string): Segment[] {
 // in practice it silently corrupted the ordering of unrelated same-length
 // pairs elsewhere in the array. Sorting each length group in isolation keeps
 // every comparison the algorithm makes valid.
-const parsedRoutes = Object.entries(pageModules).map(([key, mod]) => ({ segments: toSegments(key), Component: mod.default }))
+const parsedRoutes = Object.entries(pageModules).map(([key, mod]) => ({
+  segments: toSegments(key),
+  Component: mod.default,
+}))
 const byLength = new Map<number, Route[]>()
 for (const route of parsedRoutes) {
   const group = byLength.get(route.segments.length)
@@ -68,7 +73,9 @@ export const routes: Route[] = [...byLength.values()].flatMap((group) =>
 )
 
 if (routes.length === 0) {
-  throw new Error('route-table: no page.tsx files matched — the glob pattern no longer lines up with apps/web/app')
+  throw new Error(
+    'route-table: no page.tsx files matched — the glob pattern no longer lines up with apps/web/app',
+  )
 }
 
 const NotFound = Object.values(notFoundModules)[0]?.default
@@ -88,13 +95,17 @@ export function matchRoute(pathname: string): RouteMatch {
     for (let i = 0; i < parts.length; i++) {
       const segment = route.segments[i]
       if (segment.type === 'static') {
-        if (segment.value !== parts[i]) { matched = false; break }
+        if (segment.value !== parts[i]) {
+          matched = false
+          break
+        }
       } else {
         params[segment.name] = decodeURIComponent(parts[i])
       }
     }
     if (matched) return { Component: route.Component, params }
   }
-  if (!NotFound) throw new Error('route-table: no not-found.tsx matched and no route matched ' + pathname)
+  if (!NotFound)
+    throw new Error('route-table: no not-found.tsx matched and no route matched ' + pathname)
   return { Component: NotFound, params: {} }
 }

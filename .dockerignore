@@ -1,0 +1,30 @@
+# Build context. Everything not needed to BUILD is excluded, which keeps the
+# context small and — more importantly — keeps host state out of the image.
+# A node_modules built on Windows contains platform-specific binaries that
+# would silently override the Linux ones installed inside the container.
+
+**/node_modules
+**/.next
+**/dist
+**/coverage
+**/*.tsbuildinfo
+
+.git
+.github
+.githooks
+
+# Never. Production credentials live in the environment's secret store
+# (INFRASTRUCTURE §6), and a .env copied into an image is a secret baked into
+# every layer that follows it.
+.env
+.env.*
+!.env.example
+
+ui-prototype
+docs
+database/tests
+tests
+tools/parity
+
+**/*.md
+!README.md

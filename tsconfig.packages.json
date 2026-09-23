@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  // Shared base for packages/*.
+  //
+  // These packages ship TypeScript SOURCE and are executed directly by Node's
+  // type stripping: `node packages/database/src/migrate/cli.ts`, and anything
+  // that imports them at runtime. Node strips types — it does not transform.
+  //
+  // erasableSyntaxOnly makes the compiler reject any construct that needs
+  // transforming rather than erasing: parameter properties, enums,
+  // namespaces, `import =`. Without it those compile cleanly, pass every
+  // Vitest run (Vitest transpiles), and fail only when Node first loads the
+  // module in production — which is exactly how a parameter property in
+  // BaseRepository survived until apps/api required it.
+  //
+  // apps/* deliberately does NOT extend this. apps/api builds with SWC and
+  // NestJS dependency injection depends on parameter properties.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "erasableSyntaxOnly": true
+  }
+}

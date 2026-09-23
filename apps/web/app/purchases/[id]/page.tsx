@@ -7,5 +7,9 @@ import { useFinsoft } from '@/app-context'
 
 export default function Page() {
   const f = useFinsoft()
-  return <Guard module="Purchasing"><PurchaseDetail data={f.data}/></Guard>
+  return (
+    <Guard module="Purchasing">
+      <PurchaseDetail data={f.data} />
+    </Guard>
+  )
 }

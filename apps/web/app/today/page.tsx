@@ -7,5 +7,9 @@ import { useFinsoft } from '@/app-context'
 
 export default function Page() {
   const f = useFinsoft()
-  return <Guard module="Cash, Bank & GL"><TodayWork data={f.data} canPost={f.act('voucher:create')}/></Guard>
+  return (
+    <Guard module="Cash, Bank & GL">
+      <TodayWork data={f.data} canPost={f.act('voucher:create')} />
+    </Guard>
+  )
 }

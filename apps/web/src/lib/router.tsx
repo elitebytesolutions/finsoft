@@ -7,7 +7,12 @@
  * prototype actually uses. Delete this file only when the screens are rewritten
  * against next/navigation directly. */
 import Link from 'next/link'
-import { usePathname, useRouter, useParams as useNextParams, useSearchParams as useNextSearchParams } from 'next/navigation'
+import {
+  usePathname as useNextPathname,
+  useRouter,
+  useParams as useNextParams,
+  useSearchParams as useNextSearchParams,
+} from 'next/navigation'
 import { useEffect, useMemo, type ComponentProps, type ReactNode } from 'react'
 
 /** react-router's navigate(to) / navigate(to, {replace}) / navigate(-1). */
@@ -15,15 +20,22 @@ export function useNavigate() {
   const router = useRouter()
   return useMemo(
     () => (to: string | number, opts?: { replace?: boolean }) => {
-      if (typeof to === 'number') { if (to < 0) router.back(); else router.forward(); return }
-      if (opts?.replace) router.replace(to); else router.push(to)
+      if (typeof to === 'number') {
+        if (to < 0) router.back()
+        else router.forward()
+        return
+      }
+      if (opts?.replace) router.replace(to)
+      else router.push(to)
     },
     [router],
   )
 }
 
 /** react-router returns string params; Next can return string[] for catch-alls. */
-export function useParams<T extends Record<string, string | undefined> = Record<string, string | undefined>>(): T {
+export function useParams<
+  T extends Record<string, string | undefined> = Record<string, string | undefined>,
+>(): T {
   const params = useNextParams()
   return useMemo(() => {
     const flat: Record<string, string | undefined> = {}
@@ -35,21 +47,46 @@ export function useParams<T extends Record<string, string | undefined> = Record<
   }, [params])
 }
 
+/* Pathname only, and that is the point.
+ *
+ * `useLocation` below calls Next's useSearchParams to populate `.search`, and
+ * that hook opts its whole subtree out of static rendering unless it sits
+ * inside a Suspense boundary. The app shell renders on EVERY page from the
+ * root layout and needs nothing but the pathname, so calling useLocation
+ * there de-opted the entire application — including /_not-found — and failed
+ * `next build` outright.
+ *
+ * A consumer that genuinely reads query parameters still uses useLocation or
+ * useSearchParams and still needs a boundary. A consumer that only wants to
+ * know which route is active uses this and needs nothing. */
+export function usePathname(): string {
+  return useNextPathname() ?? '/'
+}
+
 export function useLocation() {
-  const pathname = usePathname()
+  const pathname = useNextPathname()
   const search = useNextSearchParams()
   const query = search?.toString() ?? ''
   return useMemo(
-    () => ({ pathname: pathname ?? '/', search: query ? `?${query}` : '', hash: '', state: null, key: 'default' }),
+    () => ({
+      pathname: pathname ?? '/',
+      search: query ? `?${query}` : '',
+      hash: '',
+      state: null,
+      key: 'default',
+    }),
     [pathname, query],
   )
 }
 
 /** react-router's tuple shape, backed by Next's read-only params. */
-export function useSearchParams(): [URLSearchParams, (next: URLSearchParams | Record<string, string>) => void] {
+export function useSearchParams(): [
+  URLSearchParams,
+  (next: URLSearchParams | Record<string, string>) => void,
+] {
   const search = useNextSearchParams()
   const router = useRouter()
-  const pathname = usePathname()
+  const pathname = useNextPathname()
   const params = useMemo(() => new URLSearchParams(search?.toString() ?? ''), [search])
   const setParams = (next: URLSearchParams | Record<string, string>) => {
     const qs = next instanceof URLSearchParams ? next : new URLSearchParams(next)
@@ -69,20 +106,46 @@ type NavLinkClass = string | ((state: { isActive: boolean; isPending: boolean })
  * un-highlights the parent nav item on every child route — which is what the
  * sidebar shows on 15 of the 77 routes. Matching is case-insensitive unless
  * `caseSensitive` is set, also per react-router. */
-function matchPath(locationPathname: string, toPathname: string, end: boolean, caseSensitive: boolean) {
+function matchPath(
+  locationPathname: string,
+  toPathname: string,
+  end: boolean,
+  caseSensitive: boolean,
+) {
   let loc = locationPathname
   let to = toPathname
-  if (!caseSensitive) { loc = loc.toLowerCase(); to = to.toLowerCase() }
+  if (!caseSensitive) {
+    loc = loc.toLowerCase()
+    to = to.toLowerCase()
+  }
   return loc === to || (!end && loc.startsWith(to) && loc.charAt(to.length) === '/')
 }
 
 /** NavLink with react-router's `to` prop and isActive render-prop className. */
-export function NavLink({ to, className, children, end = false, caseSensitive = false, ...rest }: { to: string; className?: NavLinkClass; children?: ReactNode; end?: boolean; caseSensitive?: boolean } & Omit<ComponentProps<typeof Link>, 'href' | 'className'>) {
+export function NavLink({
+  to,
+  className,
+  children,
+  end = false,
+  caseSensitive = false,
+  ...rest
+}: {
+  to: string
+  className?: NavLinkClass
+  children?: ReactNode
+  end?: boolean
+  caseSensitive?: boolean
+} & Omit<ComponentProps<typeof Link>, 'href' | 'className'>) {
   const pathname = usePathname() ?? '/'
   const target = to.split('?')[0]
   const isActive = matchPath(pathname, target, end, caseSensitive)
-  const resolved = typeof className === 'function' ? className({ isActive, isPending: false }) : className
-  return <Link href={to} className={resolved} aria-current={isActive ? 'page' : undefined} {...rest}>{children}</Link>
+  const resolved =
+    typeof className === 'function' ? className({ isActive, isPending: false }) : className
+  return (
+    <Link href={to} className={resolved} aria-current={isActive ? 'page' : undefined} {...rest}>
+      {children}
+    </Link>
+  )
 }
 
 export { Link }
@@ -90,6 +153,9 @@ export { Link }
 /** Declarative redirect. Renders nothing and replaces the entry in history. */
 export function Navigate({ to, replace = true }: { to: string; replace?: boolean }) {
   const router = useRouter()
-  useEffect(() => { if (replace) router.replace(to); else router.push(to) }, [router, to, replace])
+  useEffect(() => {
+    if (replace) router.replace(to)
+    else router.push(to)
+  }, [router, to, replace])
   return null
 }

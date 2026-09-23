@@ -1,0 +1,153 @@
+{
+  "id": "A",
+  "name": "Weighted average across opening, purchase and sale",
+  "source": "docs/NON_NEGOTIABLES.md §3",
+  "governedBy": "docs/adr/ADR-0015-inventory-valuation-is-carried-value.md",
+  "description": [
+    "The reference case the constitution spells out. Every presented figure",
+    "below was computed by hand and appears verbatim in NON_NEGOTIABLES §3.",
+    "",
+    "Implementations may change; these numbers may not. If a change to the",
+    "costing code makes this file fail, the code is wrong — not the file.",
+    "",
+    "ADR-0015 changed ONE number here, and only at storage scale:",
+    "inventoryValue was 9533.3334, the result of 110 × 86.666667. That is the",
+    "recomputation rule 16 forbids. The valuation is the carried value —",
+    "13000.0000 − 3466.6667 = 9533.3333 — which is the same number the GL is",
+    "debited, so the two agree by construction. No published figure changed:",
+    "both present as Rs 9,533.33."
+  ],
+
+  "movements": [
+    { "sequence": 1, "type": "OPENING", "quantity": "100", "unitCost": "80" },
+    { "sequence": 2, "type": "PURCHASE", "quantity": "50", "unitCost": "100" },
+    { "sequence": 3, "type": "SALE", "quantity": "40", "unitPrice": "140" }
+  ],
+
+  "expected": {
+    "totalValueBeforeSale": "13000.00",
+    "totalQuantityBeforeSale": "150",
+    "weightedAverageCost": "86.666667",
+    "closingQuantity": "110",
+    "revenue": "5600.00",
+    "cogs": "3466.67",
+    "grossProfit": "2133.33",
+    "inventoryValue": "9533.33"
+  },
+
+  "expectedAtStorageScale": {
+    "$comment": [
+      "Amounts are numeric(19,4) and the average is numeric(19,6) (ADR-0011).",
+      "These are what gets stored; the values above are what gets shown.",
+      "",
+      "valueOnHand and inventoryGlBalance are EQUAL, and equal by construction:",
+      "both are 13000.0000 − 3466.6667, the same stored COGS amount. That",
+      "identity is Invariant 10, and ADR-0015 makes it structural."
+    ],
+    "weightedAverageCost": "86.666667",
+    "cogs": "3466.6667",
+    "revenue": "5600.0000",
+    "grossProfit": "2133.3333",
+    "valueOnHand": "9533.3333",
+    "inventoryGlBalance": "9533.3333",
+    "invariant10Residual": "0.0000"
+  },
+
+  "forbiddenRecomputation": {
+    "$comment": [
+      "quantity_on_hand × average_cost. This is NOT the inventory valuation.",
+      "",
+      "Rule 16 and ADR-0015 §7: no report recomputes cost. Pinned here so the",
+      "figure cannot creep back in as an expectation — a test that asserts",
+      "this number IS the valuation is the defect this entry exists to catch.",
+      "",
+      "It differs from the carried value by 0.0001 at this quantity, by 0.0005",
+      "at ten times the quantity, and by zero for some splits. That is why it",
+      "cannot be accommodated with a tolerance."
+    ],
+    "quantityTimesAverage": "9533.3334",
+    "differenceFromCarriedValue": "0.0001"
+  },
+
+  "sellOut": {
+    "$comment": [
+      "A2 — sell the remaining 110 at the held average.",
+      "",
+      "This is the case that shows why the recomputation is not merely",
+      "imprecise but wrong. Under ADR-0007 as written the inventory GL would",
+      "end at −0.0001 with zero stock behind it: an asset account with a",
+      "credit balance.",
+      "",
+      "ADR-0015 §5: at zero quantity the inventory leg flushes the carried",
+      "value and the difference is posted to the rounding account. Quantity",
+      "and value reach zero TOGETHER, and the entry balances exactly at 4 dp."
+    ],
+    "quantitySold": "110",
+    "cogs": "9533.3334",
+    "valueOnHandBefore": "9533.3333",
+    "inventoryValueDelta": "-9533.3333",
+    "roundingAmount": "0.0001",
+    "valueOnHandAfter": "0.0000",
+    "quantityOnHandAfter": "0",
+    "inventoryGlAfter": "0.0000",
+    "journal": {
+      "debits": "9533.3334",
+      "credits": "9533.3334",
+      "lines": [
+        { "account": "Cost of Goods Sold", "debit": "9533.3334" },
+        { "account": "Inventory", "credit": "9533.3333" },
+        { "account": "Rounding", "credit": "0.0001" }
+      ]
+    }
+  },
+
+  "timesTen": {
+    "$comment": [
+      "A3 — the same scenario at ten times the quantity, as ONE transaction.",
+      "",
+      "The carried value still equals the GL exactly. The recomputation is now",
+      "off by 0.0005 — five times the gap for ten times the quantity, because",
+      "the average's rounding error is per-unit and the recomputation",
+      "multiplies it by the whole quantity on hand.",
+      "",
+      "This is the case that proves a tolerance can never be sized: it grows",
+      "with quantity, and a tolerance wide enough to cover it at scale is wide",
+      "enough to hide an inventory movement that never reached the GL."
+    ],
+    "quantities": { "opening": "1000", "purchase": "500", "sold": "400" },
+    "weightedAverageCost": "86.666667",
+    "cogs": "34666.6668",
+    "valueOnHand": "95333.3332",
+    "inventoryGlBalance": "95333.3332",
+    "invariant10Residual": "0.0000",
+    "forbiddenQuantityTimesAverage": "95333.3337",
+    "forbiddenDifference": "0.0005"
+  },
+
+  "splitTransactions": {
+    "$comment": [
+      "A4 — ten sales of 4 against one sale of 40.",
+      "",
+      "They are NOT equivalent, and that is expected behaviour rather than a",
+      "defect (ADR-0015 §9). Each of the ten roundings is independently",
+      "correct: every movement's cogs_amount is the auditable quantity ×",
+      "stored average, rounded once at boundary 2. Ten roundings simply",
+      "accumulate more than one does.",
+      "",
+      "What matters is that value_on_hand equals the inventory GL balance",
+      "EXACTLY in both, because both subtract the same stored deltas.",
+      "Invariant 10 holds either way; only the path-dependent total differs.",
+      "",
+      "Anyone trying to make the two paths agree is proposing to round",
+      "somewhere other than boundary 2."
+    ],
+    "oneSaleOf40": { "cogs": "3466.6667", "valueOnHandAfter": "9533.3333" },
+    "tenSalesOf4": {
+      "cogsEach": "346.6667",
+      "cogsTotal": "3466.6670",
+      "valueOnHandAfter": "9533.3330"
+    },
+    "difference": "0.0003",
+    "invariant10HoldsInBoth": true
+  }
+}

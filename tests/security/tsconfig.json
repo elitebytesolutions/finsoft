@@ -1,0 +1,10 @@
+{
+  // See database/tests/tsconfig.json. The `@ts-expect-error` assertions in
+  // tenant-isolation.spec.ts are only assertions if tsc actually runs here.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "types": ["node"]
+  },
+  "include": ["**/*.ts"]
+}

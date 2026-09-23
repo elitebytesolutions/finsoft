@@ -90,7 +90,7 @@ The consequences are accepted, not worked around:
 - **Legacy migration** loads through the normal posting engine as opening balances, into an open period, never as direct inserts into the journal ([PRD.md §8](../PRD.md)). Historical periods are created and closed in order, with the load happening while each is open.
 - **A late invoice** for a closed month posts into the current open period with its business date in that period. If the prior-period effect matters, it is disclosed, not back-dated.
 - **A correction to a closed period** is a reversal in the current open period with disclosure (ADR-0006). This is the policy the reopen permission must not be used to circumvent.
-- **A retried outbox dispatch** never posts, so the question does not arise — the outbox carries side effects, not postings (ADR-0010).
+- **A retried outbox dispatch** never posts, so the question does not arise — the outbox carries side effects, not postings (ADR-0019).
 
 ## Consequences
 
@@ -142,7 +142,7 @@ The consequences are accepted, not worked around:
 - [ADR-0005](ADR-0005-central-double-entry-posting-engine.md) — the period check as step 3 of the posting pipeline
 - [ADR-0006](ADR-0006-immutable-posted-transactions.md) — the reversal date policy this rule shapes
 - [ADR-0009](ADR-0009-jwt-access-and-rotating-refresh-tokens.md) — MFA and step-up for `period.reopen`
-- [ADR-0010](ADR-0010-transactional-outbox.md) — why dispatch retries never raise a period question
+- [ADR-0019](ADR-0019-transactional-outbox.md) — why dispatch retries never raise a period question
 - [ADR-0008](ADR-0008-inventory-movement-ledger-and-fefo.md) — stock movements are period-checked like journal entries
 - [../NON_NEGOTIABLES.md](../NON_NEGOTIABLES.md) — rules 5, 9, 13, 18, 22; §4 what to do when you hit a violation
 - [../ARCHITECTURE.md](../ARCHITECTURE.md) — §3 period validation, §8 permissions, §10 observability

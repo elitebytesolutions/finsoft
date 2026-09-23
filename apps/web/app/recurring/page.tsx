@@ -7,5 +7,9 @@ import { useFinsoft } from '@/app-context'
 
 export default function Page() {
   const f = useFinsoft()
-  return <Guard module="Cash, Bank & GL"><RecurringTemplates data={f.data} onRun={(v)=>f.saveVoucher(v,true)}/></Guard>
+  return (
+    <Guard module="Cash, Bank & GL">
+      <RecurringTemplates data={f.data} onRun={(v) => f.saveVoucher(v, true)} />
+    </Guard>
+  )
 }

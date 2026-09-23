@@ -7,5 +7,9 @@ import { useFinsoft } from '@/app-context'
 
 export default function Page() {
   const f = useFinsoft()
-  return <Guard module="Masters"><CustomerDetail data={f.data} onPatch={f.patchMaster}/></Guard>
+  return (
+    <Guard module="Masters">
+      <CustomerDetail data={f.data} onPatch={f.patchMaster} />
+    </Guard>
+  )
 }
