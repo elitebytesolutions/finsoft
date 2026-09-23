@@ -7,7 +7,7 @@
  * prototype actually uses. Delete this file only when the screens are rewritten
  * against next/navigation directly. */
 import Link from 'next/link'
-import { usePathname, useRouter, useParams as useNextParams, useSearchParams as useNextSearchParams } from 'next/navigation'
+import { usePathname as useNextPathname, useRouter, useParams as useNextParams, useSearchParams as useNextSearchParams } from 'next/navigation'
 import { useEffect, useMemo, type ComponentProps, type ReactNode } from 'react'
 
 /** react-router's navigate(to) / navigate(to, {replace}) / navigate(-1). */
@@ -35,8 +35,24 @@ export function useParams<T extends Record<string, string | undefined> = Record<
   }, [params])
 }
 
+/* Pathname only, and that is the point.
+ *
+ * `useLocation` below calls Next's useSearchParams to populate `.search`, and
+ * that hook opts its whole subtree out of static rendering unless it sits
+ * inside a Suspense boundary. The app shell renders on EVERY page from the
+ * root layout and needs nothing but the pathname, so calling useLocation
+ * there de-opted the entire application — including /_not-found — and failed
+ * `next build` outright.
+ *
+ * A consumer that genuinely reads query parameters still uses useLocation or
+ * useSearchParams and still needs a boundary. A consumer that only wants to
+ * know which route is active uses this and needs nothing. */
+export function usePathname(): string {
+  return useNextPathname() ?? '/'
+}
+
 export function useLocation() {
-  const pathname = usePathname()
+  const pathname = useNextPathname()
   const search = useNextSearchParams()
   const query = search?.toString() ?? ''
   return useMemo(
@@ -49,7 +65,7 @@ export function useLocation() {
 export function useSearchParams(): [URLSearchParams, (next: URLSearchParams | Record<string, string>) => void] {
   const search = useNextSearchParams()
   const router = useRouter()
-  const pathname = usePathname()
+  const pathname = useNextPathname()
   const params = useMemo(() => new URLSearchParams(search?.toString() ?? ''), [search])
   const setParams = (next: URLSearchParams | Record<string, string>) => {
     const qs = next instanceof URLSearchParams ? next : new URLSearchParams(next)

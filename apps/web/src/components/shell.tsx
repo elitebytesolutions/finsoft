@@ -4,7 +4,7 @@
  * Route children arrive from the App Router instead of <Routes>; nothing else
  * changed, because the sidebar is the most reference-matched surface we have. */
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { NavLink, useLocation, useNavigate } from '@/lib/router'
+import { NavLink, usePathname, useNavigate } from '@/lib/router'
 import {
   Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, BadgeCheck, Bell, BookOpen, BookUser, Boxes, CalendarCheck, CalendarDays, ChartNoAxesCombined, ChevronDown, ChevronRight, CircleHelp, Mail, Settings, ChevronsLeft, ClipboardCheck, ClipboardList, ClipboardPlus, Clock3, ContactRound, Download, Eye, FileChartColumn, FilePlus2, FileText, HandCoins, History, Landmark, LayoutDashboard, Menu, PackageCheck, Pill, Plus, Printer, ReceiptText, ScrollText, Search, Settings2, ShieldCheck, ShoppingBag, ShoppingCart, TableProperties, Truck, TrendingUp, Users, WalletCards, Navigation, ArrowLeftRight, Banknote, Barcode, BellRing, Building2, ChartPie, Database, FolderTree, Grid2x2, Layers, ListChecks, MapPin, PackageSearch, Percent, Scale, ShieldAlert, Store, Tag, Target, UserCog, UsersRound, Wallet, Warehouse, Coins, Ellipsis, type LucideIcon
 } from 'lucide-react'
@@ -30,10 +30,10 @@ function renderNodes(nodes:NavChild[],prefix:string,depth:number,ctx:{closed:Set
  })}</>
 }
 export function Shell({children,role,setRole}:{children:ReactNode;role:string;setRole:(v:string)=>void}){
- const location=useLocation(), navigate=useNavigate()
- const path=location.pathname.split('?')[0]
+ const pathname=usePathname(), navigate=useNavigate()
+ const path=pathname.split('?')[0]
  const [collapsed,setCollapsed]=useState(false),[mobileOpen,setMobileOpen]=useState(false),[global,setGlobal]=useState(''),[notifications,setNotifications]=useState(false),[modQuery,setModQuery]=useState('')
- const [closed,setClosed]=useState<Set<string>>(()=>{const s=new Set<string>();const here=location.pathname;const holds=(n:NavChild):boolean=>(n.path===here)||(n.children??[]).some(holds);const seed=(nodes:NavChild[],prefix:string)=>{for(const n of nodes){if((n.children??[]).length){const k=prefix+'|'+n.label;if(!holds(n))s.add(k);seed(n.children??[],k)}}};for(const grp of nav)seed(grp.items as unknown as NavChild[],grp.group);return s})
+ const [closed,setClosed]=useState<Set<string>>(()=>{const s=new Set<string>();const here=pathname;const holds=(n:NavChild):boolean=>(n.path===here)||(n.children??[]).some(holds);const seed=(nodes:NavChild[],prefix:string)=>{for(const n of nodes){if((n.children??[]).length){const k=prefix+'|'+n.label;if(!holds(n))s.add(k);seed(n.children??[],k)}}};for(const grp of nav)seed(grp.items as unknown as NavChild[],grp.group);return s})
  const [createOpen,setCreateOpen]=useState(false)
  const createRef=useRef<HTMLDivElement>(null)
  useEffect(()=>{
