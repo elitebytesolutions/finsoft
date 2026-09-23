@@ -91,7 +91,12 @@ compose up -d postgres redis
 # refuses to report ready below REQUIRED_SCHEMA_VERSION, so starting it first
 # would mean a window of a live-but-not-ready service for no reason.
 echo "running migrations"
-compose run --rm migrate
+# -T and </dev/null: belt and braces. `compose run` attaches stdin by default,
+# which is exactly how this script got eaten when it was piped in over SSH —
+# the migrate container consumed everything after this line, so `up -d` never
+# ran and the deploy still exited 0. It runs as a file now, but a one-shot
+# that silently swallows its caller's input is worth closing off for good.
+compose run --rm -T migrate </dev/null
 
 compose up -d --remove-orphans
 compose ps

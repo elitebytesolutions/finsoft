@@ -283,6 +283,7 @@ jobs:
           scp infrastructure/staging/compose.yaml "$SSH_USER@$HOST:/opt/finsoft/compose.yaml"
           scp infrastructure/staging/Caddyfile "$SSH_USER@$HOST:/opt/finsoft/Caddyfile"
           scp infrastructure/docker/postgres/init/* "$SSH_USER@$HOST:/opt/finsoft/postgres/init/"
+          scp infrastructure/staging/deploy.sh "$SSH_USER@$HOST:/opt/finsoft/deploy.sh"
 
       # Digests, not tags. A tag is a moving pointer; a digest is the exact
       # bytes that passed the gate above, which is what
@@ -296,9 +297,18 @@ jobs:
           SHA: ${{ github.sha }}
           REPO: ${{ github.repository }}
         run: |
-          ssh "$SSH_USER@$HOST" \
+          # Run the script as a FILE on the host, with stdin closed (-n).
+          #
+          # It used to be piped in: `ssh … 'bash -s' < deploy.sh`. That looks
+          # equivalent and is not — the script arrives on stdin, so any
+          # command inside it that reads stdin consumes THE REST OF THE
+          # SCRIPT. `docker compose run` attaches stdin by default, so the
+          # migrate container swallowed everything after it. The `up -d` never
+          # ran, bash reached EOF and exited 0, and the deploy reported
+          # success with only postgres and redis running.
+          ssh -n "$SSH_USER@$HOST" \
             REGISTRY_TOKEN="$REGISTRY_TOKEN" ACTOR="$ACTOR" SHA="$SHA" REPO="$REPO" \
-            'bash -s' < infrastructure/staging/deploy.sh
+            'bash /opt/finsoft/deploy.sh'
 
       # A deploy that reports success without asking the thing whether it
       # works is a deploy that reports success.
