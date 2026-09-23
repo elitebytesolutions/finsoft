@@ -246,12 +246,18 @@ jobs:
           HOSTKEYS: ${{ secrets.STAGING_KNOWN_HOSTS }}
         run: |
           install -d -m 700 ~/.ssh
-          printf '%s' "$KEY" > ~/.ssh/id_ed25519
+          # The trailing newline is required, not cosmetic. OpenSSH rejects a
+          # private key whose final line is unterminated with
+          # "error in libcrypto" — which reads like a corrupt or wrong-format
+          # key rather than a missing byte, and sends you looking in the wrong
+          # place. GitHub strips the trailing newline from a secret, so it has
+          # to be put back here.
+          printf '%s\n' "$KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           # A pinned host key. Without it, StrictHostKeyChecking=no accepts
           # whatever answers on that address — the entire value of host
           # verification, given away to save one secret.
-          printf '%s' "$HOSTKEYS" > ~/.ssh/known_hosts
+          printf '%s\n' "$HOSTKEYS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
       - name: ship configuration
