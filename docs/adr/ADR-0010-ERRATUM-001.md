@@ -125,14 +125,17 @@ Stated explicitly, because an erratum that touches delivery semantics should say
 
 ## Verification
 
-`database/tests/outbox.spec.ts` — 40 cases, through **direct SQL** rather than a repository, because every guarantee here has to hold against a psql session, a migration, an admin script and a future import. Rule 21 contemplates humans with direct access, and a control that only works when called through the right TypeScript is not a control.
+`database/tests/outbox.spec.ts` — through **direct SQL** rather than a repository, because every guarantee here has to hold against a psql session, a migration, an admin script and a future import. Rule 21 contemplates humans with direct access, and a control that only works when called through the right TypeScript is not a control.
 
 Covering: lease fencing (a stale ack affects zero rows and leaves the new lease intact; a stale failure cannot steal the row); the transition graph through direct `UPDATE`; both caps and the terminal state; replay preserving evidence and refusing a fresh `effect_key`; the payload boundary measured as the database measures it; tenant scoping, batch bounds and the suspended-tenant starvation case; and crash-after-enqueue redelivery.
 
-Two defects in this migration were found by that suite rather than by review:
+Three defects in this migration were found by that suite rather than by review:
 
 - **The column-scoped `UPDATE` grant was decorative.** `00-bootstrap.sh` sets `ALTER DEFAULT PRIVILEGES … GRANT SELECT, INSERT, UPDATE`, so the table arrived with table-level UPDATE already granted, which supersedes any column list. The migration now `REVOKE`s it first.
 - **The reaper's predicate was off by one.** `reclaims < 5` passes at 4, reclaims to 5, and lands on `PENDING`, which `outbox_reclaims_exhausted_is_failed` rejects. The statement is now written in terms of the resulting value — `reclaims + 1 < 5` — because that is what the constraint is written in terms of.
+- **`btrim` strips spaces only.** The review proposed `effect_key = btrim(effect_key)` as the shape constraint; measured against the engine, a tab-prefixed key satisfies it and passes. A tab is exactly as invisible in a log line as a space, and two enqueuers disagreeing by one produce two dedup slots for one effect — a silent double-send through the mechanism erratum 3 added to prevent silent double-sends. The constraint names the whitespace class instead.
+
+**The plan assertion runs against a populated table**, because one over an empty table proves nothing: the planner picks a sequential scan for a handful of rows whatever the indexes say, and would do so again with the index dropped. Erratum 2's whole justification is the index shape, so the test that checks it has to be capable of failing. The real bar remains the dispatcher PR's `EXPLAIN (ANALYZE, BUFFERS)` against 10^6 rows across 50+ tenants.
 
 Applied and verified on both paths: a **fresh installation** (001–004 against a cluster created from nothing) and an **upgrade** (004 applied onto a database holding exactly 001–003, which is staging's current state).
 

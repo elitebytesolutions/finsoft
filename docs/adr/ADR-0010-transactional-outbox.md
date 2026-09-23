@@ -93,13 +93,13 @@ Therefore **every consumer must be idempotent**, and this is a requirement on th
 
 | Consumer | Idempotency mechanism |
 |----------|----------------------|
-| Email / SMS | Deduplicate on `outbox.id`; a `sent_notifications` row keyed by it, inserted before send |
+| Email / SMS | Deduplicate on **`(tenant_id, topic, effect_key)`**; a `sent_notifications` row keyed by that, inserted before send. **Not `outbox.id`** — see [ERRATUM-001](ADR-0010-ERRATUM-001.md) erratum 3: a replay row carries a fresh id and would sail past a table keyed on it, turning replay into a silent double-send |
 | PDF generation | Deterministic object key from `(tenant_id, documentType, documentId, version)`; re-render overwrites the identical artefact |
 | FBR POS push | Send the invoice's own document number as the regulator-facing idempotency key; treat "already submitted" as success, not as an error |
-| Webhook | Send `Idempotency-Key: outbox.id`; publish it in the integration contract so receivers can deduplicate |
+| Webhook | Send `Idempotency-Key:` the **effect key**, not `outbox.id`; publish it in the integration contract so receivers can deduplicate. [ERRATUM-001](ADR-0010-ERRATUM-001.md) erratum 3 — a receiver deduplicating on the row id would accept a replay as a new request |
 | Cache invalidation | Naturally idempotent — invalidating twice is invalidating |
 
-The outbox row's `id` is the universal idempotency key and is stable across retries. Where an external system offers no idempotency facility, the consumer records its own attempt in PostgreSQL before acting and checks that record on retry, accepting a narrow duplicate-send window in exchange for never losing the effect. **Losing a side effect is worse than duplicating one**, and the design is tuned in that direction deliberately.
+The **effect key** — `(tenant_id, topic, effect_key)` — is the universal idempotency key, and it is stable across retries **and across replays**. [ERRATUM-001](ADR-0010-ERRATUM-001.md) erratum 3 corrects this sentence, which previously named `outbox.id`: that is stable across retries and **not** across replays, because a replay is a new row with a fresh id. Keying on the row id therefore makes replay a silent double-send, which is the one failure worse than the audit loss the erratum set out to fix. Where an external system offers no idempotency facility, the consumer records its own attempt in PostgreSQL before acting and checks that record on retry, accepting a narrow duplicate-send window in exchange for never losing the effect. **Losing a side effect is worse than duplicating one**, and the design is tuned in that direction deliberately.
 
 Ordering is per-topic best-effort, not guaranteed. A consumer that needs ordering derives it from `occurred_at` and the business document, not from dispatch sequence.
 

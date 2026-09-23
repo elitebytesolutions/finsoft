@@ -43,6 +43,8 @@ interface Row {
   last_error: string | null
   payload: unknown
   effect_key: string
+  acknowledged_at: Date | null
+  acknowledged_by: string | null
 }
 
 let tenant: TenantFixture
@@ -149,8 +151,14 @@ const ack = (id: string, lease: string): Promise<number> =>
  *
  * Note what is NOT available: ageing `claimed_at` backwards by hand. That
  * would be an IN_FLIGHT -> IN_FLIGHT update, which the transition trigger
- * refuses — correctly, since a lease that can be extended in place is not a
- * fence. The test has to use the same door the reaper does.
+ * refuses. The test has to use the same door the reaper does.
+ *
+ * The reason that transition is excluded is NOT "a lease that can be extended
+ * is not a fence" — a renewal that ROTATES the token is still a fence, since
+ * the holder must present the current token to get the next one. It is
+ * excluded because rotation-on-renewal adds a failure mode of its own: the
+ * renewal commits, the dispatcher dies before recording the new token, and
+ * the live token is held by nobody. See 004's transition-graph header.
  *
  * `id` is a test-only predicate. The production statement sweeps every
  * expired lease for the tenant, which is right in production and wrong here:
@@ -368,6 +376,73 @@ describe('state transitions: invalid ones are rejected through direct SQL', () =
     ).rejects.toThrow(/FAILED is terminal/)
   })
 
+  it('acknowledgement is an APPEND: it cannot be withdrawn', async () => {
+    /*
+     * The review found this: the FAILED branch froze status, attempts,
+     * reclaims, claimed_at, lease_id, available_at and last_error — but not
+     * the acknowledgement columns, which is the point of the branch. So
+     * `SET acknowledged_at = NULL, acknowledged_by = NULL` succeeded: status
+     * still FAILED, no frozen column moved, outbox_acknowledged_is_paired
+     * satisfied by both being NULL.
+     *
+     * The row then silently re-entered outbox_unacknowledged_failed_idx, the
+     * alert re-armed, and the record of who took responsibility was gone.
+     */
+    const row = await failed()
+    await acknowledge(row.id)
+
+    await expect(
+      asTenant(
+        tenant,
+        `UPDATE outbox SET acknowledged_at = NULL, acknowledged_by = NULL WHERE id = $1`,
+        [row.id],
+      ),
+    ).rejects.toThrow(/acknowledgement is an append/)
+
+    const after = await read(row.id)
+    expect(after?.acknowledged_at, 'the acknowledgement survives').not.toBeNull()
+    expect(after?.acknowledged_by).toBe(tenant.ownerId)
+  })
+
+  it('nor reassigned to someone else', async () => {
+    /*
+     * A SECOND user of the same tenant, because the composite foreign key
+     * requires one and reassigning to the SAME user is not a reassignment:
+     * `IS DISTINCT FROM` is false and the guard correctly says nothing. The
+     * first version of this test did exactly that and passed vacuously.
+     */
+    const row = await failed()
+    await acknowledge(row.id)
+
+    const second = await asTenant<{ id: string }>(
+      tenant,
+      `INSERT INTO users (tenant_id, email, full_name, status, created_by, updated_by)
+       VALUES ($1, $2, 'Second Approver', 'INVITED', $3, $3) RETURNING id`,
+      [tenant.tenantId, `second.${unique().toLowerCase()}@example.test`, tenant.ownerId],
+    ).then((r) => r[0]?.id)
+
+    await expect(
+      asTenant(tenant, `UPDATE outbox SET acknowledged_by = $2 WHERE id = $1`, [row.id, second]),
+    ).rejects.toThrow(/acknowledgement is an append/)
+
+    expect((await read(row.id))?.acknowledged_by, 'the original approver stands').toBe(
+      tenant.ownerId,
+    )
+  })
+
+  it('but a FAILED row can still be acknowledged the first time', async () => {
+    /*
+     * The positive control. Without it the two assertions above would pass
+     * against a trigger that rejected every acknowledgement, which would
+     * leave the alert armed forever — the failure the column exists to fix.
+     */
+    const row = await failed()
+    await acknowledge(row.id)
+    const after = await read(row.id)
+    expect(after?.acknowledged_at).not.toBeNull()
+    expect(after?.status).toBe('FAILED')
+  })
+
   it('refuses to acknowledge a row that has not failed', async () => {
     /*
      * Two mechanisms refuse this and the ORDER matters for the message a
@@ -386,6 +461,28 @@ describe('state transitions: invalid ones are rejected through direct SQL', () =
     ).rejects.toThrow(/illegal transition|outbox_acknowledged_only_when_failed/)
   })
 })
+
+/** Drive a row to FAILED through the legal path, so it can be acknowledged. */
+async function failed(): Promise<Row> {
+  const row = await enqueue()
+  const lease = await claim(row.id)
+  await asTenant(
+    tenant,
+    `UPDATE outbox SET status='FAILED', claimed_at=NULL, lease_id=NULL,
+            last_error='consumer gave up' WHERE id=$1 AND lease_id=$2`,
+    [row.id, lease],
+  )
+  const done = await read(row.id)
+  if (!done) throw new Error('row vanished')
+  return done
+}
+
+const acknowledge = (id: string): Promise<unknown[]> =>
+  asTenant(
+    tenant,
+    `UPDATE outbox SET acknowledged_at = now(), acknowledged_by = $2 WHERE id = $1`,
+    [id, tenant.ownerId],
+  )
 
 /* ==================================================================== *
  * 3. ATTEMPT CAPS
@@ -653,6 +750,29 @@ describe('payload limit: rejected at the documented boundary', () => {
     await expect(enqueue(tenant, { payload })).rejects.toThrow(/outbox_payload_bounded/)
   })
 
+  it.each([' ', '   ', 'sale:S1 ', ' sale:S1', '\tsale:S1', 'sale:S1\n'])(
+    'REFUSES an effect_key that is blank, untrimmed or carries whitespace at an edge: %j',
+    async (effect_key) => {
+      /*
+       * The shape matters more than the length, because effect_key is what
+       * all of erratum 3 rests on. 'sale:S1 ' and 'sale:S1' would be two
+       * dedup slots for ONE effect.
+       *
+       * The tab and newline cases are why this is a regex rather than the
+       * `effect_key = btrim(effect_key)` the review proposed. Measured
+       * against the engine: BTRIM STRIPS SPACES ONLY, so a tab-prefixed key
+       * satisfies it and passes. A tab is exactly as invisible in a log line
+       * as a space, so the constraint names the whitespace CLASS.
+       */
+      await expect(enqueue(tenant, { effect_key })).rejects.toThrow(/outbox_effect_key_bounded/)
+    },
+  )
+
+  it('accepts an ordinary effect_key, so the rule is not simply blocking everything', async () => {
+    const row = await enqueue(tenant, { effect_key: 'sale:S1:invoice-email' })
+    expect(row.effect_key).toBe('sale:S1:invoice-email')
+  })
+
   it('still REFUSES a payload that is not an object', async () => {
     for (const notAnObject of ['null', '42', '"text"', '[1,2,3]']) {
       await expect(
@@ -766,6 +886,25 @@ describe('tenant enumeration: scoped, bounded, and nobody starves', () => {
   })
 
   it('the claim query uses the partial index rather than a sequential scan', async () => {
+    /*
+     * Against a POPULATED table, because a plan assertion over an empty one
+     * proves nothing: the planner picks a sequential scan for a handful of
+     * rows whatever the indexes say, and would do so again if the index were
+     * dropped. 2000 rows is enough to make the index the cheaper option here
+     * while keeping the test fast; the real bar is the dispatcher PR's
+     * EXPLAIN (ANALYZE, BUFFERS) against 10^6 rows across 50+ tenants.
+     */
+    await asTenant(
+      tenant,
+      `INSERT INTO outbox (tenant_id, topic, payload, effect_key, occurred_at,
+                           correlation_id, created_by, updated_by)
+       SELECT $1, 'BULK_PROBE', '{"n":1}'::jsonb, 'BULK-' || g, now(),
+              gen_random_uuid(), $2, $2
+         FROM generate_series(1, 2000) AS g`,
+      [tenant.tenantId, tenant.ownerId],
+    )
+    await asTenant(tenant, `ANALYZE outbox`)
+
     const plan = await asTenant<{ 'QUERY PLAN': string }>(
       tenant,
       `EXPLAIN SELECT id FROM outbox WHERE status = 'PENDING' ORDER BY available_at, id LIMIT 50`,

@@ -318,7 +318,7 @@ module.exports = {
      * `doNotFollow`, which keeps the node and its edges and merely stops
      * traversing into it.
      *
-     * `tools/depcruise-negative-control.spec.ts` fails if either rule stops
+     * `tests/security/depcruise-negative-control.spec.ts` fails if either rule stops
      * matching its probe, so a third occurrence is a red test, not a clean
      * report.
      */

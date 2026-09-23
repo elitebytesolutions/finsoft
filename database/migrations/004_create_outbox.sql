@@ -67,8 +67,19 @@
 -- third draft before it is committed at all — as happened, twice, when the
 -- acceptance suite found the missing REVOKE and an off-by-one in the reaper
 -- predicate — is one draft being written, not three drafts being shipped.
--- Stated because the distinction is exactly the kind that erodes: once this
--- file is committed, the next correction is 005.
+-- Stated because the distinction is exactly the kind that erodes.
+--
+-- RULED, after the second review accepted this draft conditionally: the two
+-- amendments it required — acknowledgement being an append rather than a
+-- toggle, and a shape on effect_key — land HERE, in draft 3, and are not a
+-- fourth revision. The Database Guardian applied its own condition to a file
+-- it had just read at this commit. The bright line is MERGE, not commit: a
+-- draft is shipped when it lands on a branch someone deploys from, and
+-- correcting a review finding before that is finishing a draft rather than
+-- starting another.
+--
+-- After merge, the next correction is 005. No further amendment to this file
+-- is available on this branch without a new Database Guardian disposition.
 --
 -- ---------------------------------------------------------------------------
 -- What the second review changed, and why each one mattered
@@ -276,8 +287,28 @@ CREATE TABLE outbox (
   CONSTRAINT outbox_topic_shape
     CHECK (topic ~ '^[A-Z][A-Z0-9]*(_[A-Z0-9]+)*$' AND length(topic) BETWEEN 3 AND 64),
 
+  -- Shape, not only length. This column is what all of erratum 3 rests on,
+  -- and it was the one load-bearing text column here with no shape — `topic`,
+  -- which matters less, gets a full regex.
+  --
+  -- Why it matters: 'sale:S1 ' and 'sale:S1' would be two dedup slots for ONE
+  -- effect, so two enqueuers disagreeing by a trailing space produce a silent
+  -- double-send — through the exact mechanism erratum 3 added to prevent
+  -- silent double-sends. ' ' was accepted before this line existed.
+  --
+  -- A regex rather than `effect_key = btrim(effect_key)`, which was the form
+  -- the review proposed. Measured: BTRIM STRIPS SPACES ONLY. A tab-prefixed
+  -- key satisfies `btrim(x) = x` and passes, and a tab is every bit as
+  -- invisible in a log line as a space. The class is whitespace, not the
+  -- space character, so the constraint names the class.
+  --
+  -- Reads as: no leading or trailing whitespace, no control characters
+  -- anywhere, and a single-character key is legal.
   CONSTRAINT outbox_effect_key_bounded
-    CHECK (length(effect_key) BETWEEN 1 AND 200),
+    CHECK (
+      length(effect_key) BETWEEN 1 AND 200
+      AND effect_key ~ '^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$'
+    ),
 
   -- NOT NULL alone admits 'null'::jsonb, a bare scalar and an array, all of
   -- which satisfy the column and none of which is a payload.
@@ -425,7 +456,7 @@ COMMENT ON COLUMN outbox.payload IS
 COMMENT ON COLUMN outbox.effect_key IS
   'Identity of the BUSINESS EFFECT, not of this row. The consumer deduplicates on (tenant_id, topic, effect_key); a replay carries its original value unchanged, so a fresh id cannot bypass deduplication.';
 COMMENT ON COLUMN outbox.claimed_at IS
-  'When a dispatcher claimed the row. LEASE INTERVAL: 5 minutes is the contract value, and the dispatcher MUST read it from configuration rather than hard-coding it — a crash test that cannot shorten the lease cannot run in under five minutes.';
+  'When a dispatcher claimed the row. LEASE INTERVAL: 5 minutes is the contract value, and the dispatcher MUST read it from configuration rather than hard-coding it — a crash test that cannot shorten the lease cannot run in under five minutes. ORDERING INVARIANT: the lease interval must exceed the maximum per-topic consumer timeout WITH MARGIN, and the dispatcher asserts this at startup over its registered consumers and refuses to start otherwise. Without it a merely SLOW consumer loses its row to the reaper every time, burns the reclaim budget and lands on FAILED carrying "lease expired 5 times without an ack" — a poison-message verdict on a consumer that works, which is the diagnostic confusion the separate reclaims counter exists to prevent.';
 COMMENT ON COLUMN outbox.lease_id IS
   'The lease fence. Regenerated on every claim INCLUDING every reclaim. Every ack, failure and reclaim carries WHERE id = $1 AND lease_id = $2 and asserts rowcount = 1. A stale dispatcher updates nothing.';
 COMMENT ON COLUMN outbox.attempts IS
@@ -461,10 +492,28 @@ COMMENT ON COLUMN outbox.version IS
 --   IN_FLIGHT -> FAILED       either cap reached
 --   FAILED    -> FAILED       acknowledgement, the ONE append to a terminal row
 --
--- DONE is absolutely terminal. FAILED accepts acknowledgement and nothing
--- else. PENDING -> PENDING is rejected too: rescheduling a row by hand is not
--- a thing the dispatcher does, and allowing it would reopen the backoff field
--- to arbitrary writes.
+-- DONE is absolutely terminal. FAILED accepts acknowledgement ONCE and
+-- nothing else. PENDING -> PENDING is rejected too: rescheduling a row by
+-- hand is not a thing the dispatcher does, and allowing it would reopen the
+-- backoff field to arbitrary writes.
+--
+-- IN_FLIGHT -> IN_FLIGHT is rejected, which means A LEASE CANNOT BE EXTENDED
+-- IN PLACE. Note the reason, because the obvious one is wrong: "a lease that
+-- can be extended is not a fence" is NOT true. A renewal that ROTATES the
+-- token — `SET lease_id = gen_random_uuid() WHERE id = $1 AND lease_id = $2`,
+-- rowcount asserted — is still a fence, because the holder must present the
+-- current token to get the next one. That is the standard fencing-token
+-- renewal and it would be admissible.
+--
+-- It is excluded on narrower grounds: rotation-on-renewal adds a failure mode
+-- of its own. The renewal commits, the dispatcher dies before recording the
+-- new token, and the live token is held by nobody — so the row waits out the
+-- full lease anyway. Complexity paid for a narrow case, worst case unchanged.
+--
+-- IF RENEWAL IS EVER NEEDED, rotation-on-renewal is the sanctioned shape.
+-- Recorded here so the next person builds the fenced version rather than
+-- inventing a non-rotating one. The ordering invariant on claimed_at is what
+-- makes renewal unnecessary today.
 -- ---------------------------------------------------------------------------
 CREATE FUNCTION outbox_enforce_transition() RETURNS trigger
 LANGUAGE plpgsql
@@ -500,6 +549,26 @@ BEGIN
   IF OLD.status = 'FAILED' THEN
     -- The one legal append: a human acknowledging the row. Everything else
     -- about it is frozen.
+    -- And an append is not a toggle. Without this, an already-acknowledged
+    -- row accepts `SET acknowledged_at = NULL, acknowledged_by = NULL`:
+    -- status is still FAILED, no frozen column moves, and
+    -- outbox_acknowledged_is_paired is satisfied by both being NULL. The row
+    -- silently re-enters outbox_unacknowledged_failed_idx, the alert re-arms,
+    -- and the record of who took responsibility is gone. Reassigning it to a
+    -- different user passed too.
+    --
+    -- Structurally the same defect that made draft 2 unacceptable: a comment
+    -- and an error string describing a guarantee the code did not quite give.
+    IF OLD.acknowledged_at IS NOT NULL
+   AND (NEW.acknowledged_at IS DISTINCT FROM OLD.acknowledged_at
+     OR NEW.acknowledged_by IS DISTINCT FROM OLD.acknowledged_by)
+    THEN
+      RAISE EXCEPTION
+        'outbox %: acknowledgement is an append. Once recorded it cannot be withdrawn or reassigned',
+        OLD.id
+        USING ERRCODE = 'check_violation';
+    END IF;
+
     IF NEW.status <> 'FAILED'
     OR NEW.attempts     IS DISTINCT FROM OLD.attempts
     OR NEW.reclaims     IS DISTINCT FROM OLD.reclaims
