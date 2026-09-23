@@ -54,6 +54,17 @@ COPY --from=build /app/package.json /app/package-lock.json ./
 COPY --from=build /app/apps apps
 COPY --from=build /app/packages packages
 
+# The migration runner reads database/migrations from disk, so the SQL has to
+# be in the image — the image is what runs `migrate` on staging, as a one-shot
+# (infrastructure/staging/compose.yaml). Omitting it produced
+# "ENOENT: scandir '/app/database/migrations'" at deploy time, after every
+# gate had passed, because nothing before that point runs migrations FROM the
+# image.
+#
+# `database/tests` is excluded by .dockerignore, so this is the migrations,
+# their checksums, fixtures and seeds — not the test suite.
+COPY --from=build /app/database database
+
 # Production dependencies only: the build stage's SWC, Nest CLI and vitest do
 # not reach the final image. Run after the source is in place so the workspace
 # graph resolves.
