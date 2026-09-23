@@ -48,6 +48,25 @@ export async function openDatabase(target?: PoolTarget): Promise<void> {
  * test because a test proves the test's configuration; this proves the
  * running process's.
  *
+ * ── It is NECESSARY, NOT SUFFICIENT ─────────────────────────────────────
+ *
+ * Passing this does not mean tenant isolation holds. It means one specific,
+ * catastrophic misconfiguration is absent. Isolation additionally requires
+ * that the app role does not OWN the tenant-owned tables, that it has no
+ * membership of a role which does, that every such table has RLS both
+ * ENABLED and FORCED, and that each policy carries a non-null WITH CHECK —
+ * none of which this function looks at.
+ *
+ * Those are asserted where they can be asserted properly, against a live
+ * schema, and they are not replaced by this:
+ *
+ *   database/tests/roles.spec.ts                 role attributes, ownership
+ *   database/tests/rls.spec.ts                   ENABLE + FORCE + policies
+ *   tests/security/tenant-isolation*.spec.ts     behaviour, adversarially,
+ *                                                serial and concurrent
+ *
+ * Do not let this guard's presence justify weakening any of them.
+ *
  * Deliberately NOT applied to the migration runner: `finsoft_migration` holds
  * `BYPASSRLS` by design (ADR-0004:59, NON_NEGOTIABLES rule 21) and owns the
  * tables. It uses its own client and never this pool.

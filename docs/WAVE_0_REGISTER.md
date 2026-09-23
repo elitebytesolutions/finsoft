@@ -240,13 +240,21 @@ Every component exists and has been deployed. The remaining word is **automatica
 
 ---
 
-## FND-016 · *not reconstructable*
+## FND-016 · *candidate: design-system reconciliation*
 
-**Status: unknown.**
+**Status: unknown — awaiting restatement or retirement.**
 
-This number was used in planning conversation and its contract was never committed. It cannot be recovered from the repository, and inventing a scope for it now would be fabrication.
+The number was used in planning conversation and its contract was never committed, so it cannot be recovered from the repository.
 
-**Action.** Product Owner to restate the contract, or retire the number.
+**Candidate description, not an authoritative contract:** reconciling `packages/ui` and the page specifications in `docs/design-system/` against what `apps/web` actually renders.
+
+That description comes from recollection of a planning discussion. It is recorded so the intent is not lost, and it is explicitly **not** a scope anyone should build against — the register would otherwise be inventing a contract and then reporting progress against its own invention.
+
+**Action required.** Product Owner to either restate it as a real contract with acceptance criteria, or retire the number. Wave 0 should not close with a task in this state.
+
+| Decision | Status |
+|---|---|
+| Restate or retire | ☐ not recorded |
 
 ---
 
@@ -263,9 +271,17 @@ This number was used in planning conversation and its contract was never committ
 
 ---
 
-## FND-018 · *not reconstructable*
+## FND-018 · *candidate: CLAUDE.md correction*
 
-**Status: unknown.** As FND-016.
+**Status: unknown — awaiting restatement or retirement.** As FND-016.
+
+**Candidate description, not an authoritative contract:** correcting `CLAUDE.md` where it has drifted from the repository — for instance its "Current state" section, which still reads *"Wave 0 — factory foundation. The constitution exists; the monorepo does not yet."* That sentence is now plainly false, and CLAUDE.md is loaded into every agent's context, so the drift misinforms every session that starts.
+
+Whether that is what FND-018 meant is not established.
+
+| Decision | Status |
+|---|---|
+| Restate or retire | ☐ not recorded |
 
 ---
 
@@ -287,6 +303,8 @@ Wave 0's exit criterion asks for "one test of each kind". `tests/reconciliation/
 The rationale is the plan's own: *"build the factory before building the product."* Building a posting engine early to satisfy a foundation checklist inverts that.
 
 **Reconciliation is not marked delivered.** It is deferred, pending this approval.
+
+**A recommended disposition has been offered:** approve the deferral to the Wave 5/6 contracts above, with no claim that reconciliation coverage exists today. That is a recommendation awaiting signature — it does not tick the box, and the decision remains open.
 
 | Approval | Status |
 |---|---|
