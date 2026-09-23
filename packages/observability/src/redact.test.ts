@@ -200,3 +200,104 @@ describe('error sanitising (layer 3)', () => {
     expect(out.message).toBe('just a string')
   })
 })
+
+describe('credentials, wherever they hide', () => {
+  /*
+   * A URL is one credential location, not the only one — and "any scheme" is
+   * a claim a handful of examples cannot prove, so the schemes are tabulated.
+   *
+   * Rule 20 is about SECRETS. Topology (host, port, database, role) is not a
+   * secret: it is stripped from the structured error fields, where it is
+   * machine-readable and easy to harvest in bulk, and kept in free text
+   * because a message reading "could not connect to [redacted]" helps nobody
+   * at 3am. The diagnostic codes are always preserved for the same reason.
+   */
+
+  it.each([
+    ['postgresql', 'postgresql://finsoft_app:hunter2@db:5432/finsoft'],
+    ['postgres', 'postgres://u:p4ss@db/x'],
+    ['redis', 'redis://default:s3cr3t@cache:6379'],
+    ['rediss', 'rediss://default:s3cr3t@cache:6379'],
+    ['amqp', 'amqp://guest:guest@rabbit:5672'],
+    ['mongodb+srv', 'mongodb+srv://u:pw@cluster.example/db'],
+    ['https', 'https://user:pw@example.com/path'],
+    ['smtp', 'smtp://mailer:letmein@smtp.example:587'],
+    ['mysql', 'mysql://root:toor@db:3306/app'],
+  ])('removes the credential from a %s URL', (_scheme, url) => {
+    const out = redactValueShapes(url)
+    expect(out).toContain(REDACTED)
+    for (const secret of ['hunter2', 'p4ss', 's3cr3t', 'guest:guest', 'pw@', 'letmein', 'toor']) {
+      expect(out).not.toContain(secret)
+    }
+  })
+
+  it.each([
+    ['query parameter', 'https://api.example.com/v1?api_key=abc123xyz&page=2', 'abc123xyz'],
+    ['token query parameter', '/callback?access_token=zzz999&state=ok', 'zzz999'],
+    ['libpq connection string', 'host=db user=app password=hunter2 sslmode=require', 'hunter2'],
+    ['quoted libpq value', "host=db password='hun ter2' sslmode=require", 'hun ter2'],
+    ['signature parameter', 'GET /x?sig=deadbeefcafe&ts=1', 'deadbeefcafe'],
+  ])('removes a credential in a %s', (_label, input, secret) => {
+    const out = redactValueShapes(input)
+    expect(out, `${secret} survived`).not.toContain(secret)
+    expect(out).toContain(REDACTED)
+  })
+
+  it('keeps the key name, so the line still says which credential it was', () => {
+    expect(redactValueShapes('password=hunter2')).toBe(`password=${REDACTED}`)
+  })
+
+  it('preserves safe diagnostic codes', () => {
+    for (const diagnostic of [
+      'Error: ECONNREFUSED 10.0.0.5:5432',
+      'ETIMEDOUT after 2000ms',
+      'SQLSTATE 23505 duplicate key',
+      'GET /invoices?page=3 -> 200',
+      'at Socket.connect (net.js:1:1)',
+    ]) {
+      expect(redactValueShapes(diagnostic)).toBe(diagnostic)
+    }
+  })
+})
+
+describe('a credential anywhere in the error survives nothing', () => {
+  const DSN = 'postgresql://finsoft_app:hunter2@db.internal:5432/finsoft'
+
+  it('is removed from the message', () => {
+    const out = redactError(new Error(`connect failed: ${DSN}`)) as unknown as Record<
+      string,
+      string
+    >
+    expect(out.message).not.toContain('hunter2')
+  })
+
+  it('is removed from the STACK, not only the message', () => {
+    const error = new Error('connect failed')
+    error.stack = `Error: connect failed\n    at connect (${DSN})\n    at run (x.js:1:1)`
+
+    const out = redactError(error) as unknown as Record<string, string>
+    expect(out.stack, 'the stack leaked the password').not.toContain('hunter2')
+    // and the frames survive, because the stack is why the field is kept
+    expect(out.stack).toContain('at run')
+  })
+
+  it('is removed from a NESTED cause', () => {
+    const inner = new Error(`inner: password=hunter2`)
+    const outer = new Error('outer', { cause: inner })
+
+    expect(JSON.stringify(redactError(outer))).not.toContain('hunter2')
+  })
+
+  it('is removed from a cause two levels down', () => {
+    const deepest = new Error(`deepest: ${DSN}`)
+    const middle = new Error('middle', { cause: deepest })
+    const outer = new Error('outer', { cause: middle })
+
+    expect(JSON.stringify(redactError(outer))).not.toContain('hunter2')
+  })
+
+  it('is removed from an arbitrary attached property', () => {
+    const error = Object.assign(new Error('failed'), { detail: `retry with ${DSN}` })
+    expect(JSON.stringify(redactError(error))).not.toContain('hunter2')
+  })
+})

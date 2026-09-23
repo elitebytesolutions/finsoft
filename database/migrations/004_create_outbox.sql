@@ -22,6 +22,49 @@
 -- obvious from the name.
 --
 -- ---------------------------------------------------------------------------
+-- Revision history, before release
+--
+-- This file was REVISED after a first draft, and the record belongs here
+-- rather than only in a commit message.
+--
+-- The first draft was applied to the disposable local TEST database by the
+-- integration suite, which migrates on every run. It never reached the
+-- development cluster, never reached staging, and was never part of an
+-- accepted release. Rolling that test database back does not make it
+-- "unapplied" — it happened, and this note is the record that it did.
+--
+-- Revising it was therefore reasonable: an unpublished migration that has not
+-- reached a persistent or shared environment is still editable, and the
+-- immutability rule (ADR-0013) binds from the moment it is released, not from
+-- the moment a throwaway container has seen it.
+--
+-- What changed, after database-guardian review rejected the first draft:
+--
+--   * claimed_at plus a reaper index. IN_FLIGHT was a TERMINAL state: mark,
+--     commit, crash, and the row was stranded forever — invisible to the
+--     claim query, to the pending index and to the oldest-pending alert. That
+--     contradicted ADR-0010's redelivery guarantee outright.
+--   * the IMPLEMENTATION §11 mandatory column set, which was missing entirely
+--     and would have failed the schema suite.
+--   * composite authorship foreign keys on (tenant_id, …), because a
+--     single-column REFERENCES users(id) is checked with row security OFF and
+--     would accept another tenant's user as the author.
+--   * payload constrained to a JSON object; NOT NULL alone admitted
+--     'null'::jsonb, a bare scalar and an array.
+--   * topic no longer requires an underscore, so PING and RESYNC are legal
+--     without a migration to allow them.
+--   * correlation_id as uuid rather than text, which rejects the empty string
+--     that NOT NULL admits.
+--   * last_error bounded, and the "sanitised" claim tied to a named redactor.
+--   * the two ADR-0010 divergences recorded in place, so a later reader does
+--     not restore them.
+--   * the partition key recorded, with the deferral stated.
+--
+-- The final version below is verified against a FRESHLY RECREATED test
+-- database, not against one that had seen the earlier draft.
+-- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
 -- Lock footprint
 --
 -- The `tenant_id` foreign key takes SHARE ROW EXCLUSIVE on `tenants` for the

@@ -128,11 +128,50 @@ const BEARER_PATTERN = /\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi
  */
 const URL_CREDENTIALS_PATTERN = /\b([a-z][a-z0-9+.-]*):\/\/[^\s:@/]+:[^\s@/]+@/gi
 
+/*
+ * A secret as a key=value pair in free text. Two shapes, one pattern:
+ *
+ *   a query parameter      ...?token=abc123&retry=1
+ *   a libpq connection     host=db user=finsoft_app password=hunter2
+ *
+ * Both are credential locations a URL-only pattern misses entirely, and the
+ * libpq keyword/value form is what `pg` itself accepts and what appears in
+ * PGPASSWORD-adjacent diagnostics.
+ *
+ * The VALUE is replaced and the KEY is kept, so the line still says which
+ * credential was involved — "password=[redacted]" is diagnosable,
+ * "[redacted]" is not.
+ */
+const KEY_VALUE_SECRET_PATTERN =
+  /\b(password|passwd|pwd|secret|client_secret|token|access_token|refresh_token|id_token|api[_-]?key|apikey|auth|authorization|signature|sig|sessionid|session_token)\s*=\s*("[^"]*"|'[^']*'|[^\s&;#,)]+)/gi
+
+/**
+ * Value-shape redaction, applied to every string that reaches the logger —
+ * message, interpolation argument, nested object value, error message and
+ * stack frame alike.
+ *
+ * Policy, checked against NON_NEGOTIABLES rule 20 ("never in a log line")
+ * rather than chosen by regex convenience:
+ *
+ *   CREDENTIALS are removed from the entire emitted line, wherever they
+ *   appear — message, stack, nested `cause`, query parameter, connection
+ *   string, any scheme.
+ *
+ *   TOPOLOGY — host, port, database name, role — is not a credential. It is
+ *   removed from the structured error FIELDS, where it is machine-readable
+ *   and trivial to harvest in bulk, and kept in free text, because
+ *   "could not connect to [redacted]" tells an on-call engineer nothing and
+ *   a redaction that destroys the diagnosis is one that gets switched off.
+ *
+ *   SAFE DIAGNOSTIC CODES — ECONNREFUSED, ETIMEDOUT, SQLSTATE — are always
+ *   preserved. They are the reason the line exists.
+ */
 export function redactValueShapes(value: string): string {
   return value
     .replace(JWT_PATTERN, REDACTED)
     .replace(BEARER_PATTERN, REDACTED)
     .replace(URL_CREDENTIALS_PATTERN, `$1://${REDACTED}@`)
+    .replace(KEY_VALUE_SECRET_PATTERN, `$1=${REDACTED}`)
 }
 
 /*

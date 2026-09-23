@@ -15,5 +15,8 @@
     "react": "^19",
     "react-dom": "^19",
     "lucide-react": "*"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
   }
 }

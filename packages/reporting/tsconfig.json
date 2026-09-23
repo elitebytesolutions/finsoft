@@ -1,0 +1,10 @@
+{
+  // Inherits erasableSyntaxOnly from tsconfig.packages.json: this package
+  // ships TypeScript SOURCE and is loaded by Node's native type stripping,
+  // which erases types but does not transform. See tsconfig.packages.json.
+  "extends": "../../tsconfig.packages.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true
+  },
+  "include": ["src/**/*.ts"]
+}

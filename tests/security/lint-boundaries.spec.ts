@@ -239,3 +239,101 @@ describe('services log through the logger, not console (ADR-0016)', () => {
     expect(matching(messages, 'Unexpected console statement')).toHaveLength(0)
   })
 })
+
+describe('strip-only safety, per package (ADR-0013, Node type stripping)', () => {
+  /*
+   * Node's type stripping ERASES types; it does not TRANSFORM. A parameter
+   * property, an enum or a namespace needs a transformation, so a module
+   * containing one is unloadable by the runtime that ships — while
+   * compiling, linting and passing every Vitest run, because Vitest
+   * transpiles. That is exactly how a parameter property in BaseRepository
+   * survived 200 tests.
+   *
+   * These rules were silently inert everywhere except packages/database.
+   * ESLint flat config REPLACES a rule's options between blocks rather than
+   * merging them, and a later `**` block dropped all three selectors.
+   * packages/database survived only because it sat in that block's `ignores`
+   * — and the one negative control that existed tested packages/database,
+   * so the harness certified the single package where the rule still worked.
+   *
+   * Hence: every package is probed by name. A per-package table is the only
+   * shape that could have caught this.
+   */
+
+  const STRIPPED = [
+    'packages/validation/src/x.ts',
+    'packages/database/src/x.ts',
+    'packages/observability/src/x.ts',
+    'packages/shared-types/src/x.ts',
+    'packages/accounting-kernel/src/x.ts',
+    'packages/inventory-kernel/src/x.ts',
+    'packages/auth/src/x.ts',
+    'packages/permissions/src/x.ts',
+    'packages/reporting/src/x.ts',
+    'packages/ui/src/x.ts',
+    // Runs `node apps/worker/src/main.ts` directly in production.
+    'apps/worker/src/x.ts',
+  ]
+
+  const FORBIDDEN = {
+    'a parameter property': 'export class A { constructor(private readonly b: string) {} }',
+    'an enum': 'export enum E { A, B }',
+    'a namespace': 'export namespace N { export const a = 1 }',
+  }
+
+  for (const [label, code] of Object.entries(FORBIDDEN)) {
+    it.each(STRIPPED)(`rejects ${label} in %s`, async (filePath) => {
+      const messages = await messagesFor(filePath, code)
+      expect(
+        matching(messages, 'strip-only'),
+        `${filePath} accepted ${label}; it would be unloadable at runtime`,
+      ).not.toHaveLength(0)
+    })
+  }
+
+  it('allows all three in apps/api, which is built with SWC', async () => {
+    /*
+     * The other half of the control. apps/api does NOT extend
+     * tsconfig.packages.json, because NestJS dependency injection needs
+     * emitDecoratorMetadata and parameter properties — a rule that banned
+     * them there would ban the framework.
+     */
+    const messages = await messagesFor(
+      'apps/api/src/thing.ts',
+      'export class A { constructor(private readonly b: string) {} }',
+    )
+    expect(matching(messages, 'strip-only')).toHaveLength(0)
+  })
+
+  it('leaves valid erasable TypeScript alone', async () => {
+    /*
+     * A rule that rejected everything would satisfy every case above and
+     * stop the packages compiling. This is the case that proves it
+     * discriminates.
+     */
+    const erasable = `
+      export interface Shape { readonly a: string }
+      export type Kind = 'x' | 'y'
+      export const KINDS = { X: 'x', Y: 'y' } as const
+      export class Good {
+        private readonly b: string
+        constructor(b: string) {
+          this.b = b
+        }
+        get value(): string {
+          return this.b
+        }
+      }
+      export function f(v: unknown): v is Shape {
+        return typeof v === 'object'
+      }
+    `
+    for (const filePath of STRIPPED) {
+      const messages = await messagesFor(filePath, erasable)
+      expect(
+        matching(messages, 'strip-only'),
+        `${filePath} rejected valid erasable code`,
+      ).toHaveLength(0)
+    }
+  })
+})

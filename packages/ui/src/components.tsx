@@ -163,7 +163,17 @@ export function Modal({
         ]
         if (!focusable.length) return
         const first = focusable[0],
-          last = focusable.at(-1)!
+          last = focusable.at(-1)
+        /*
+         * A dialog can legitimately contain nothing focusable — an empty
+         * state, a spinner, a message. There is then nothing to trap, and
+         * without this guard Tab threw a TypeError on `first.focus()`.
+         *
+         * Caught the moment packages/ui was first typechecked: it had no
+         * tsconfig and no typecheck script, so `--workspaces --if-present`
+         * skipped it and nothing compiler-checked this file at all.
+         */
+        if (!first || !last) return
         if (e.shiftKey && document.activeElement === first) {
           e.preventDefault()
           last.focus()

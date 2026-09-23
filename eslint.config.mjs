@@ -130,6 +130,51 @@ const invariantSyntax = [
  * block need these, so they are composed into each rather than written twice
  * and drifting apart.
  */
+/*
+ * Node's native type stripping ERASES types; it does not TRANSFORM. Anything
+ * needing a transformation cannot be loaded by the runtime that ships.
+ *
+ * Declared as an array rather than inline because ESLint flat config REPLACES
+ * a rule's options between blocks instead of merging them. Inline, these
+ * three selectors were silently dropped for every package except
+ * packages/database — see the block that composes them below.
+ */
+/*
+ * apps/ * build no queries. ADR-0013's second import boundary.
+ *
+ * Named, like the others, so it can be COMPOSED into the worker's block
+ * below instead of being replaced by it.
+ */
+const appsQuerySyntax = [
+  {
+    selector:
+      'CallExpression[callee.property.name=/^(selectFrom|insertInto|updateTable|deleteFrom|replaceInto|with)$/]',
+    message:
+      'ARCHITECTURE §5 / ADR-0013: apps/** contains no query construction. Receiving a ' +
+      'transaction handle through a callback does not make this the data layer. Put the ' +
+      'query behind a named export in packages/database and call that.',
+  },
+]
+
+const stripOnlySyntax = [
+  {
+    selector: 'TSParameterProperty',
+    message:
+      'Node strip-only mode cannot load a parameter property. Declare the field and ' +
+      'assign it in the constructor body — packages/** is executed as TypeScript.',
+  },
+  {
+    selector: 'TSEnumDeclaration',
+    message:
+      'Node strip-only mode cannot load an enum. Use a const object with `as const` ' +
+      'and a derived union type.',
+  },
+  {
+    selector: 'TSModuleDeclaration[kind="namespace"]',
+    message: 'Node strip-only mode cannot load a namespace. Use a module.',
+  },
+]
+
 const connectionOwnershipSyntax = [
   {
     selector: 'CallExpression[callee.property.name=/^(transaction|startTransaction|connection)$/]',
@@ -220,26 +265,7 @@ export default tseslint.config(
   {
     files: ['packages/*/src/**/*.ts'],
     rules: {
-      'no-restricted-syntax': [
-        'error',
-        ...invariantSyntax,
-        {
-          selector: 'TSParameterProperty',
-          message:
-            'Node strip-only mode cannot load a parameter property. Declare the field and ' +
-            'assign it in the constructor body — packages/** is executed as TypeScript.',
-        },
-        {
-          selector: 'TSEnumDeclaration',
-          message:
-            'Node strip-only mode cannot load an enum. Use a const object with `as const` ' +
-            'and a derived union type.',
-        },
-        {
-          selector: 'TSModuleDeclaration[kind="namespace"]',
-          message: 'Node strip-only mode cannot load a namespace. Use a module.',
-        },
-      ],
+      'no-restricted-syntax': ['error', ...invariantSyntax, ...stripOnlySyntax],
     },
   },
 
@@ -281,6 +307,51 @@ export default tseslint.config(
   },
 
   /* ---------------------------------------------------------------- *
+   * Strip-only safety, RESTORED.
+   *
+   * The block above sets `no-restricted-syntax` for every TypeScript file,
+   * and ESLint flat config REPLACES a rule's options rather than merging
+   * them. That silently
+   * discarded the three strip-only selectors for every package except
+   * packages/database — which survived only because it is in that block's
+   * `ignores`.
+   *
+   * The consequence was not theoretical. `apps/worker` runs
+   * `node apps/worker/src/main.ts` directly under type stripping IN
+   * PRODUCTION, and `packages/validation` is loaded the same way by
+   * apps/api. An enum or a parameter property in either would compile, lint
+   * clean, pass every Vitest run — Vitest transpiles — and fail only when the
+   * runtime that ships first loaded the module. That is exactly how a
+   * parameter property in BaseRepository survived 200 tests.
+   *
+   * Composed, not replaced: this block restates all three arrays, because
+   * restating only the strip-only ones would drop the other two in turn —
+   * the same trap, one block later.
+   *
+   * apps/api is deliberately NOT here. It builds with SWC because NestJS
+   * dependency injection needs emitDecoratorMetadata and parameter
+   * properties, which is why its tsconfig does not extend
+   * tsconfig.packages.json.
+   * ---------------------------------------------------------------- */
+  {
+    files: ['packages/*/src/**/*.ts', 'apps/worker/src/**/*.ts'],
+    /*
+     * packages/database keeps the configuration it gets earlier: invariant +
+     * strip-only, and deliberately NOT connection ownership, because it is
+     * the package that owns connections.
+     */
+    ignores: ['packages/database/**'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        ...invariantSyntax,
+        ...connectionOwnershipSyntax,
+        ...stripOnlySyntax,
+      ],
+    },
+  },
+
+  /* ---------------------------------------------------------------- *
    * apps/** build no queries. ADR-0013's "two import boundaries".
    *
    * dependency-cruiser watches the module graph, and a transaction handle
@@ -295,20 +366,45 @@ export default tseslint.config(
    * ---------------------------------------------------------------- */
   {
     files: ['apps/**/*.ts', 'apps/**/*.tsx'],
-    ignores: ['apps/**/*.spec.ts', 'apps/**/*.test.ts'],
+    ignores: ['apps/**/*.spec.ts', 'apps/**/*.test.ts', 'apps/worker/**'],
     rules: {
       'no-restricted-syntax': [
         'error',
         ...invariantSyntax,
         ...connectionOwnershipSyntax,
-        {
-          selector:
-            'CallExpression[callee.property.name=/^(selectFrom|insertInto|updateTable|deleteFrom|replaceInto|with)$/]',
-          message:
-            'ARCHITECTURE §5 / ADR-0013: apps/** contains no query construction. Receiving a ' +
-            'transaction handle through a callback does not make this the data layer. Put the ' +
-            'query behind a named export in packages/database and call that.',
-        },
+        ...appsQuerySyntax,
+      ],
+    },
+  },
+
+  /* ---------------------------------------------------------------- *
+   * apps/worker — everything the block above applies, PLUS strip-only.
+   *
+   * Split out rather than folded in, because the two apps are compiled
+   * differently and the difference is load-bearing:
+   *
+   *   apps/api     built with SWC, because NestJS dependency injection
+   *                needs emitDecoratorMetadata and parameter properties.
+   *                Strip-only rules must NOT apply.
+   *   apps/worker  no build at all. Production runs
+   *                `node apps/worker/src/main.ts` directly under Node's
+   *                native type stripping, exactly as packages/ * do.
+   *
+   * Without this the worker had no strip-only protection whatsoever: an
+   * enum or a parameter property in it would compile, lint clean, pass
+   * every Vitest run — Vitest transpiles — and fail only when the
+   * container first loaded the module.
+   * ---------------------------------------------------------------- */
+  {
+    files: ['apps/worker/src/**/*.ts'],
+    ignores: ['apps/worker/**/*.spec.ts', 'apps/worker/**/*.test.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        ...invariantSyntax,
+        ...connectionOwnershipSyntax,
+        ...appsQuerySyntax,
+        ...stripOnlySyntax,
       ],
     },
   },

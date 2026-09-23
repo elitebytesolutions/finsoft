@@ -342,6 +342,9 @@ const validateStep = (step: number, d: Draft): Errors => {
 
 /* ------------------------------------------------------------------ fields */
 
+/* The grid cell is a div, not a label: `footer` carries controls that need their
+ * own label (the taxable checkbox), and a label nested inside a label is invalid
+ * HTML — it breaks the click target and inherits the column layout. */
 function Field({
   label,
   req,
@@ -349,6 +352,7 @@ function Field({
   error,
   children,
   full,
+  footer,
 }: {
   label: string
   req?: boolean
@@ -356,26 +360,30 @@ function Field({
   error?: string
   children: ReactNode
   full?: boolean
+  footer?: ReactNode
 }) {
   return (
-    <label className={full ? 'full' : undefined}>
-      <span className="ew-label">
-        {label}
-        {req && (
-          <span className="req" aria-hidden="true">
-            *
-          </span>
-        )}
-      </span>
-      {children}
-      {error ? (
-        <span className="ew-error" role="alert">
-          {error}
+    <div className={`ew-field${full ? ' full' : ''}`}>
+      <label className="ew-field-main">
+        <span className="ew-label">
+          {label}
+          {req && (
+            <span className="req" aria-hidden="true">
+              *
+            </span>
+          )}
         </span>
-      ) : hint ? (
-        <span className="ew-hint">{hint}</span>
-      ) : null}
-    </label>
+        {children}
+        {error ? (
+          <span className="ew-error" role="alert">
+            {error}
+          </span>
+        ) : hint ? (
+          <span className="ew-hint">{hint}</span>
+        ) : null}
+      </label>
+      {footer}
+    </div>
   )
 }
 
@@ -1228,7 +1236,20 @@ function CompensationStep({
             {ALLOWANCES.map((a) => {
               const c = d.components.find((x) => x.name === a.key)!
               return (
-                <Field key={a.key} label={`${a.key} (PKR)`}>
+                <Field
+                  key={a.key}
+                  label={`${a.key} (PKR)`}
+                  footer={
+                    <label className="ew-check">
+                      <input
+                        type="checkbox"
+                        checked={c.taxable}
+                        onChange={(ev) => setComponent(a.key, { taxable: ev.target.checked })}
+                      />
+                      Taxable
+                    </label>
+                  }
+                >
                   <div className="ew-prefixed ew-money">
                     <span className="ew-prefix">Rs</span>
                     <input
@@ -1240,14 +1261,6 @@ function CompensationStep({
                       }
                     />
                   </div>
-                  <label className="ew-check" style={{ marginTop: 'var(--sp-1)' }}>
-                    <input
-                      type="checkbox"
-                      checked={c.taxable}
-                      onChange={(ev) => setComponent(a.key, { taxable: ev.target.checked })}
-                    />
-                    Taxable
-                  </label>
                 </Field>
               )
             })}
