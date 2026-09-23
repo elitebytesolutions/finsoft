@@ -194,6 +194,40 @@ const connectionOwnershipSyntax = [
       'elsewhere is how a tenant ends up taken from a request instead of a verified claim.',
   },
   {
+    /*
+     * The SAME rule for a template literal, which is the form the codebase
+     * itself uses.
+     *
+     * A template literal's text is a TemplateElement, not a Literal, so the
+     * selector above missed:
+     *
+     *   sql`select set_config('app.tenant_id', ${t}, true)`
+     *
+     * That is character-for-character the shape of the sanctioned
+     * implementation in packages/database, and therefore exactly what
+     * someone copying it would write. The harness only ever exercised the
+     * double-quoted form, so it certified a rule that missed the realistic
+     * case.
+     */
+    selector: 'TemplateElement[value.raw=/app\\.tenant_id/]',
+    message:
+      'ADR-0004: packages/database is the only code that sets app.tenant_id — including ' +
+      'inside a template literal or an sql`` tag. Setting it elsewhere is how a tenant ends ' +
+      'up taken from a request instead of a verified claim.',
+  },
+  {
+    /*
+     * `<TenantTx>x`, the angle-bracket form. The TSAsExpression selector
+     * below catches `x as TenantTx` and not this one. The runtime WeakSet
+     * registry rejects a forged handle at the point of use either way; this
+     * catches it at build time, which is where a boundary violation belongs.
+     */
+    selector: 'TSTypeAssertion[typeAnnotation.typeName.name=/^(TenantTx|GlobalTx)$/]',
+    message:
+      'ADR-0013: a transaction handle is issued by withTenant or withGlobal, never asserted ' +
+      'into existence. The runtime registry will reject a forged handle.',
+  },
+  {
     selector: 'TSAsExpression[typeAnnotation.typeName.name=/^(TenantTx|GlobalTx)$/]',
     message:
       'ADR-0013: a brand is forgeable with `as`. Obtain the handle from withTenant or ' +

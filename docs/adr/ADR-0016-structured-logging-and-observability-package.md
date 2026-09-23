@@ -43,7 +43,9 @@ Three boundaries, and each is mechanically enforced rather than documented:
 | **`apps/web` may not log** | A server logger in a browser writes to a console nobody reads, and would drag `node:async_hooks` into a bundle | `web-is-ui-only`, extended |
 | **Observability imports no first-party package** | It is beneath everything that logs. A dependency here would be reachable from every layer that logs, making the logger a back door into it | `observability-imports-almost-nothing` (new) |
 
-**All three new or amended rules were observed to fire** against deliberately-violating probe files before being accepted, per this repository's standing rule that a rule which has never fired is a comment.
+**All three new or amended rules were observed to fire** against deliberately-violating probe files before being accepted, per this repository's standing rule that a rule which has never fired is a comment. That observation was made by hand, once; no depcruise negative-control harness exists to keep them honest, which is recorded as debt under Compliance.
+
+**The remaining packages may log, through this package only.** `packages/database`, `auth`, `permissions`, `reporting` and `validation` are beneath the modules but above the kernels, and the table above is silent on them. They are permitted — a connection pool that cannot report a failed connection is worse than one that can — but only via `@finsoft/observability`, never via `console`. `packages/validation` in practice should not need to: it is pure computation, and a validation failure is a thrown error, not a log line.
 
 **A kernel that cannot log is a deliberate cost, not an oversight.** The posting engine and the inventory kernel are where the most interesting failures happen. They surface them by throwing a typed domain error, which the application layer logs with full correlation. The alternative — a logger inside the kernel — buys convenience at the price of the boundary that keeps the kernels testable without a runtime.
 
@@ -64,12 +66,14 @@ Fixed choices, and the reasons they are not defaults:
 
 ### 4. Redaction is three layers, at one choke point
 
-Every log object passes through `redact()` in pino's `formatters.log`. There is no path to the output that skips it.
+Every log **object** passes through `redact()` in pino's `formatters.log`, and every log **message and interpolation argument** passes through `redactValueShapes()` in a `hooks.logMethod` hook.
+
+Both are needed, and the second was the late addition. `formatters.log` sees the merge object only — so ``logger.error(`auth failed: ${header}`)`` emitted the header verbatim, and that is precisely the line someone writes at 2am while debugging an auth problem. The third path, `.child()`, does not pass bindings through `formatters.log` at all; it is closed by the exported `Logger` type not declaring `.child`, so the unredacted logger cannot be reached from TypeScript. `childLogger()` is the sanctioned equivalent and redacts its bindings.
 
 | Layer | Catches | Misses — which is why the next layer exists |
 |---|---|---|
 | 1 · **Key name** | `password`, `token`, `authorization`, at any depth, matched after stripping non-alphanumerics so `access_token` and `accessToken` are the same | A secret under an innocent key name |
-| 2 · **Value shape** | Anything shaped like a JWT or a bearer credential, whatever the key is called, including inside a longer string | A value with no recognisable shape |
+| 2 · **Value shape** | A JWT or bearer credential, URL credentials in any scheme, and `key=value` secrets in free text — a query parameter or a libpq connection string — whatever the key is called and wherever in the string they sit | A value with no recognisable shape |
 | 3 · **Error sanitising** | `host`, `port`, `database`, `user`, `connectionString` on driver errors | — |
 
 Layer 3 exists because a `pg` connection error carries the full connection topology, which has neither a secret-sounding key name nor a token shape, so layers 1 and 2 both miss it. This is the same class of leak `apps/api/src/health/health.service.ts` already guards against in its public response.
@@ -96,7 +100,7 @@ It answers *"were these two requests the same session?"* — which is what corre
 Three controls, because a naming convention is not a control:
 
 1. `SessionCorrelationId` is a **branded type**, so a plain `string` session id is not assignable where one is expected.
-2. `asSessionCorrelationId()` — the only sanctioned way to rebuild one from storage — **throws** unless the value is a minted UUID. A raw session id routed here fails loudly instead of being logged.
+2. `asSessionCorrelationId()` — the only sanctioned way to rebuild one from storage — **throws unless the value is a UUID.** Stated precisely, because the looser reading is wrong: it validates *shape*, and it cannot know which process minted the value. A raw session id that is itself a UUID — the default for any `randomUUID()`-backed session store — passes. What actually keeps a raw session id out of a log line today is control 3. Closing the gap needs a minting format the guard can distinguish; it is recorded as debt under Compliance rather than claimed here.
 3. Redaction denies `sessionId`, `session`, `sid`, `sessionToken` and allow-lists `sessionCorrelationId` explicitly, since it contains the denied substring `session`.
 
 Until a session concept exists (ADR-0009, Wave 1), **no session identifier of any kind appears in a log line.**
@@ -146,16 +150,43 @@ A log line can be lost to a full disk, a dropped connection, a crashed sidecar o
 
 ## Compliance
 
-- **66 unit tests**, covering: denied keys at depth, the `hash` non-denial, JWT and bearer shapes under innocent key names, cycle and depth and length bounds, driver-error topology stripping, nested `cause`, correlation injection and scoping, and the session-id rules.
-- **Boundary rules**, each observed to fire against a violating probe: `kernel-imports-only-allowed`, `domain-does-not-log`, `observability-imports-almost-nothing`, `web-is-ui-only`.
-- **Runtime smoke check** — `tools/smoke/runtime.mjs` loads the package entrypoint in a fresh `node` process with no transpiler, which is what catches the unloadable-module class of defect that `erasableSyntaxOnly` does not.
-- **Redaction is asserted on the logger's real output**, not on `redact()` alone, so a configuration change that bypassed the choke point would fail.
+### Enforced
 
-**Not yet done, and named rather than implied:**
+- **Redaction is asserted on the logger's REAL output**, not on `redact()` alone, so a configuration change that bypassed the choke point fails a test rather than passing a unit test of the redactor.
+- **Both paths into the output are covered.** The merge object goes through `formatters.log`; the **message string and its interpolation arguments** go through a `hooks.logMethod` hook. See the correction below — the second was originally uncovered, and it is the likelier leak.
+- **Credentials are removed from the entire emitted line** — message, stack frames, nested `cause` two levels down, and arbitrary attached properties — and from URL credentials in any scheme, query parameters and libpq keyword/value connection strings. Nine schemes are tabulated rather than inferred. Safe diagnostics (`ECONNREFUSED`, `ETIMEDOUT`, SQLSTATE, paths) are asserted to survive.
+- **The unredacted child logger is unreachable.** pino's `.child()` does not pass bindings through `formatters.log`. The exported `Logger` type declares six log methods and nothing else, so `getLogger().child(…)` does not compile; `childLogger()` is the sanctioned path and redacts its bindings.
+- **`console` is banned outright** in `apps/api/src/**`, `apps/worker/src/**` and `modules/**`, with the allowances cleared — `no-console: ['error', {}]`, because raising the severity alone keeps the inherited `allow: ['warn','error']`. Negative-tested, including that a CLI keeps `console` and `apps/web` is untouched.
+- **Boundary rules**: `kernel-imports-only-allowed` (an allow-list, so it blocks the logger with no change), `domain-does-not-log`, `observability-imports-almost-nothing`, `web-is-ui-only`.
+- **The first consumer outside `apps/` is redacted too.** `packages/database`'s idle-client error listener runs the driver's message through `redactValueShapes()`; see the §2 finding below for what it was leaking and what remains.
+- **Runtime smoke check** loads the package in a fresh `node` process with no transpiler — the unloadable-module class `erasableSyntaxOnly` does not catch.
+- **Coverage** spans denied keys at depth, the `hash` non-denial, JWT and bearer shapes under innocent key names, cycle/depth/length bounds, driver-error topology stripping, nested causes, correlation injection and scoping, the session-id rules, the message path and the child-logger boundary.
 
-- **No ESLint rule bans `console.log` in `apps/*` and `modules/*`.** Until there is one, the logger is available but not mandatory, and `no-console` is a warning in this repo. That is the next mechanical step and it is debt, not a claim.
-- **No depcruise negative-control harness exists.** `tests/security/lint-boundaries.spec.ts` covers ESLint rules only; the four boundary rules above were verified manually, once. A rule verified once is weaker than a rule verified on every run.
-- Nothing calls this package yet. It is wired into `apps/api` by FND-011 and after.
+### Corrected — these claimed more than the mechanism did
+
+- **"There is no path to the output that skips it."** There were two. pino applies `formatters.log` to the merge **object** only, so a secret interpolated into the **message** went straight out — ``logger.error(`auth failed: ${header}`)`` emitted the header verbatim, and that is the line someone writes while debugging. `.child()` was the second. Both closed; the claim now names what the choke point covers.
+- **"A raw session id routed through `asSessionCorrelationId` throws."** It throws unless the value is **a UUID** — it cannot know which process minted it. If session ids are themselves UUIDs, which is the default for any `randomUUID()`-backed store, a raw one passes. What holds the line today is the key-name denial in `redact.ts`, and only because the field is named `sessionCorrelationId`. Stated accurately; making the guarantee real needs a distinguishable minting format, which is recorded as debt below.
+- **"No ESLint rule bans `console.log`."** Stale in the repository's favour — the ban exists and is negative-tested. Its scope is `apps/api` and `apps/worker`, not literally `apps/*`.
+- **"Nothing calls this package yet."** `apps/worker` and `apps/api` both do.
+- **A test count** was quoted. Counts go stale the first time someone adds a case; the coverage is described instead.
+
+### Incomplete — §2 was silent on five packages
+
+The boundary table ruled on the kernels, `modules/*/domain` and `apps/web`, and said nothing about `packages/database`, `auth`, `permissions`, `reporting` or `validation` — which is not an answer of "no", it is an absence. §2 now states the rule: they may log, through this package only.
+
+That silence had a live consequence, and it was a rule 20 leak rather than a tidiness point. `packages/database`'s idle-client error listener interpolated the driver's `error.message` straight into `console.error`. `describeTarget` was already safe — host, port and database, never the credentials — but a `pg` connection failure puts **the DSN it tried, password included, into its message**, which is neither a denied key nor a token shape. The password reached stdout on a path the redactor never saw.
+
+Fixed at `packages/database/src/pool.ts`: the message goes through `redactValueShapes()` first. Proven through the **real listener** — the test emits `'error'` on the pool, which is an EventEmitter, so it runs the exact closure `getPool` registered; a unit test of the regex would still pass if someone deleted the call. Negative-controlled: reverting the call fails the test with the password in the assertion output.
+
+**This adds one dependency edge, `packages/database → packages/observability`**, and it is the first. It is legal under the rules as written — `observability-imports-almost-nothing` constrains what observability imports, not who imports it — and consistent with §2, since observability sits beneath everything. The consequence worth naming for review: a kernel imports `packages/database`, so a kernel now *transitively* links against observability. It still cannot log — `kernel-imports-only-allowed` blocks the direct import and is unchanged — but "the kernels do not reach the logger" is now true of the import graph rather than of the module graph's transitive closure. Flagged for the Architecture Guardian rather than assumed.
+
+**Residual debt:** it is still `console.error`, not a log line. The listener runs inside an `'error'` handler and `getLogger()` throws before `initLogger()`, so a CLI or a test would turn a recoverable idle-socket error into a throw from an error handler. Routing it through the logger needs a lifecycle `packages/database` does not have.
+
+### Not built — stated as debt, not as compliance
+
+- **A depcruise negative-control harness.** `lint-boundaries.spec.ts` covers ESLint rules only; the four boundary rules above were verified by hand against probe files, once. ADR-0013's `exclude` defect — a plausible-looking rule inert since the day it was written — is the concrete argument for building one.
+- **A distinguishable `sessionCorrelationId` format**, so the guard can reject a value it did not mint rather than accepting any UUID.
+- **`packages/database`'s error listener is still `console.error`**, not a log line — the credential leak is closed, the structured-logging migration is not. See §2 above for why it needs a logger lifecycle this package does not have.
 
 ## Related
 

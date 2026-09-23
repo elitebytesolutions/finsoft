@@ -1,4 +1,5 @@
 import { Pool, types, type PoolConfig } from 'pg'
+import { redactValueShapes } from '@finsoft/observability'
 import { describeTarget, intEnv, optionalEnv, requireEnv } from './env.ts'
 
 /*
@@ -244,8 +245,22 @@ export function getPool(): Pool {
    * on — not to lose every in-flight request because one idle socket died.
    */
   created.on('error', (error: Error) => {
+    /*
+     * `error.message` is redacted, not trusted. A pg connection failure puts
+     * the DSN it tried — password included — into its MESSAGE, which is not
+     * a field layer 3 can strip and has no token shape. Interpolating it raw
+     * printed the password (rule 20). `describeTarget` was already safe; the
+     * driver's own message was not.
+     *
+     * Still `console.error` and not the logger: this runs inside an 'error'
+     * listener, and `getLogger()` throws before `initLogger()`. A CLI or a
+     * test would turn a recoverable idle-socket error into a throw from an
+     * error handler. Routing it through the logger needs a lifecycle this
+     * package does not have yet — recorded as debt in ADR-0016.
+     */
     console.error(
-      `[database] idle client error against ${describeTarget(connectionString)}: ${error.message}`,
+      `[database] idle client error against ${describeTarget(connectionString)}: ` +
+        redactValueShapes(error.message),
     )
   })
 

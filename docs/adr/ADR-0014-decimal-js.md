@@ -138,17 +138,35 @@ This is a different method from `Number.prototype.toFixed`, which operates on an
 
 ## Compliance
 
-- Lint rule: `decimal.js` is importable only from `packages/validation`. Any other decimal library in any `package.json` fails the dependency audit — including an **undeclared transitive** one, since `decimal.js` is currently resolved in `node_modules` without being declared.
-- Lint rule: the unconfigured global from `decimal.js` may not be imported anywhere outside the clone site, tests included.
-- Lint rule: `.set(` on the exported constructor is forbidden repository-wide, under any local binding name. A rule matching only the literal `Decimal.set(` would miss `Money.set(` and `D.set(`.
-- Unit test: the exported constructor is frozen — `.set()` throws `TypeError` — and reports `precision: 50`, `rounding: ROUND_HALF_UP`, `modulo: ROUND_DOWN`, `toExpNeg: -9e15`, `toExpPos: 9e15`.
-- Modulo test: `11 mod 3 === 2` and `5 mod 3 === 2`, matching PostgreSQL `%` and JavaScript `%`. Catches a reverted `modulo` setting.
-- **Rounding test (golden boundary table):** `Money.round` asserted at scales 2, 4 and 6 across positive, negative and exact-half cases — `2.5`, `-2.5`, `0.615`, `-0.615`, `2.675` — with **string inputs only**. A table written with numeric literals passes while proving nothing about float ingress, which is the failure it exists to detect. Includes a negative case asserting `Money.from(0.615)` (a number) is rejected. This table, not Invariant 6, is what catches a rounding mode changed to half-even.
-- **Cross-engine test:** for the same table, `Money.round(v, s)` equals `SELECT round(v::numeric, s)`. Runs in the `database integration` CI job against the PostgreSQL service from the Wave 0 Docker stack ([IMPLEMENTATION.md §13](../IMPLEMENTATION.md)). Extends to implicit cast rounding on assignment into `numeric(19,4)` and to the `%` operator, not only `round()`.
-- Boundary test: `Money.from` rejects — by throwing — JS numbers, `0x`/`0b`/`0o` strings, `NaN`, `±Infinity`, and over-scale input. Property-based over a generated sample.
-- Schema test: every monetary column carries a non-NaN `CHECK` constraint. PostgreSQL accepts `'NaN'::numeric` and treats `NaN = NaN` as true, so without it the database-level balance check in NON_NEGOTIABLES §2 is satisfiable by an all-NaN entry.
-- Serialisation test: `JSON.stringify` of any branded money value yields a fixed-scale string, never a number and never exponential notation.
-- Lint rule: `Number.prototype.toFixed` is forbidden; `Decimal.prototype.toFixed` is required for serialisation. The rule is written against the receiver's type, not the bare token.
+Every bullet below states what enforces it and, where a mechanism does not exist, says so. An unimplemented claim in a LEVEL 1 record is worse than an absent one: the next reviewer trusts it.
+
+### Enforced, with the mechanism named
+
+- **`decimal.js` is importable only from `packages/validation`.** Two mechanisms, deliberately: `.dependency-cruiser.cjs` `one-decimal-library` matches `^node_modules/(decimal\.js|big\.js|bignumber\.js)/`, which also catches a subpath import like `decimal.js/decimal.mjs`; and `eslint.config.mjs` `no-restricted-imports`, repo-wide including `tests/`. Negative control: `tests/security/lint-boundaries.spec.ts`.
+- **`.set(` on the exported constructor is forbidden.** `eslint.config.mjs`, matching the identifier allowlist `/^(FinDecimal|Decimal|Big|BigNumber|D|M)$/` — see the correction below about what that does and does not cover.
+- **The constructor is frozen** — `.set()` throws `TypeError`, direct assignment throws, and `toFixed` is pinned with a non-writable, non-configurable descriptor. Asserted in `decimal.test.ts`.
+- **Modulo carries the dividend's sign.** `11 mod 3`, `-11 mod 3`, `11 mod -3`, `-11 mod -3` — all four combinations, matching PostgreSQL `%` and JavaScript `%`. A wrong-signed allocation residual is the failure `modulo: ROUND_DOWN` exists to prevent, and only a negative dividend carries it.
+- **Rounding boundary table** at scales 2, 4 and 6, string inputs only, including a negative case asserting `Money.from(0.615)` is rejected.
+- **Cross-engine test:** the same table against `SELECT round(v::numeric, s)`, compared as **strings** — an earlier version compared `Number(...)` of both sides, which is float coercion inside an exact-decimal test. It also exercises `toFixed()` with **no mode argument**, so it resolves the constructor's configured rounding; flipping that default to half-even now fails in four places.
+- **Non-finite values are rejected at construction.** `Amount` refuses `NaN` and `±Infinity`, and `fixedOrThrow` refuses them again at the boundary. `money.test.ts`.
+- **Every `numeric` column must carry a non-NaN `CHECK`.** `database/tests/numeric-finite.spec.ts`, catalog-driven. Vacuous today — no `numeric` column exists — and fires on the first monetary column.
+
+  **The required form is `CHECK (col IS NULL OR col <> 'NaN'::numeric)`, NOT `col = col`.** The usual idiom relies on IEEE 754's `NaN ≠ NaN`; PostgreSQL's `numeric` deliberately breaks that so NaN can be indexed, so `col = col` is TRUE for NaN and the constraint **accepts** it. Verified against the running engine, both forms. The test's matcher asserts it rejects the broken idiom, so the dormant rule is dormant rather than useless.
+- **Serialisation** yields a fixed-scale string, never a number and never exponential notation.
+
+### Corrected — these claimed more than the mechanism does
+
+- **"Any other decimal library in any `package.json` fails the dependency audit."** Nothing scans `package.json` files. What exists is the import-level enforcement above, and `npm run depcruise` is scoped to `apps packages modules`, so it does not cross `tests/` or `database/`. The undeclared-transitive half is moot: `decimal.js` is now declared in `packages/validation/package.json`.
+- **"…tests included"** for the unconfigured global. `eslint.config.mjs` turns `no-restricted-imports` **off for all of `packages/validation`**, and `money.test.ts` imports the raw global and calls `Decimal.set()` on it. The exemption is the clone site *and its own test file*, which is what the config implements.
+- **"under any local binding name."** It is an identifier allowlist. `import { FinDecimal as Dec2 }` followed by `Dec2.set(…)` is not matched. Stated accurately rather than aspirationally.
+- **CI job name.** The job is `tests`, not `database integration`.
+- **The freeze is narrower than "no test or dependency can alter rounding."** `.set()` throws and `toFixed` is pinned. The remaining prototype methods are writable, `FinDecimal.clone()` returns an unfrozen constructor, and `Amount.value` exposes the underlying decimal. Those are deliberate-act paths, not accidents, and the claim now says so.
+
+### Deferred, with a reason
+
+- **Property-based generation over `Money.from`'s rejections.** The repository has no property-testing dependency, and adding one is a tooling decision rather than a gap in this ADR. The fixed `it.each` tables cover the documented cases. **Deferred pending a decision on adopting `fast-check`.**
+- **A `numeric` round-trip integration test, and the negative type test.** Both need a `numeric` column, and migrations 001–004 create none. **Deferred to the wave that adds the first monetary column**, where they become writable and non-vacuous.
+- **A lint rule forbidding float egress** — `Number.prototype.toFixed`, `.toNumber()`, `Number()` on a decimal receiver outside `packages/validation`. It does not exist. The live path is `Amount.value`, a public field holding the raw decimal; `Money.from('1').value.toNumber()` compiles today. **Deferred in favour of the cheaper fix**: making `Amount.value` internal closes the whole class and costs nothing, since nothing outside the package reads it. Recorded as the next change to this package rather than as a rule to write.
 
 ## Related
 
@@ -168,21 +186,24 @@ weighted average   13000 / 150  → 86.666667      matches NON_NEGOTIABLES §3
 COGS               40 × avg     → 3466.6667      → Rs 3,466.67
 revenue            40 × 140     → 5600.0000      → Rs 5,600.00
 gross profit       5600 − 3466.6667              → Rs 2,133.33
-inventory value    110 × avg    → 9533.3334      → Rs 9,533.33
+inventory value    13000.0000 − 3466.6667        → Rs 9,533.33
+                                = 9533.3333
 closing quantity   150 − 40 = 110
 ```
 
 All four hand-computed figures reproduce exactly.
 
-## Observed — outside this ADR, requires a ruling
+**The inventory value is the CARRIED value, and this line was previously wrong.** It read `110 × avg → 9533.3334` — the product of a quantity and a rounded average, which is the recomputation [ADR-0015](ADR-0015-inventory-valuation-is-carried-value.md) §7 forbids and rule 16 has always forbidden. The two figures differ by Rs 0.0001 and both present as `Rs 9,533.33` at two decimals, which is why it survived.
 
-The same scenario surfaces a conflict that belongs to [ADR-0007](ADR-0007-weighted-average-costing.md), not here, and is reported rather than fixed per [NON_NEGOTIABLES §4](../NON_NEGOTIABLES.md):
+The repository already agreed with ADR-0015 rather than with this document: `tests/accounting/golden/scenario-a.json` files `9533.3334` under `forbiddenRecomputation`, and `golden-scenarios.spec.ts` asserts the carried value is `9533.3333` and that the recomputation is **not equal** to it. An ADR must not publish, as a verified figure, the number three test files call forbidden.
 
-```
-inventory ledger valuation   110 × 86.666667 → 4dp  =  9,533.3334
-inventory GL balance         13000 − 3466.6667      =  9,533.3333
-                                                       -----------
-Invariant 10 residual                                      0.0001
-```
+## Depends on ADR-0015
 
-Both present as `Rs 9,533.33`, so the golden figures stand. But Invariant 10 asserts subledger-to-GL reconciliation exactly, with §4 forbidding tolerances, while ADR-0007's compliance section says "within the documented rounding tolerance". The correct resolution is ADR-0011's rounding account, not a tolerance. ADR-0007 is Accepted and immutable, so this needs a clarifying or superseding ADR before the first inventory posting exists — and `tests/accounting/golden/` must state which figure is asserted and where the residual posts.
+This section previously recorded the Invariant 10 residual as an open question requiring a ruling. **The ruling was raised**: [ADR-0015](ADR-0015-inventory-valuation-is-carried-value.md) establishes that the inventory valuation is the carried value, never `quantity × average_cost`, and `tests/accounting/golden/` now states which figure is asserted and where the residual posts — the two things this section asked for.
+
+The dependency that remains is a status one, and it is stated plainly rather than left implicit:
+
+- ADR-0014 cannot be Accepted while publishing a figure ADR-0015 forbids. That is corrected above.
+- ADR-0015 is itself `Proposed` and requires a LEVEL 0 amendment to rule 16 before it can be Accepted.
+
+So the two may move together, or ADR-0014 may move first now that its own figure is right. What must not happen is ADR-0014 being Accepted with the old line intact, which would put a LEVEL 1 record in conflict with the golden suite.

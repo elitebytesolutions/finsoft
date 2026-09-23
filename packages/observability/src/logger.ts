@@ -132,9 +132,45 @@ export const baseOptions = (config: LoggerConfig): LoggerOptions => ({
   },
 })
 
-export type Logger = PinoLogger
+/*
+ * The logger consumers get, with `child` REMOVED.
+ *
+ * pino's own `.child()` does not pass its bindings through
+ * `formatters.log`, so it bypasses the redaction choke point entirely:
+ *
+ *   getLogger().child({ password: 'hunter2' }).info('x')
+ *   → {"password":"hunter2", …}
+ *
+ * `childLogger()` below does the same thing and redacts, so the answer is not
+ * to ban child loggers but to make the unredacted one unreachable. Omitting
+ * the method from the exported type is the same device the codebase uses for
+ * branded handles: the runtime method still exists, and the type boundary is
+ * what stops anyone reaching it by accident.
+ *
+ * Declared explicitly rather than as `Omit<PinoLogger, 'child'>`: pino's type
+ * is self-referential — `onChild`, `on`, and the level-change listener are
+ * all typed in terms of the full Logger — so an Omit cascades into a type
+ * that is no longer assignable from the thing it describes. Naming the six
+ * methods that are actually sanctioned is shorter, and it says what the
+ * surface IS rather than what was taken away.
+ */
+export interface LogFn {
+  (obj: object, msg?: string, ...args: unknown[]): void
+  (msg: string, ...args: unknown[]): void
+}
 
-let root: Logger | undefined
+export interface Logger {
+  readonly level: string
+  trace: LogFn
+  debug: LogFn
+  info: LogFn
+  warn: LogFn
+  error: LogFn
+  fatal: LogFn
+}
+
+/** Internal only: the unnarrowed instance, so childLogger can still branch. */
+let root: PinoLogger | undefined
 
 /**
  * Creates the process-wide root logger. Called once, at startup.
@@ -164,9 +200,18 @@ export function getLogger(): Logger {
   return root
 }
 
-/** A child logger with fixed extra fields — one per module or job. */
+/**
+ * A child logger with fixed extra fields — one per module or job.
+ *
+ * The ONLY sanctioned way to get one. The bindings are redacted here, which
+ * pino's own `.child()` does not do, and `Logger` omits `child` so this is
+ * also the only way reachable through the types.
+ */
 export function childLogger(bindings: Record<string, unknown>): Logger {
-  return getLogger().child(redact(bindings) as Record<string, unknown>)
+  if (!root) {
+    throw new Error('initLogger() must be called at startup before childLogger()')
+  }
+  return root.child(redact(bindings) as Record<string, unknown>)
 }
 
 /** Test seam. Resets the module-level root so a suite can build a fresh one. */

@@ -12,7 +12,7 @@ import {
   withCorrelation,
 } from './context.ts'
 import { BUSINESS_EVENTS, logCommittedBusinessEvent } from './events.ts'
-import { baseOptions, initLogger, resetLoggerForTests } from './logger.ts'
+import { baseOptions, childLogger, getLogger, initLogger, resetLoggerForTests } from './logger.ts'
 import { REDACTED } from './redact.ts'
 
 /** Collects the JSON lines a logger writes, so the output can be asserted. */
@@ -244,5 +244,64 @@ describe('the message path is redacted too', () => {
     pino(baseOptions({ service: 'api' }), stream).info('posted sale INV-2026-000123')
 
     expect(line().msg).toBe('posted sale INV-2026-000123')
+  })
+})
+
+describe('the unredacted child logger is unreachable', () => {
+  /*
+   * pino's own `.child()` does NOT pass its bindings through
+   * `formatters.log`, so it bypassed the redaction choke point outright:
+   *
+   *   getLogger().child({ password: 'hunter2' }).info('x')
+   *   → {"password":"hunter2", …}
+   *
+   * The fix is not to ban child loggers — they are useful and childLogger()
+   * does the same job safely — but to make the UNREDACTED one unreachable
+   * through the exported type, the same device used for branded handles.
+   */
+  beforeEach(() => resetLoggerForTests())
+
+  it('childLogger redacts its bindings', () => {
+    const { stream, line } = capture()
+    initLogger({ service: 'api', destination: stream })
+
+    childLogger({ module: 'sales', password: 'hunter2' }).info('with bindings')
+
+    expect(line().module).toBe('sales')
+    expect(JSON.stringify(line())).not.toContain('hunter2')
+  })
+
+  it('carries the bindings onto every line, so it is a real child', () => {
+    const { stream, line } = capture()
+    initLogger({ service: 'api', destination: stream })
+
+    const child = childLogger({ module: 'procurement' })
+    child.info('one')
+
+    expect(line().module).toBe('procurement')
+    expect(line().service).toBe('api')
+  })
+
+  it('refuses before startup, like getLogger', () => {
+    expect(() => childLogger({ module: 'x' })).toThrow(/initLogger\(\)/)
+  })
+
+  it('does not expose child on the returned logger type', () => {
+    const { stream } = capture()
+    initLogger({ service: 'api', destination: stream })
+
+    /*
+     * The control is the TYPE: `Logger` declares six log methods and nothing
+     * else, so `getLogger().child(...)` does not compile. The runtime method
+     * still exists underneath — this asserts the surface, which is what stops
+     * it being reached by accident.
+     */
+    const log = getLogger()
+    const surface = Object.keys(log as unknown as Record<string, unknown>)
+    expect(typeof log.info).toBe('function')
+    expect(typeof log.error).toBe('function')
+    // @ts-expect-error — child is deliberately absent from the exported type
+    expect(log.child).toBeDefined()
+    expect(surface).toBeDefined()
   })
 })

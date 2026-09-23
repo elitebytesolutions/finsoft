@@ -337,3 +337,51 @@ describe('strip-only safety, per package (ADR-0013, Node type stripping)', () =>
     }
   })
 })
+
+describe('app.tenant_id in a TEMPLATE LITERAL (ADR-0004)', () => {
+  /*
+   * The selector was `Literal[value=/app\.tenant_id/]`, and a template
+   * literal's text is a TemplateElement rather than a Literal. So the rule
+   * missed the sql`` form — which is the form packages/database itself uses,
+   * and therefore the one anybody copying it would write.
+   *
+   * The harness exercised only the double-quoted string, so it certified a
+   * rule that missed the realistic case. That is the failure this file exists
+   * to prevent, reproduced in the file itself.
+   */
+  it('catches the sql`` tag form, which is what the codebase actually writes', async () => {
+    const messages = await messagesFor(
+      'modules/sales/infrastructure/repo.ts',
+      'export function f(tx: any, t: string) {\n' +
+        "  return tx.executeQuery(`select set_config('app.tenant_id', ${t}, true)`)\n" +
+        '}',
+    )
+    expect(matching(messages, 'only code that sets app.tenant_id')).not.toHaveLength(0)
+  })
+
+  it('still catches the plain string form', async () => {
+    const messages = await messagesFor(
+      'modules/sales/infrastructure/repo.ts',
+      `export const q = "select set_config('app.tenant_id', $1, true)"`,
+    )
+    expect(matching(messages, 'only code that sets app.tenant_id')).not.toHaveLength(0)
+  })
+
+  it('leaves packages/database alone, which is the one place it belongs', async () => {
+    const messages = await messagesFor(
+      'packages/database/src/transaction.ts',
+      'export function f(tx: any, t: string) {\n' +
+        "  return tx.executeQuery(`select set_config('app.tenant_id', ${t}, true)`)\n" +
+        '}',
+    )
+    expect(matching(messages, 'only code that sets app.tenant_id')).toHaveLength(0)
+  })
+
+  it('catches the angle-bracket handle assertion as well as `as`', async () => {
+    const angle = await messagesFor(
+      'modules/sales/application/x.ts',
+      'export const f = (v: unknown) => (<TenantTx>v)',
+    )
+    expect(matching(angle, 'never asserted')).not.toHaveLength(0)
+  })
+})

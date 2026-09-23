@@ -60,6 +60,12 @@ Proposed → Accepted → Superseded by ADR-00NN
 
 ---
 
+## Reconciliation
+
+[RECONCILIATION-2026-09.md](RECONCILIATION-2026-09.md) — every claim in ADR-0013, 0014 and 0016 checked against what the repository enforces. Ten mechanisms built, thirteen overstated claims corrected, nine deferrals recorded with reasons. Read it before reviewing any of the three: the corrections change what each record claims, so the version accepted must be the reconciled one.
+
+---
+
 ## Writing a new ADR
 
 Copy the shape used by the records here:

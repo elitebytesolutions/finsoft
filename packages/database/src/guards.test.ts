@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { assertGeneratedTypesAreExact } from './generate/cli.ts'
-import { assertExactNumericParsing } from './pool.ts'
+import { assertExactNumericParsing, closePool, getPool } from './pool.ts'
 import { TenantContext, TenantContextError } from './tenant-context.ts'
 
 /*
@@ -146,5 +146,95 @@ describe('tenant context (rule 8)', () => {
     expect(() => TenantContext.run({ tenantId, userId: 'root' }, async () => undefined)).toThrow(
       TenantContextError,
     )
+  })
+})
+
+describe('the COMMITTED generated types, not a synthetic string', () => {
+  /*
+   * assertGeneratedTypesAreExact was exercised only against strings written
+   * inside this file. That proves the function works; it proves nothing about
+   * the file that actually ships.
+   *
+   * A hand-edited or stale `generated/schema.d.ts` — a float slipped in, a
+   * numeric loosened to `number`, a column dropped during a merge — passed
+   * every gate in the repository. ADR-0013 rests on those types being an
+   * exact reflection of the schema, and nothing was checking the artefact
+   * itself.
+   */
+  it('passes its own exactness check', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { join, dirname } = await import('node:path')
+    const { fileURLToPath } = await import('node:url')
+
+    const here = dirname(fileURLToPath(import.meta.url))
+    const source = readFileSync(join(here, 'generated', 'schema.d.ts'), 'utf8')
+
+    expect(
+      assertGeneratedTypesAreExact(source),
+      'the committed generated/schema.d.ts violates the exactness rules it exists to carry',
+    ).toEqual([])
+  })
+
+  it('is not empty, so the assertion above is not vacuous', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { join, dirname } = await import('node:path')
+    const { fileURLToPath } = await import('node:url')
+
+    const here = dirname(fileURLToPath(import.meta.url))
+    const source = readFileSync(join(here, 'generated', 'schema.d.ts'), 'utf8')
+
+    expect(source.length).toBeGreaterThan(200)
+    expect(source).toContain('tenants')
+  })
+})
+
+describe('the idle-client error listener does not print the password (rule 20)', () => {
+  /*
+   * The leak this closes: a `pg` connection failure puts the DSN it tried —
+   * password included — into its MESSAGE. The listener interpolated that
+   * message into `console.error` verbatim, so the password reached stdout on
+   * a path the observability redactor never sees.
+   *
+   * Exercised through the REAL listener, not through `redactValueShapes`
+   * alone: the pool is an EventEmitter, so emitting 'error' on it runs the
+   * exact closure `getPool` registered. A unit test of the regex would still
+   * pass if someone removed the call.
+   */
+  const DSN = 'postgresql://finsoft_app:hunter2@db.internal:5432/finsoft'
+
+  it('redacts the credentials out of the driver message', async () => {
+    const previous = process.env.DATABASE_URL
+    process.env.DATABASE_URL = DSN
+
+    const lines: string[] = []
+    const realError = console.error
+    console.error = (...args: unknown[]): void => {
+      lines.push(args.map(String).join(' '))
+    }
+
+    try {
+      const pool = getPool()
+      pool.emit('error', new Error(`connection terminated: could not connect to ${DSN}`))
+    } finally {
+      console.error = realError
+      await closePool()
+      if (previous === undefined) delete process.env.DATABASE_URL
+      else process.env.DATABASE_URL = previous
+    }
+
+    expect(lines).toHaveLength(1)
+    const line = lines[0] ?? ''
+
+    expect(line, 'the password must not reach stdout').not.toContain('hunter2')
+    expect(line, 'nor the role it authenticated as').not.toContain('finsoft_app')
+
+    /*
+     * And the line is still diagnosable. A redaction that destroys the
+     * diagnosis is one that gets switched off — the host, port and database
+     * come from `describeTarget`, which never had the credentials, and the
+     * driver's own wording survives.
+     */
+    expect(line).toContain('db.internal:5432/finsoft')
+    expect(line).toContain('connection terminated')
   })
 })

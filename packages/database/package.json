@@ -10,6 +10,7 @@
     "./testing": "./src/testing/harness.ts"
   },
   "dependencies": {
+    "@finsoft/observability": "*",
     "kysely": "0.29.6",
     "pg": "8.23.0"
   },

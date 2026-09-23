@@ -151,34 +151,49 @@ Generated types are `snake_case`; domain objects are `camelCase`. Kysely's `Came
 
 ## Compliance
 
-**Boundaries**
-- Dependency rule: `pg`, `Pool` construction, `set_config`, `.transaction()` and `.startTransaction()` appear only in `packages/database`.
-- Dependency rule: `kysely` and the `sql` tag are importable only by `packages/database`, `packages/accounting-kernel`, `packages/inventory-kernel`, `packages/reporting` and `modules/*/infrastructure/**`.
-- Dependency rule: `modules/*/domain/**` may not import `packages/database`, `kysely`, or the generated schema types. Enforces the `domain/` purity rule in [ARCHITECTURE.md §2](../ARCHITECTURE.md).
-- Lint rule: `db.schema.*` and Kysely's `Migrator` are forbidden repository-wide. DDL exists only in `database/migrations/*.sql`.
-- Lint rule: `sql.raw` is forbidden; `sql.lit` and `sql.id` are allowlist-only with review. None of the three parameterise.
-- Lint rule: SQL assembled by string concatenation or template interpolation outside the `sql` tag is forbidden.
+Every bullet states what enforces it. Where a mechanism does not exist the bullet says so — an unimplemented claim in a LEVEL 1 record is worse than an absent one, because the next reviewer trusts it. This section is the standard this ADR sets, applied to itself.
 
-**Money**
-- Lint rule: `setTypeParser` (any import form), `pg.defaults`, and the `types` option on `Pool`, `Client` or query config are forbidden repository-wide. `pg-types` may not appear in any `package.json`.
-- Runtime assertion at pool construction: `getTypeParser(1700)` and `getTypeParser(20)` return strings for a known input; the process refuses to start otherwise.
-- CI check: the generated schema contains no `number` in any `numeric`- or `int8`-derived `ColumnType`.
-- Negative type test: assigning a JS `number` to a money column does not compile.
-- Integration test: `numeric` columns arrive as `string`; a property-based sample including trailing zeros and 6-decimal unit costs round-trips through `Money.from` unchanged.
+### Boundaries — enforced
 
-**Tenancy**
-- Type rule: `withTenant` takes no tenant argument; the base repository accepts only the branded `TenantTx`.
-- Lint rule: type assertions to `TenantTx` are forbidden.
-- Integration test: a pooled connection returned after a `withTenant` block has no `app.tenant_id` set — covers ADR-0004's pool-leakage case.
-- Test: no tenant-owned table is addressable inside a `withGlobal` block.
+- **`pg` and `Pool` construction appear only in `packages/database`.** `.dependency-cruiser.cjs` `pg-driver-is-database-package-only`.
 
-**Migrations**
-- CI check: a committed `database/migrations/CHECKSUMS` manifest is recomputed; any change to an existing line fails. This is the control that catches an edited migration in a PR — a `schema_migrations` comparison inside CI cannot, because CI migrates an ephemeral database from the very files under test, so its hashes always match.
-- Pre-deploy gate: file hashes are compared against `schema_migrations` **in the target database** (staging, then production) before the runner applies anything.
-- CI check: filenames strictly sequential, no gaps, no duplicates.
-- CI check: destructive statements — `DROP TABLE`, `DROP COLUMN`, `DROP INDEX`, `TRUNCATE`, `ALTER TABLE ... DROP CONSTRAINT`, `ALTER COLUMN ... TYPE` — are flagged and route the PR to the required reviewer via branch protection. The control is CODEOWNERS, not a self-typed approval comment.
-- CI check: `kysely-codegen` re-run against the migrated schema leaves the working tree clean.
-- CODEOWNERS: `database/migrations/**` requires Database Guardian review ([IMPLEMENTATION.md §10](../IMPLEMENTATION.md)).
+  This rule was **inert from the day it was written until 2026-09-23.** `options.exclude` listed `node_modules` alongside `doNotFollow`; `exclude` removes the node *and the edges to it*, so no `^node_modules/` rule could ever match. `npm run depcruise` reported a clean graph of 273 modules while `pool.ts` — which imports `pg` on line 1 — showed one dependency, `env.ts`. Fixed, and both this rule and `one-decimal-library` were then observed to fire against probe files.
+- **`kysely` is importable only by the allowlist.** `kysely-is-allowlisted`, same file, same fix.
+- **`modules/*/domain/**` may not import `packages/database` or `kysely`.** `domain-has-no-infrastructure-deps`.
+- **`db.schema.*` and Kysely's `Migrator` are forbidden.** `eslint.config.mjs`, with a negative control.
+- **`sql.raw` is forbidden.** `eslint.config.mjs`, with a negative control.
+- **`set_config('app.tenant_id', …)` appears only in `packages/database`** — in a plain string, in a **template literal**, and in an `sql` tag.
+
+  The original selector matched `Literal` only, and a template literal's text is a `TemplateElement`. It therefore missed the sql`` form, which is what `packages/database` itself writes and what anyone copying it would write. The harness exercised only the double-quoted case, so it certified a rule that missed the realistic one. Both forms are now covered and both are negative-tested.
+
+### Money — enforced
+
+- **Runtime assertion at pool construction:** `getTypeParser(1700)` and `getTypeParser(20)` return strings, checked before the first connection. The process refuses to start otherwise.
+- **The pool opens at startup**, so that assertion — and the role check below — run at boot rather than on whichever request first touches the database. `apps/api` and `apps/worker` both call `openDatabase()`; previously neither did, and the pool opened lazily.
+- **The application role is subject to RLS.** `openDatabase` refuses to start as a role holding `SUPERUSER` or `BYPASSRLS`. Necessary, not sufficient — see `lifecycle.ts`, which names the ownership, membership and policy checks it does *not* make.
+- **The committed `generated/schema.d.ts` passes its own exactness check.** Previously `assertGeneratedTypesAreExact` was exercised only against synthetic strings written inside its test, so a hand-edited or stale schema file passed every gate in the repository.
+
+### Corrected — these claimed more than the mechanism does
+
+- **CHECKSUMS "any change to an existing line fails".** It does not. `verify.ts` checks file-vs-manifest *agreement*, so editing a migration and running `npm run db:checksums` in the same PR passes cleanly. The manifest is a **review aid** whose diff must be read.
+
+  The control that actually catches an edited migration is `assertAppliedUnchanged`, which compares file hashes against `schema_migrations` **in the target database** — a deploy-time gate, wired into `infrastructure/staging/deploy.sh`. It fired during this work, refusing a revised 004 against a test database that had seen the earlier draft.
+- **Destructive statements "route the PR to the required reviewer via branch protection".** `verify.ts` flags them at severity `review` and the CLI exits 0. CODEOWNERS exists, but branch protection is unavailable on this repository's plan — see [GAP-001](../COMPLIANCE_GAPS.md). The scan prints a line; nothing enforces the review.
+- **"No tenant-owned table is addressable inside a `withGlobal` block."** Accurate for the **query builder**: `GlobalDatabase = Pick<Database, GlobalTableName>` makes `tx.selectFrom('users')` fail to compile, and that is proved with `@ts-expect-error`. A raw `sql` tag inside the block can still name any table — RLS is what stops it there, and the suite tests exactly that. The wording is now "not addressable through the query builder".
+- **The `withGlobal` list.** The readiness probe uses `withGlobal` and was not among the five enumerated uses, while the section said "that list is the whole list". It is a legitimate use — no tenant, global tables only — and is now listed. The outbox dispatcher's tenant enumeration is listed too.
+
+### Not built — stated as debt, not as compliance
+
+- **A lint rule for SQL assembled by string concatenation** outside the `sql` tag. Does not exist. `"select … where tenant_id = " + t` in a module lints clean today.
+- **A lint rule for the `types` option on `Pool`, `Client` or query config**, and for `pg-types` in any `package.json`. Neither exists. The runtime assertion covers `setTypeParser` and `pg.defaults` but **not** a per-`Pool` `types` map, which does not alter the module-global parser — so that one hole is open at both layers.
+- **A codegen drift check in CI.** There is no codegen step in the workflow, so nothing compares the committed schema types against the live schema. `assertGeneratedTypesAreExact` now runs against the committed file, which catches a malformed one but not a stale one.
+- **The `numeric` round-trip integration test and the negative type test.** Both need a `numeric` column; migrations 001–004 create none. Deferred to the wave that adds the first monetary column.
+
+### Migrations — enforced
+
+- Filenames strictly sequential, no gaps, no duplicates.
+- Forward-only; the runner refuses a file whose recorded hash differs from the applied one.
+- The migration ledger is not writable by the application role (migration 003).
 
 ## Related
 
