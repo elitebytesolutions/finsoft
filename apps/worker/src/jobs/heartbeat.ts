@@ -8,7 +8,7 @@
  *
  * It deliberately does NOT touch the database. Wave 0 has three tables and no
  * posting, so a job that wrote something would be inventing a business fact to
- * have something to do. When the outbox dispatcher lands (ADR-0010) it
+ * have something to do. When the outbox dispatcher lands (ADR-0019) it
  * replaces this as the worker's reason to exist; the heartbeat stays as the
  * thing that proves the machinery works when no real job is flowing.
  */

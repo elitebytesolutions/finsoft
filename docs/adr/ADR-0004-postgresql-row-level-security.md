@@ -147,6 +147,6 @@ Plus: the app role has neither `rolbypassrls` nor `rolsuper`; every policy on a 
 - [ADR-0003](ADR-0003-shared-database-multi-tenancy.md) — the tenancy model this makes acceptable
 - [ADR-0009](ADR-0009-jwt-access-and-rotating-refresh-tokens.md) — where the signed `tenant_id` claim originates
 - [ADR-0002](ADR-0002-postgresql-and-redis.md) — RLS as a deciding reason for PostgreSQL
-- [ADR-0010](ADR-0010-transactional-outbox.md) — how background dispatch establishes tenant context
+- [ADR-0019](ADR-0019-transactional-outbox.md) — how background dispatch establishes tenant context
 - [../NON_NEGOTIABLES.md](../NON_NEGOTIABLES.md) — rules 7, 8, 18, 21
 - [../ARCHITECTURE.md](../ARCHITECTURE.md) — §6 multi-tenancy, §8 permissions

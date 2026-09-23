@@ -139,7 +139,7 @@ Binding rules:
 - The balance row is created on first use (upsert), so the lock target always exists. There is no "no row, no lock" window.
 - Row locks are acquired in a deterministic order — `(product_id, location_id)` ascending, then batch rows by the FEFO ordering — so a multi-line sale touching several products cannot deadlock against another doing the same in a different sequence.
 - Isolation is `READ COMMITTED` with explicit locks, matching [ARCHITECTURE.md §7](../ARCHITECTURE.md). Where whole-entity serialisation is needed (a physical count posting against a location), an advisory lock keyed by `(tenant_id, entity)` is used.
-- The lock is held for the minimum work needed and never across an external call — nothing touching an external system happens inside the transaction (ADR-0010).
+- The lock is held for the minimum work needed and never across an external call — nothing touching an external system happens inside the transaction (ADR-0019).
 
 ## Consequences
 

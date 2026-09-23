@@ -1,6 +1,6 @@
 -- 004_create_outbox.sql
 --
--- The transactional outbox. ADR-0010.
+-- The transactional outbox. ADR-0019 (which supersedes ADR-0010).
 --
 -- Every side effect that touches anything outside the database is written as
 -- a row HERE, inside the posting transaction, and dispatched by the worker
@@ -81,6 +81,15 @@
 -- After merge, the next correction is 005. No further amendment to this file
 -- is available on this branch without a new Database Guardian disposition.
 --
+-- EDITED ONCE MORE, COMMENTS ONLY, AND SAID SO HERE RATHER THAN QUIETLY.
+-- The Product Owner ruled that README rule 4 stands as written, so the
+-- ADR-0010 erratum was withdrawn and ADR-0019 supersedes ADR-0010 instead.
+-- Every reference in this file was repointed. NO DDL CHANGED — the schema
+-- this applies is byte-identical in behaviour, and only the citations moved.
+-- Flagged for Database Guardian confirmation rather than assumed, because
+-- "it was only a comment" is how a once-only disposition stops meaning
+-- anything.
+--
 -- ---------------------------------------------------------------------------
 -- What the second review changed, and why each one mattered
 --
@@ -95,10 +104,11 @@
 --     claimed it "forbids resetting a DONE row to PENDING for replay". It did
 --     not: `SET status='PENDING', dispatched_at=NULL` satisfies every
 --     constraint on the table, GRANT UPDATE put it in reach of ordinary
---     application code, and ADR-0010 actively instructs someone to do it.
+--     application code, and ADR-0010 actively instructed someone to do it.
+--     ADR-0019 correction 3 replaces that instruction.
 --  3. Column-scoped UPDATE grant, so the evidence columns are out of reach at
 --     the privilege layer as well as the trigger layer.
---  4. An attempt cap in the schema. ADR-0010 requires FAILED at the cap and
+--  4. An attempt cap in the schema. ADR-0019 requires FAILED at the cap and
 --     nothing enforced it, so a dispatcher bug that never capped produced a
 --     row retrying forever and passed every test. Plus a SEPARATE reclaims
 --     budget: five worker restarts during a deploy must not deliver a
@@ -155,7 +165,7 @@ CREATE TABLE outbox (
   -- that locks the table, and a typo is still caught.
   topic           text        NOT NULL,
 
-  -- IDENTIFIERS AND MINIMAL FACTS ONLY. ADR-0010 is explicit: `{saleId,
+  -- IDENTIFIERS AND MINIMAL FACTS ONLY. ADR-0019 is explicit: `{saleId,
   -- invoiceId}`, never `{amount, accountId}`. The dispatcher re-reads the
   -- committed row, so a payload can never disagree with the ledger and no
   -- financial truth sits in a queue going stale.
@@ -164,7 +174,7 @@ CREATE TABLE outbox (
   -- THE IDENTITY OF THE BUSINESS EFFECT, as distinct from the identity of
   -- this row.
   --
-  -- ADR-0010 keys the consumer's `sent_notifications` on `outbox.id`. That is
+  -- ADR-0010 keyed the consumer's `sent_notifications` on `outbox.id`. That was
   -- right for redelivery — the same row arriving twice must act once — and
   -- WRONG for replay, because a replay row carries a fresh id and would sail
   -- straight past a dedup table keyed on it. "Send the invoice email for sale
@@ -235,7 +245,7 @@ CREATE TABLE outbox (
 
   -- A human has seen this FAILED row and taken responsibility for it.
   --
-  -- ADR-0010's monitoring is "alert on any FAILED row". Against a terminal
+  -- ADR-0010's monitoring was "alert on any FAILED row". Against a terminal
   -- state with no acknowledgement that alert fires forever from the first
   -- poison row and is muted within a week, at which point the system has
   -- monitoring in name only. The alert is defined over UNACKNOWLEDGED failed
@@ -250,7 +260,7 @@ CREATE TABLE outbox (
   -- request, so it cannot answer the question.
   replay_of       uuid,
 
-  -- ADR-0010 and INFRASTRUCTURE §8. The request id that produced the row,
+  -- ADR-0019 and INFRASTRUCTURE §8. The request id that produced the row,
   -- propagated end to end so a trace survives the queue hop.
   --
   -- uuid, not text: request ids are randomUUID() (packages/observability
@@ -287,13 +297,13 @@ CREATE TABLE outbox (
   CONSTRAINT outbox_topic_shape
     CHECK (topic ~ '^[A-Z][A-Z0-9]*(_[A-Z0-9]+)*$' AND length(topic) BETWEEN 3 AND 64),
 
-  -- Shape, not only length. This column is what all of erratum 3 rests on,
+  -- Shape, not only length. This column is what all of ADR-0019 correction 3 rests on,
   -- and it was the one load-bearing text column here with no shape — `topic`,
   -- which matters less, gets a full regex.
   --
   -- Why it matters: 'sale:S1 ' and 'sale:S1' would be two dedup slots for ONE
   -- effect, so two enqueuers disagreeing by a trailing space produce a silent
-  -- double-send — through the exact mechanism erratum 3 added to prevent
+  -- double-send — through the exact mechanism ADR-0019 correction 3 added to prevent
   -- silent double-sends. ' ' was accepted before this line existed.
   --
   -- A regex rather than `effect_key = btrim(effect_key)`, which was the form
@@ -335,7 +345,7 @@ CREATE TABLE outbox (
   -- ---------------------------------------------------------------------
   -- The two budgets, and the terminal state they lead to
   --
-  -- Both caps are schema facts, not dispatcher conventions, because ADR-0010
+  -- Both caps are schema facts, not dispatcher conventions, because ADR-0019
   -- requires FAILED at the cap and a dispatcher that never capped would
   -- otherwise pass every database assertion while retrying forever.
   --
@@ -387,7 +397,8 @@ CREATE TABLE outbox (
   --
   -- satisfies (false) = (false), leaves claimed_at already NULL so the other
   -- biconditional holds, and was within reach of any code holding the UPDATE
-  -- grant. ADR-0010 actively instructs someone to do exactly this. What
+  -- grant. ADR-0010 actively instructed someone to do exactly this, which is
+  -- why ADR-0019 correction 3 supersedes that line. What
   -- forbids it is outbox_enforce_transition() below, plus the column-scoped
   -- grant; this constraint only keeps the two columns consistent.
   CONSTRAINT outbox_dispatched_at_matches_status
@@ -422,7 +433,7 @@ CREATE TABLE outbox (
 
   -- ADR-0003: a tenant-owned table that another tenant-owned table will
   -- reference needs this, or the referencing composite foreign key cannot be
-  -- written. ADR-0010's `sent_notifications` is exactly that table. 002 added
+  -- written. ADR-0019's `sent_notifications` is exactly that table. 002 added
   -- the same constraint proactively for the same reason. Free on an empty
   -- table; a CREATE UNIQUE INDEX CONCURRENTLY and ADD CONSTRAINT USING INDEX
   -- on a large one later.
@@ -445,14 +456,14 @@ CREATE TABLE outbox (
 );
 
 COMMENT ON TABLE outbox IS
-  'ADR-0010 transactional outbox. Rows are written INSIDE the posting transaction and dispatched after it commits. Payload carries identifiers, never financial truth.';
+  'ADR-0019 transactional outbox. Rows are written INSIDE the posting transaction and dispatched after it commits. Payload carries identifiers, never financial truth.';
 
 COMMENT ON COLUMN outbox.tenant_id IS
   'ADR-0003. Never from a request body or header; from the authenticated session only (rule 8).';
 COMMENT ON COLUMN outbox.status IS
   'PENDING -> IN_FLIGHT -> DONE, or -> FAILED at either cap. Transitions are enforced by outbox_enforce_transition(); DONE and FAILED are terminal.';
 COMMENT ON COLUMN outbox.payload IS
-  'Identifiers and minimal facts, at most 4096 bytes. Never an amount, an account or any figure that must agree with the ledger (ADR-0010). Immutable after insert.';
+  'Identifiers and minimal facts, at most 4096 bytes. Never an amount, an account or any figure that must agree with the ledger (ADR-0019). Immutable after insert.';
 COMMENT ON COLUMN outbox.effect_key IS
   'Identity of the BUSINESS EFFECT, not of this row. The consumer deduplicates on (tenant_id, topic, effect_key); a replay carries its original value unchanged, so a fresh id cannot bypass deduplication.';
 COMMENT ON COLUMN outbox.claimed_at IS
@@ -466,7 +477,7 @@ COMMENT ON COLUMN outbox.reclaims IS
 COMMENT ON COLUMN outbox.last_error IS
   'Sanitised by packages/observability redactError BEFORE writing. readonly_support can read this and it is in every backup (rule 20).';
 COMMENT ON COLUMN outbox.acknowledged_at IS
-  'A human has taken responsibility for this FAILED row. The ADR-0010 alert is defined over UNACKNOWLEDGED failed rows; without this it would fire forever from the first one and be muted.';
+  'A human has taken responsibility for this FAILED row. The ADR-0019 alert is defined over UNACKNOWLEDGED failed rows; without this it would fire forever from the first one and be muted.';
 COMMENT ON COLUMN outbox.replay_of IS
   'The row this one replays. correlation_id cannot answer this: it also groups every unrelated row from the same request.';
 COMMENT ON COLUMN outbox.correlation_id IS
@@ -541,7 +552,7 @@ BEGIN
 
   IF OLD.status = 'DONE' THEN
     RAISE EXCEPTION
-      'outbox %: DONE is terminal. Replay is a NEW row carrying the same effect_key and replay_of = this id — resetting this one erases the evidence that the effect was already performed (ADR-0010 erratum 3)',
+      'outbox %: DONE is terminal. Replay is a NEW row carrying the same effect_key and replay_of = this id — resetting this one erases the evidence that the effect was already performed (ADR-0019 correction 3)',
       OLD.id
       USING ERRCODE = 'check_violation';
   END IF;
@@ -600,7 +611,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION outbox_enforce_transition() IS
-  'ADR-0010. Enforces the status transition graph and post-insert immutability of the evidence columns. A CHECK cannot do this: it sees only the final state, and every illegal transition here ends in a state that is legal on its own.';
+  'ADR-0019. Enforces the status transition graph and post-insert immutability of the evidence columns. A CHECK cannot do this: it sees only the final state, and every illegal transition here ends in a state that is legal on its own.';
 
 -- ---------------------------------------------------------------------------
 -- Replay integrity, enforced at insert
@@ -640,7 +651,7 @@ BEGIN
   OR NEW.correlation_id IS DISTINCT FROM original.correlation_id
   THEN
     RAISE EXCEPTION
-      'outbox %: a replay must carry the original topic, effect_key and correlation_id. A fresh effect_key would bypass the consumer deduplication that makes replay safe (ADR-0010 erratum 3)',
+      'outbox %: a replay must carry the original topic, effect_key and correlation_id. A fresh effect_key would bypass the consumer deduplication that makes replay safe (ADR-0019 correction 3)',
       NEW.replay_of
       USING ERRCODE = 'check_violation';
   END IF;
@@ -650,14 +661,14 @@ END;
 $$;
 
 COMMENT ON FUNCTION outbox_enforce_replay() IS
-  'ADR-0010 erratum 3. A replay is a new row carrying the original effect_key, so it cannot bypass consumer deduplication by holding a fresh id.';
+  'ADR-0019 correction 3. A replay is a new row carrying the original effect_key, so it cannot bypass consumer deduplication by holding a fresh id.';
 
 -- ---------------------------------------------------------------------------
 -- Indexes
 --
 -- ADR-0003 requires tenant_id first on every index of a tenant-owned table.
 --
--- DIVERGENCE FROM ADR-0010:152 — erratum 2. That line specifies
+-- ADR-0019 CORRECTION 2. ADR-0010:152 specified
 -- (status, available_at). ADR-0003 binds harder, and a dispatch query can
 -- only ever see one tenant's rows anyway because RLS confines it, so
 -- tenant_id leads.
@@ -707,7 +718,7 @@ CREATE INDEX outbox_correlation_idx ON outbox (tenant_id, correlation_id);
 --
 -- The dispatcher MUST commit the IN_FLIGHT mark before performing the side
 -- effect. Holding a transaction open across an HTTP call is the thing
--- ADR-0010 exists to prevent, and idle_in_transaction_session_timeout would
+-- ADR-0019 exists to prevent, and idle_in_transaction_session_timeout would
 -- kill it regardless.
 --
 -- That leaves a window: mark IN_FLIGHT, commit, crash. Without a lease the
@@ -813,7 +824,7 @@ CREATE INDEX outbox_correlation_idx ON outbox (tenant_id, correlation_id);
 -- Partitioning: DEFERRED, with the key recorded now
 --
 -- Rule 4 forbids DELETE and the grants below withhold it, so the archival
--- policy ADR-0010 requires has exactly one compatible mechanism: DETACH
+-- policy ADR-0019 requires has exactly one compatible mechanism: DETACH
 -- PARTITION. The key is `created_at`.
 --
 -- It is NOT declared here. Declaring it would require PRIMARY KEY
@@ -871,7 +882,7 @@ CREATE TRIGGER outbox_set_updated_at
 -- and a loud failure turns into a silent zero-row read that reads as "nothing
 -- to dispatch" rather than "no tenant context".
 --
--- How the dispatcher works WITH this rather than around it (ADR-0010, and the
+-- How the dispatcher works WITH this rather than around it (ADR-0019, and the
 -- sanctioned withGlobal use in packages/database transaction.ts): it
 -- enumerates tenants from the global `tenants` table under withGlobal, then
 -- opens one withTenant transaction per tenant batch. No BYPASSRLS role, no

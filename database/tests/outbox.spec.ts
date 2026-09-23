@@ -278,7 +278,8 @@ describe('state transitions: invalid ones are rejected through direct SQL', () =
     await ack(row.id, lease)
 
     /*
-     * Byte for byte the statement ADR-0010 tells someone to run, and the one
+     * Byte for byte the statement ADR-0010 told someone to run — the line
+     * ADR-0019 correction 3 supersedes — and the one
      * draft 2 asserted a CHECK constraint prevented. It did not: (false) =
      * (false) satisfies outbox_dispatched_at_matches_status.
      */
@@ -660,7 +661,7 @@ describe('replay: the original survives and a fresh id cannot bypass deduplicati
   it('REFUSES a replay that mints a fresh effect_key', async () => {
     /*
      * The acceptance case, stated exactly: a new replay id must not bypass
-     * business-effect deduplication. ADR-0010 keys sent_notifications on
+     * business-effect deduplication. ADR-0010 keyed sent_notifications on
      * outbox.id, so a replay's fresh id alone would sail past it. The dedup
      * key is (tenant_id, topic, effect_key), and this is what keeps the
      * replay honest about which effect it is.
@@ -755,7 +756,7 @@ describe('payload limit: rejected at the documented boundary', () => {
     async (effect_key) => {
       /*
        * The shape matters more than the length, because effect_key is what
-       * all of erratum 3 rests on. 'sale:S1 ' and 'sale:S1' would be two
+       * all of ADR-0019 correction 3 rests on. 'sale:S1 ' and 'sale:S1' would be two
        * dedup slots for ONE effect.
        *
        * The tab and newline cases are why this is a regex rather than the

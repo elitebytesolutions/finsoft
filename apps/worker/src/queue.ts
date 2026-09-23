@@ -13,9 +13,9 @@
  * monetary amount, never an account, never anything that constitutes
  * financial truth. The handler re-reads the committed row from PostgreSQL,
  * which is what makes a flushed queue a delay rather than a loss — and what
- * stops a payload disagreeing with the ledger (ADR-0010).
+ * stops a payload disagreeing with the ledger (ADR-0019).
  *
- * The outbox dispatcher that ADR-0010 specifies is NOT here. It needs the
+ * The outbox dispatcher that ADR-0019 specifies is NOT here. It needs the
  * `outbox` table, which needs a migration that needs posting to exist. Redis
  * will carry the *signal* to wake it promptly; PostgreSQL remains the queue of
  * record. This file builds the machinery that dispatcher will run on.
@@ -30,7 +30,7 @@ import type { WorkerConfig } from './config.ts'
  *
  * `maintenance` exists so Wave 0 has a real queue to prove the loop with —
  * a worker whose only queue is hypothetical cannot be shown to work.
- * ADR-0010's topics (`INVOICE_EMAIL`, `FBR_POS_PUSH`, …) are outbox row
+ * ADR-0019's topics (`INVOICE_EMAIL`, `FBR_POS_PUSH`, …) are outbox row
  * topics, not queue names, and arrive with the dispatcher.
  */
 export const QUEUES = {
@@ -69,7 +69,7 @@ export function connectionOptions(config: WorkerConfig): ConnectionOptions {
 /*
  * Retry policy.
  *
- * Exponential with jitter, matching ADR-0010's backoff for outbox rows, so
+ * Exponential with jitter, matching ADR-0019's backoff for outbox rows, so
  * the two do not drift into different retry behaviours for the same class of
  * failure. A job that exhausts its attempts is kept (`removeOnFail: false`)
  * because a failed job is an operational condition to be looked at, never

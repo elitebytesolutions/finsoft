@@ -410,7 +410,7 @@ Each has its own database, credentials, secrets, storage and queues. Staging nev
 | Costing | Weighted average | ADR-0007 |
 | Inventory | Movement ledger + FEFO batch selection | ADR-0008 |
 | Sessions | JWT access + rotating refresh | ADR-0009 |
-| Side effects | Transactional outbox | ADR-0010 |
+| Side effects | Transactional outbox | ADR-0019 |
 | Money | `numeric` + decimal library | ADR-0011 |
 | Periods | Fiscal period locking | ADR-0012 |
 | Cache/queue | Redis | ADR-0002 |

@@ -109,7 +109,7 @@ The registry is not redundant with the lint rule. Lint fails a build, which is w
 
 ### `withGlobal` is the one narrow exception
 
-Some work legitimately has no tenant: login and tenant provisioning ([ADR-0004](ADR-0004-postgresql-row-level-security.md)), global reference tables such as currency and country codes and COA templates ([ADR-0003](ADR-0003-shared-database-multi-tenancy.md)), the outbox dispatcher enumerating tenants before setting each batch's tenant id ([ADR-0010](ADR-0010-transactional-outbox.md)), and `schema_migrations` itself.
+Some work legitimately has no tenant: login and tenant provisioning ([ADR-0004](ADR-0004-postgresql-row-level-security.md)), global reference tables such as currency and country codes and COA templates ([ADR-0003](ADR-0003-shared-database-multi-tenancy.md)), the outbox dispatcher enumerating tenants before setting each batch's tenant id ([ADR-0019](ADR-0019-transactional-outbox.md)), and `schema_migrations` itself.
 
 `withGlobal(fn)` serves exactly these. It is typed against a global-tables-only schema view, so a tenant-owned table is not addressable inside it, and it is governed by the same lint rule that guards `set_config`. It is named here deliberately: an unnamed escape hatch gets invented ad hoc by the first agent who needs one, and it will not be narrow.
 
@@ -212,7 +212,7 @@ Every bullet states what enforces it. Where a mechanism does not exist the bulle
 - [ADR-0003](ADR-0003-shared-database-multi-tenancy.md) — the base repository, tenant predicate and global-table allowlist
 - [ADR-0004](ADR-0004-postgresql-row-level-security.md) — the RLS backstop `set_config` serves, and pool discipline
 - [ADR-0005](ADR-0005-central-double-entry-posting-engine.md) — why journal-writing repositories live in the accounting kernel
-- [ADR-0010](ADR-0010-transactional-outbox.md) — the dispatcher's use of `withGlobal` then per-tenant batches
+- [ADR-0019](ADR-0019-transactional-outbox.md) — the dispatcher's use of `withGlobal` then per-tenant batches
 - [ADR-0011](ADR-0011-money-representation.md) — why `numeric` must not pass through a float
 - [ADR-0014](ADR-0014-decimal-js.md) — the decimal library on the other side of the driver
 - [../ARCHITECTURE.md](../ARCHITECTURE.md) — §2 layout and `domain/` purity, §6 tenancy, §7 transactions

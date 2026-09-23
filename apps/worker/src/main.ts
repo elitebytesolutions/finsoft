@@ -2,7 +2,7 @@
  * The worker process.
  *
  * Consumes BullMQ queues. Its reason to exist is the transactional outbox
- * dispatcher (ADR-0010) — rows written inside the posting transaction,
+ * dispatcher (ADR-0019) — rows written inside the posting transaction,
  * dispatched after it commits — which arrives with the `outbox` table. This
  * builds the process that will run it: configuration, queues, correlation
  * across the queue hop, health probes and a shutdown that does not drop work.
@@ -67,7 +67,7 @@ async function bootstrap(): Promise<void> {
      * The per-job failure is already logged with full correlation by the
      * runner. This line is the queue's own view: whether the job will be
      * retried, or has exhausted its attempts and is now an operational
-     * condition someone has to look at (ADR-0010).
+     * condition someone has to look at (ADR-0019).
      */
     const exhausted = (job?.attemptsMade ?? 0) >= (job?.opts.attempts ?? 1)
     logger.warn(
@@ -115,7 +115,7 @@ async function bootstrap(): Promise<void> {
    *   3. close queue, health, database
    *
    * BullMQ's close() waits for active jobs, which is the whole point: a job
-   * interrupted mid-flight is redelivered (at-least-once, ADR-0010), and
+   * interrupted mid-flight is redelivered (at-least-once, ADR-0019), and
    * redelivery is a safety net rather than a routine.
    *
    * The timeout exists because the orchestrator's own grace period ends in

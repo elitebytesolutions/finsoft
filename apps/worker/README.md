@@ -25,7 +25,7 @@ logged with the correlation id of whatever produced it. Wave 0's exit criterion
 is "an empty-but-real vertical"; this is the worker's part of it.
 
 **The outbox dispatcher is not here yet.** It is the reason this process exists
-(ADR-0010) — rows written inside the posting transaction, dispatched after it
+(ADR-0019) — rows written inside the posting transaction, dispatched after it
 commits, carrying emails, PDFs, FBR pushes, webhooks and cache invalidation —
 and it needs the `outbox` table, which needs a migration that needs posting to
 exist. This is the machinery that dispatcher will run on.

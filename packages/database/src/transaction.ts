@@ -127,7 +127,7 @@ export async function withTenant<T>(fn: (tx: TenantTx) => Promise<T>): Promise<T
  *   - tenant provisioning, before the tenant exists
  *   - global reference data: currency codes, country codes, COA templates
  *   - the outbox dispatcher enumerating tenants, before setting each batch's
- *     tenant id (ADR-0010)
+ *     tenant id (ADR-0019)
  *   - schema_migrations
  *
  * That list is the whole list. It is named in the ADR precisely so this does

@@ -96,7 +96,7 @@ Version floor: PostgreSQL 15+ (for `MERGE`, `NULLS NOT DISTINCT` and current RLS
 
 **Redis (or another in-memory store) as a read model of truth.** Rejected. Any read path that can answer from a store the ledger did not write is a route to a number that cannot be traced to a posting, which contradicts the product's one-sentence definition ([PRD.md §1](../PRD.md)).
 
-**Queues in PostgreSQL (`SELECT … FOR UPDATE SKIP LOCKED`) instead of Redis.** Seriously considered — it removes a dependency and keeps job state transactional. Rejected for v1 because the outbox already gives transactional handoff (ADR-0010), and Redis/BullMQ supplies scheduling, retries with backoff, delayed jobs, concurrency control and a usable dashboard we would otherwise build. Note that the `outbox` table *is* a PostgreSQL queue; Redis carries only the dispatch signal.
+**Queues in PostgreSQL (`SELECT … FOR UPDATE SKIP LOCKED`) instead of Redis.** Seriously considered — it removes a dependency and keeps job state transactional. Rejected for v1 because the outbox already gives transactional handoff (ADR-0019), and Redis/BullMQ supplies scheduling, retries with backoff, delayed jobs, concurrency control and a usable dashboard we would otherwise build. Note that the `outbox` table *is* a PostgreSQL queue; Redis carries only the dispatch signal.
 
 **A separate analytics database / OLAP store in v1.** Rejected as out of scope ([PRD.md §9](../PRD.md)). Revisit when a report cannot meet its budget on a read replica.
 
@@ -115,7 +115,7 @@ Version floor: PostgreSQL 15+ (for `MERGE`, `NULLS NOT DISTINCT` and current RLS
 - [ADR-0001](ADR-0001-modular-monolith.md) — one deployable, one transaction, one database
 - [ADR-0003](ADR-0003-shared-database-multi-tenancy.md) — how tenants share that database
 - [ADR-0004](ADR-0004-postgresql-row-level-security.md) — the PostgreSQL feature that makes sharing safe
-- [ADR-0010](ADR-0010-transactional-outbox.md) — why the queue never receives uncommitted work
+- [ADR-0019](ADR-0019-transactional-outbox.md) — why the queue never receives uncommitted work
 - [ADR-0011](ADR-0011-money-representation.md) — `numeric` precision and scale
 - [../NON_NEGOTIABLES.md](../NON_NEGOTIABLES.md) — rules 6, 9, 10, 11, 12
 - [../ARCHITECTURE.md](../ARCHITECTURE.md) — §1 shape of the system, §7 transactions and the outbox, §13 technology decisions

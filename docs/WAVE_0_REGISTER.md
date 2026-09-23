@@ -166,13 +166,13 @@ This corrects a conflicting report. The enforcement rules **were** completed in 
 
 **Status: partial.**
 
-The process is complete and correct. The **transactional outbox dispatcher** that ADR-0010 specifies — this worker's actual reason to exist — is not built: it needs an `outbox` table, and a migration needs database-guardian review.
+The process is complete and correct. The **transactional outbox dispatcher** that [ADR-0019](adr/ADR-0019-transactional-outbox.md) specifies — this worker's actual reason to exist — is not built: it needs an `outbox` table, and a migration needs database-guardian review.
 
 **Evidence.** `6861dc8` · `tests/integration/worker-transaction.spec.ts` proves the commit/rollback/redelivery contract at the level the system supports today.
 
 **Outstanding.** The outbox dispatcher. **No longer deferred** — Wave 0 does not close until FND-011 does.
 
-The schema it needs is now built and reviewed: `004_create_outbox.sql` carries the lease and its fence, the transition graph, both attempt budgets, replay integrity and the column-scoped grants, with 40 acceptance cases in `database/tests/outbox.spec.ts` exercising them through direct SQL. [ADR-0010-ERRATUM-001](adr/ADR-0010-ERRATUM-001.md) records the four contract corrections and is unsigned.
+The schema it needs is now built and reviewed: `004_create_outbox.sql` carries the lease and its fence, the transition graph, both attempt budgets, replay integrity and the column-scoped grants, with 40 acceptance cases in `database/tests/outbox.spec.ts` exercising them through direct SQL. [ADR-0019](adr/ADR-0019-transactional-outbox.md) supersedes ADR-0010 and carries the four contract corrections. It is unsigned, and the migration does not merge before it is signed.
 
 What the dispatcher must still demonstrate, per the database-guardian review: a crash after claiming; an enqueue that succeeds while the ack fails; a stale dispatcher unable to ack a reclaimed row; repeated failures reaching each cap; replay preserving evidence; and tenant enumeration respecting access boundaries. Every ack, failure and reclaim asserts `rowcount = 1` — a dispatcher that ignores how many rows it touched cannot detect that it lost its lease. `EXPLAIN (ANALYZE, BUFFERS)` on the claim query against at least 10^6 rows across 50+ tenants is required on the PR; a plan reviewed against ten rows will not be accepted.
 
@@ -323,4 +323,4 @@ The rationale is the plan's own: *"build the factory before building the product
 Two things are deliberately absent because they are not Wave 0:
 
 - **The costing and stock ADR backlog** — ADR-0015, 0017 and 0018. ADR-0018 is **rejected** with 19 required changes, and two LEVEL 0 amendments (rules 15 and 16) await signatures. These block Wave 5, not Wave 0.
-- **The `outbox` table** — ADR-0010's dispatcher. Needs a migration and database-guardian review; belongs with the wave that introduces posting.
+- **The `outbox` table** — [ADR-0019](adr/ADR-0019-transactional-outbox.md)'s dispatcher. Needs a migration and database-guardian review; belongs with the wave that introduces posting.

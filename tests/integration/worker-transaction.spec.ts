@@ -16,7 +16,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
  * The transactional side-effect contract, end to end: a real PostgreSQL
  * transaction and a real Redis queue.
  *
- * ADR-0010's rule is that a side effect is dispatched only AFTER the business
+ * ADR-0019's rule is that a side effect is dispatched only AFTER the business
  * fact commits. The three properties that has to give are each asserted here
  * against the real thing rather than argued about:
  *
@@ -24,7 +24,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
  *   rolled back → the row does not exist AND NO job exists
  *   retried    → the effect is applied exactly once
  *
- * The `outbox` table ADR-0010 specifies is not built yet — it needs a
+ * The `outbox` table ADR-0019 specifies is not built yet — it needs a
  * migration, and a migration needs the database guardian. So this tests the
  * contract at the level the system supports today: the enqueue happens after
  * the transaction returns, which is the discipline the dispatcher will
@@ -217,7 +217,7 @@ describe('a rolled back transaction dispatches nothing', () => {
  * fails if the handler is later made non-idempotent.
  *
  * It is NOT a general exactly-once delivery guarantee, and no such guarantee
- * exists. BullMQ is at-least-once and ADR-0010 accepts that: a worker killed
+ * exists. BullMQ is at-least-once and ADR-0019 accepts that: a worker killed
  * mid-job, a lost acknowledgement or a network partition all redeliver. The
  * obligation that creates sits on every HANDLER, individually, and a passing
  * test here says nothing about a handler written next week.

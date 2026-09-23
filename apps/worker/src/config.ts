@@ -19,7 +19,7 @@ export interface WorkerConfig {
  * Kubernetes and Docker send SIGKILL after their own grace period (30s by
  * default), so this must be comfortably under it: a worker still "gracefully
  * shutting down" when SIGKILL lands is not shutting down gracefully, it is
- * being killed mid-job. At-least-once delivery (ADR-0010) means a killed job
+ * being killed mid-job. At-least-once delivery (ADR-0019) means a killed job
  * is redelivered rather than lost — but a redelivered job is only safe because
  * handlers are idempotent, and leaning on that routinely is how the idempotency
  * bugs get found in production instead of in a test.
