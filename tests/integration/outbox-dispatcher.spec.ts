@@ -176,6 +176,23 @@ describe('1 — a dispatcher that dies after claiming does not strand the row', 
     expect(claimed.map((r) => r.id)).toContain(row.id)
     expect((await read(row.id))?.status).toBe('IN_FLIGHT')
 
+    /*
+     * WAIT OUT THE LEASE, explicitly.
+     *
+     * This was a flake, and a nasty one: the test claimed a row and then
+     * reaped it with a 10ms lease in the same cycle, so it passed only when
+     * more than 10ms happened to elapse in between. Under the full gate it
+     * usually did; occasionally it did not, and the suite failed once in
+     * roughly six runs with `reclaimed` of 0.
+     *
+     * A sleep in a test is usually a smell. Here it is the subject: the lease
+     * is a TIME-based fence, and a test of expiry that does not let the lease
+     * expire is testing nothing. 60ms against a 10ms lease is six times the
+     * margin, and the alternative — a zero lease — would mean suspending the
+     * startup invariant for the test's convenience.
+     */
+    await new Promise((resolve) => setTimeout(resolve, 60))
+
     // A second dispatcher comes along with a lease short enough to have expired.
     const seen: string[] = []
     const recovered = dispatcherWith(
@@ -509,23 +526,24 @@ describe('6 — tenant enumeration', () => {
       { batchSize: 2 },
     )
 
-    const result = await d.runCycle()
+    await d.runCycle()
     const forBacklogged = await asTenant<{ n: string }>(
       backlogged,
       `SELECT count(*)::text AS n FROM outbox WHERE status = 'PENDING'`,
     )
 
-    expect(result.claimed, 'no more than batchSize per tenant per cycle').toBeLessThanOrEqual(
-      2 * (await listTenantCount()),
-    )
-    expect(Number(forBacklogged[0]?.n), 'the rest waits for the next cycle').toBeGreaterThan(0)
+    /*
+     * Asserted on THIS tenant, not on a database-wide total.
+     *
+     * The earlier form compared `result.claimed` against `2 x tenantCount`,
+     * which is a fact about every tenant any spec has ever created and is
+     * satisfied by arithmetic rather than by the batch cap doing anything.
+     */
+    const minePicked = seen.filter((k) => k.startsWith('EK-')).length
+    expect(minePicked, 'the cap is what stops all five going at once').toBeGreaterThan(0)
+    expect(Number(forBacklogged[0]?.n), 'the rest waits for the next cycle').toBe(3)
   })
 })
-
-async function listTenantCount(): Promise<number> {
-  const { listTenantIdsForDispatch } = await import('@finsoft/database')
-  return (await listTenantIdsForDispatch()).length
-}
 
 /* ==================================================================== *
  * The startup ordering invariant
