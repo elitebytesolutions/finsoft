@@ -10,7 +10,7 @@ are the ones that span packages or assert system-wide truth.
 | `e2e/` | Playwright journeys. A real Chromium against the real API, started from `dist`. |
 | `security/` | Adversarial tenant isolation, IDOR, privilege escalation — serial **and concurrent**. Run on every PR. |
 | `performance/` | Foundation round-trip latency today. **Not** the ARCHITECTURE §11 budgets, which are deferred — see `performance/README.md`. |
-| `reconciliation/` | **Empty and deferred to Wave 5/6**, with the reason and acceptance criteria recorded in `reconciliation/README.md`. There is nothing to reconcile until a posting exists. |
+| `reconciliation/` | The reconcilers and their break detection, proved against fixtures. There is no live data to reconcile until a posting exists, so `dormant.spec.ts` is a tripwire that fails the moment there is. See `reconciliation/README.md`. |
 
 Running them:
 
@@ -19,6 +19,7 @@ npm run test:gate          # everything below, in order
 npm run test:schema        # database/tests — RLS, roles, schema
 npm run test:security      # tenant isolation, serial and concurrent
 npm run test:accounting    # FinancialInvariantSuite + golden scenarios
+npm run test:reconciliation # subledger-to-GL and valuation-to-ledger break detection
 npm run test:integration   # API↔database, migrations, worker
 npm run test:performance   # foundation latency
 npm run test:e2e           # Playwright; starts the API itself

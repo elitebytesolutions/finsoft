@@ -1,6 +1,10 @@
 # tests/reconciliation/
 
-**Empty, and deferred. This is a record of that decision, not a placeholder.**
+**The comparison is built and proved. The data source is deferred.**
+
+That split is the whole design of this directory, and the rest of this file
+is the reasoning behind it. The argument below for writing nothing was made
+first and is preserved, because it is still right about the half it is about.
 
 Reconciliation asserts that two independently-maintained records of the same
 truth agree: the subledger against the general ledger, and the inventory
@@ -8,7 +12,20 @@ valuation against the stock ledger.
 
 ---
 
-## Why nothing runs here yet
+## What runs here now
+
+| | |
+|---|---|
+| `reconciler.ts` | `reconcileSubledgerToGeneralLedger` and `reconcileValuationToStockLedger`. Pure functions over rows. No tolerance parameter exists, and a test greps to keep it that way |
+| `subledger-to-gl.spec.ts` | Criteria 1-4 below, against fixtures including deliberate breaks |
+| `valuation-to-ledger.spec.ts` | The Wave 6 criteria, including the `9533.3333` vs `9533.3334` case the forbidden recomputation produces |
+| `dormant.spec.ts` | **The tripwire.** Fails the moment a kernel stops being `export {}` or a reconcilable table is migrated |
+
+Nothing here imports a kernel, a repository or a posting engine, and nothing
+ever should. A control that shares an implementation with the thing it checks
+agrees with it by construction — including when both are wrong.
+
+## Why the DATA is still deferred
 
 There is nothing to reconcile. The schema is three tables — `tenants`,
 `users`, `schema_migrations` — and no journal entry, stock movement, invoice
@@ -21,10 +38,15 @@ packages/accounting-kernel/src/index.ts   export {}
 packages/inventory-kernel/src/index.ts    export {}
 ```
 
-A test written today could only assert that zero equals zero. That is not a
-weak test; it is a **misleading** one, because it would appear in the suite as
-reconciliation coverage and would stay green through every change that later
-breaks reconciliation for real.
+A test written today against live data could only assert that zero equals
+zero. That is not a weak test; it is a **misleading** one, because it would
+appear in the suite as reconciliation coverage and would stay green through
+every change that later breaks reconciliation for real.
+
+That reasoning survives intact, and it is why `dormant.spec.ts` exists: a
+fixture-proved reconciler pointed at nothing is exactly as misleading, one
+step removed, unless something fails when there is finally something to point
+it at.
 
 ---
 
@@ -72,9 +94,13 @@ breaks reconciliation for real.
 
 ## Scope approval
 
-Wave 0's exit criterion asks for "one test of each kind", and this kind has
-none. **That is a gap in the Wave 0 deliverable and is recorded as one** —
-not counted as delivered because the directory exists.
+Wave 0's exit criterion asks for "one test of each kind". **That criterion is
+now met** — this kind has 32 tests, and they prove the comparison detects a
+break, names it, and does not net one tenant or one account against another.
+
+**It is not met by the directory existing, and it is not met by anything here
+proving a real ledger reconciles.** No real ledger exists. What is still owed
+is the decision below.
 
 Closing it requires a Product Owner decision on one of:
 
