@@ -1,0 +1,173 @@
+# Staging stack — Contabo. INFRASTRUCTURE §1.
+#
+# ── The rule that shapes this whole file ─────────────────────────────────
+#
+# NOTHING publishes a port except the reverse proxy.
+#
+# On Ubuntu, Docker writes its own iptables rules into a chain traversed
+# BEFORE ufw's. A container published with `-p 5432:5432` is reachable from
+# the public internet while `ufw status` shows PostgreSQL denied — ufw does
+# not see it and is not a backstop for it. The only safe posture is not to
+# publish: services reach each other by name on the internal network, and
+# `proxy` is the single door.
+#
+# Images are pulled BY DIGEST, never by tag. infrastructure/README.md is
+# explicit that the image which passed staging is the image that runs in
+# production; a tag is a moving pointer and cannot carry that guarantee.
+# The deploy workflow writes the digests into .env.
+
+name: finsoft-staging
+
+services:
+  # ------------------------------------------------------------------ #
+  # The only public listener.
+  # ------------------------------------------------------------------ #
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - '80:80'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [edge, internal]
+
+  # ------------------------------------------------------------------ #
+  # Application
+  # ------------------------------------------------------------------ #
+  api:
+    image: ${API_IMAGE:?deploy must set API_IMAGE to a digest}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      API_PORT: 3001
+      # finsoft_app ONLY. An earlier version of this file also passed
+      # MIGRATION_DATABASE_URL here, which handed finsoft_migration's
+      # BYPASSRLS credential to the long-running, web-facing process — the one
+      # thing ADR-0004:59 says the running application must never hold, and
+      # packages/database/src/pool.ts:155 says in as many words.
+      #
+      # The API never reads it: MIGRATION_DATABASE_URL is consumed only by the
+      # migration runner and the codegen CLI. It now lives on the one-shot
+      # `migrate` service below, in a process that exits.
+      DATABASE_URL: postgresql://finsoft_app:${POSTGRES_APP_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379
+      APP_VERSION: ${APP_VERSION:-dev}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [internal]
+
+  # One-shot. `profiles: [tools]` keeps it out of `up`, so it runs only when
+  # the deploy explicitly invokes it:
+  #
+  #   docker compose run --rm migrate
+  #
+  # This is the only place the BYPASSRLS credential appears, and it is gone
+  # when the container exits. Keeping it in a service definition rather than
+  # an ad-hoc `docker run` means it uses the same image digest that was just
+  # gated, on the same network, with the same database.
+  migrate:
+    image: ${API_IMAGE:?deploy must set API_IMAGE to a digest}
+    profiles: [tools]
+    restart: 'no'
+    environment:
+      NODE_ENV: production
+      MIGRATION_DATABASE_URL: postgresql://finsoft_migration:${POSTGRES_MIGRATION_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    command: ['node', 'packages/database/src/migrate/cli.ts', 'migrate']
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [internal]
+
+  worker:
+    image: ${WORKER_IMAGE:?deploy must set WORKER_IMAGE to a digest}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgresql://finsoft_app:${POSTGRES_APP_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      WORKER_HEALTH_PORT: 3002
+      APP_VERSION: ${APP_VERSION:-dev}
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks: [internal]
+
+  web:
+    image: ${WEB_IMAGE:?deploy must set WEB_IMAGE to a digest}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [internal]
+
+  # ------------------------------------------------------------------ #
+  # Data
+  # ------------------------------------------------------------------ #
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_BOOTSTRAP_USER:-finsoft_bootstrap}
+      POSTGRES_PASSWORD: ${POSTGRES_BOOTSTRAP_PASSWORD:?required}
+      POSTGRES_DB: postgres
+      FINSOFT_DB: ${POSTGRES_DB:-finsoft}
+      FINSOFT_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?required}
+      FINSOFT_MIGRATION_PASSWORD: ${POSTGRES_MIGRATION_PASSWORD:?required}
+      FINSOFT_READONLY_PASSWORD: ${POSTGRES_READONLY_PASSWORD:?required}
+      # Identical to local (infrastructure/docker/compose.yaml). The builtin
+      # provider with C.UTF-8 is version-stable across BOTH glibc and ICU, so
+      # a base-image bump cannot silently reorder an index or a ledger.
+      POSTGRES_INITDB_ARGS: >-
+        --encoding=UTF8
+        --locale-provider=builtin
+        --builtin-locale=C.UTF-8
+      TZ: UTC
+      PGTZ: UTC
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$$POSTGRES_USER" -d "$$FINSOFT_DB" -h 127.0.0.1']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [internal]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # appendonly no, matching local and production intent. ADR-0002: "if Redis
+    # is flushed at any moment, the system must lose nothing but speed." A
+    # durable staging Redis would let code acquire a dependency on a guarantee
+    # the design does not make — and staging exists to catch exactly that.
+    command: ['redis-server', '--appendonly', 'no', '--save', '']
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [internal]
+
+networks:
+  # `internal: true` means no outbound route and no host publishing for
+  # anything on it. The database and cache cannot reach the internet and the
+  # internet cannot reach them, regardless of what someone adds later.
+  internal:
+    internal: true
+  edge:
+
+volumes:
+  postgres-data:
+  caddy-data:
+  caddy-config:

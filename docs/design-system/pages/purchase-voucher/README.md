@@ -24,7 +24,7 @@ FormSection    "Voucher Information": voucher no (Auto) · date · supplier * ·
 LineItemGrid   "Purchase Items"
                # · Product * · UPC · Pack · Batch · Expiry · T-Qty · Ps-Qty · LS · Bns · Brk. ·
                Cost · %Disc. · %Gst · Pur. Price · Sale Price · Amount · Shelf · Available ·
-               Reserved · Stock Qty · ✕
+               Stock Qty · ✕
 TotalsBar      Items · Total qty · Gross · Discount · GST · **Net payable**
 FormSection    "More Information & Actions": narration, attachments, freight/landed cost
 LedgerPreview  Inventory · GST input · Payable (or Cash)
@@ -46,11 +46,24 @@ pricing, stock context) are separated by a 2px rule and the group can be collaps
   and an expiry inside the tenant's minimum-shelf-life window warns before it blocks.
 - Bonus (`Bns`) increases stock at zero cost and therefore **lowers the weighted-average cost** —
   the grid shows the resulting average cost per line so the effect is visible before posting.
+  This is a preview of the **rate** the kernel will store, computed by the server from the carried
+  value per ADR-0015 §4. It is not a valuation, and the page must not derive stock value from it.
+  Bonus quantity cannot make the rate negative: it enters only the denominator (ADR-0017).
 - Breakage (`Brk.`) is recorded on receipt and posts a loss, not stock.
-- Stock context columns (Available, Reserved, Stock qty, Shelf) are read-only and exist to stop
-  duplicate or wrong-product receipts.
+- Stock context columns (Available, Stock qty, Shelf) are read-only and exist to stop
+  duplicate or wrong-product receipts. **`Available` is informational only** and is a snapshot, not
+  a hold: there are no reservations in this release (ADR-0017 §7), so a figure shown here may be
+  consumed by a competing transaction before this document posts.
+- **A `Reserved` column was specified here and is removed.** Nothing reserves stock in this release,
+  so the column could only ever show zero — and a permanently-zero "Reserved" figure reads as a
+  guarantee that no code makes. It returns with the separate reservations design, not before.
 - Duplicate supplier bill number for the same supplier blocks the save with the existing document
-  linked.
+  linked. **This spec assumes one supplier bill maps to exactly one GRN**, which is the open
+  question in ADR-0017 §4(c) — a bill covering goods delivered across several days is common in
+  distribution and would be wrongly blocked. Confirm with the business before the constraint ships;
+  if multiple receipts per bill are legitimate, this becomes a warning with the existing document
+  linked, not a block. The comparison uses the normalised bill number (ADR-0017 §4(b)), and a
+  blocked save is not the only control — posting is idempotent (§4(d)).
 
 ## 5. Actions
 

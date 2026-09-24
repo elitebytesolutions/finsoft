@@ -60,7 +60,7 @@ request →  guard verifies the signature
 - **`tenant_id` is never read from a request body, query string, path parameter, custom header or cookie other than the session.** Not as a convenience for admin tooling, not as an override for support, not "just for this one import endpoint". A DTO containing a `tenantId` input field is a build failure.
 - The reason is structural, not stylistic: every defence below the guard — the repository filter, the RLS policy — takes the tenant as *input*. They verify that rows match the current tenant; they cannot verify that the current tenant is the right one. If the tenant is attacker-controlled, all four layers faithfully enforce the attacker's choice. Signing is what makes the input trustworthy, so it is the one place where no flexibility is permitted.
 - A user belonging to more than one tenant does not pass a tenant per request. They hold one session per tenant, and switching tenant is a re-authentication against the refresh endpoint that issues a new token pair with the new claim, recorded in the audit log.
-- Background work carries its tenant on its own persisted row — the `outbox` row, the import job record — and the worker establishes context from that, verified against the row's `tenant_id`, never from a queue payload field (ADR-0010).
+- Background work carries its tenant on its own persisted row — the `outbox` row, the import job record — and the worker establishes context from that, verified against the row's `tenant_id`, never from a queue payload field (ADR-0019).
 
 ### Rotating refresh tokens with reuse detection
 
@@ -170,7 +170,7 @@ Supporting controls: password policy with breach-list checking, Argon2id hashing
 - [ADR-0004](ADR-0004-postgresql-row-level-security.md) — what consumes the signed `tenant_id` claim
 - [ADR-0003](ADR-0003-shared-database-multi-tenancy.md) — why that claim is the whole isolation model's input
 - [ADR-0002](ADR-0002-postgresql-and-redis.md) — Redis caches session state; PostgreSQL owns it
-- [ADR-0010](ADR-0010-transactional-outbox.md) — how background work establishes tenant identity without a session
+- [ADR-0019](ADR-0019-transactional-outbox.md) — how background work establishes tenant identity without a session
 - [../NON_NEGOTIABLES.md](../NON_NEGOTIABLES.md) — rules 8, 9, 18, 20, 21, 22
 - [../ARCHITECTURE.md](../ARCHITECTURE.md) — §6 multi-tenancy, §8 permissions, §10 observability
 - [../PRD.md](../PRD.md) — §4.1 identity and RBAC, §5 security baseline

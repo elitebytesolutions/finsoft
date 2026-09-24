@@ -3,9 +3,11 @@
  * ui-prototype/src/App.tsx. The screen and its props are unchanged. */
 import { BankBook } from '@/screens/bank-book'
 import { Guard } from '@/components/guard'
-import { useFinsoft } from '@/app-context'
 
 export default function Page() {
-  const f = useFinsoft()
-  return <Guard module="Cash, Bank & GL"><BankBook/></Guard>
+  return (
+    <Guard module="Cash, Bank & GL">
+      <BankBook />
+    </Guard>
+  )
 }

@@ -172,7 +172,7 @@ Display follows Pakistani conventions ([PRD.md §5](../PRD.md)): `Rs` prefix, 2 
 - [ADR-0007](ADR-0007-weighted-average-costing.md) — the 6-decimal average and the COGS rounding boundary
 - [ADR-0005](ADR-0005-central-double-entry-posting-engine.md) — where the balance assertion and the rounding account posting happen
 - [ADR-0002](ADR-0002-postgresql-and-redis.md) — `numeric` as a deciding reason for PostgreSQL
-- [ADR-0010](ADR-0010-transactional-outbox.md) — payloads carry identifiers, and any money in them is a string
+- [ADR-0019](ADR-0019-transactional-outbox.md) — payloads carry identifiers, and any money in them is a string
 - [../NON_NEGOTIABLES.md](../NON_NEGOTIABLES.md) — rules 1, 6, 19; §3 golden scenarios; §4 no tolerances
 - [../ARCHITECTURE.md](../ARCHITECTURE.md) — §3 currency and precision in the accounting kernel
 - [../PRD.md](../PRD.md) — §5 localisation, §9 multi-currency out of scope for v1

@@ -8,7 +8,15 @@
   "exports": {
     ".": "./src/index.tsx",
     "./tokens.css": "./src/tokens/index.css",
-    "./kit.css": "./src/styles/kit.css"
+    "./kit.css": "./src/styles/kit.css",
+    "./employee-wizard.css": "./src/styles/employee-wizard.css"
   },
-  "peerDependencies": { "react": "^19", "react-dom": "^19", "lucide-react": "*" }
+  "peerDependencies": {
+    "react": "^19",
+    "react-dom": "^19",
+    "lucide-react": "*"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
 }

@@ -1,0 +1,95 @@
+# CODEOWNERS — FinSoft
+#
+# Encodes the required-reviewers table at docs/IMPLEMENTATION.md:273-285.
+#
+# ---------------------------------------------------------------------------
+# READ THIS BEFORE TRUSTING IT AS A CONTROL
+#
+# Every owner below is @elitebytesolutions, the sole human maintainer. That is
+# not a shortcut — it is an honest statement of what this file can currently
+# enforce, which is *routing and visibility*, not independent approval.
+#
+# The reviewer names in IMPLEMENTATION.md — Architecture Guardian, Accounting
+# Guardian, Database Guardian and the rest — are agent roles, not GitHub
+# accounts. An agent has no GitHub identity, so it cannot be a code owner, and
+# a guardian review is performed in-session and recorded in the PR rather than
+# as a GitHub approval.
+#
+# GitHub also does not let an author approve their own pull request. While
+# agents open PRs using the maintainer's account, the author and the only
+# possible approver are the same identity, so required approvals are set to
+# ZERO and required code-owner review is DISABLED. Any other setting
+# deadlocks the repository rather than protecting it.
+#
+# Human-only merging is therefore PROCEDURAL, not an enforced security
+# boundary. Credentials are shared with agents; the merge button is protected
+# by discipline, not by GitHub.
+#
+# NOTHING BELOW IS CURRENTLY ENFORCED BY GITHUB.
+#
+# This repository is private on a Free plan, where branch protection,
+# repository rulesets and secret scanning are all unavailable — verified, not
+# assumed: the API returns 403 "Upgrade to GitHub Pro or make this repository
+# public" for both branch protection and rulesets, and 422 "Secret scanning is
+# not available for this repository".
+#
+# So required pull requests, required status checks, and blocked force pushes
+# and deletions on main and develop are all currently unavailable. GitHub
+# Actions IS enabled, so CI runs on every pull request and fails visibly — it
+# simply cannot be made a merge requirement.
+#
+# Until that changes, this file routes and documents; it does not gate.
+#
+# Two things restore real enforcement:
+#   - GitHub Pro on the account, which enables branch protection and rulesets;
+#   - a separate GitHub App identity for agents, after which the author and
+#     the approver differ, required approvals can be raised above zero, and
+#     required code-owner review can be switched on.
+# ---------------------------------------------------------------------------
+
+# Default owner for everything not matched below.
+*                                   @elitebytesolutions
+
+# --- The financial kernels: Architecture + Accounting + QA -------------------
+/packages/accounting-kernel/        @elitebytesolutions
+/packages/inventory-kernel/         @elitebytesolutions
+
+# --- Schema: Database Guardian (+ Accounting if financial tables) -----------
+# ADR-0013: applied migrations are immutable. A diff that touches an existing
+# file here is a defect, not a change, and CI fails it independently.
+/database/migrations/               @elitebytesolutions
+/database/tests/                    @elitebytesolutions
+
+# --- Identity and authorisation: Security + Architecture --------------------
+/packages/auth/                     @elitebytesolutions
+/packages/permissions/              @elitebytesolutions
+
+# --- Money: Accounting ------------------------------------------------------
+# ADR-0011 and ADR-0014 live here. A change to rounding, precision or the
+# decimal configuration changes every figure the system will ever produce.
+/packages/validation/               @elitebytesolutions
+
+# --- Connection ownership and tenancy: Database + Architecture --------------
+/packages/database/                 @elitebytesolutions
+
+# --- Design system: Design System Agent -------------------------------------
+/packages/ui/                       @elitebytesolutions
+
+# --- Infrastructure and CI: DevOps + Security -------------------------------
+/infrastructure/                    @elitebytesolutions
+/.github/                           @elitebytesolutions
+/tools/                             @elitebytesolutions
+
+# --- The constitution -------------------------------------------------------
+# LEVEL 0 and LEVEL 1. NON_NEGOTIABLES cannot be changed by any agent, ADR,
+# ticket or deadline; an accepted ADR is superseded, never edited.
+/docs/NON_NEGOTIABLES.md            @elitebytesolutions
+/docs/adr/                          @elitebytesolutions
+/docs/ARCHITECTURE.md               @elitebytesolutions
+/AGENTS.md                          @elitebytesolutions
+/CLAUDE.md                          @elitebytesolutions
+
+# --- Invariants and golden scenarios ---------------------------------------
+# "Implementations may change; the expected numbers may not."
+/tests/accounting/                  @elitebytesolutions
+/tests/security/                    @elitebytesolutions

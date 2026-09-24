@@ -7,5 +7,9 @@ import { useFinsoft } from '@/app-context'
 
 export default function Page() {
   const f = useFinsoft()
-  return <Guard module="Admin & Control"><Admin key="roles" role={f.role} setRole={f.setRole} initialTab="Roles & permissions"/></Guard>
+  return (
+    <Guard module="Admin & Control">
+      <Admin key="roles" role={f.role} setRole={f.setRole} initialTab="Roles & permissions" />
+    </Guard>
+  )
 }

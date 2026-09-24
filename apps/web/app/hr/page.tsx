@@ -7,5 +7,13 @@ import { useFinsoft } from '@/app-context'
 
 export default function Page() {
   const f = useFinsoft()
-  return <Guard module="HR & Payroll"><HR employees={f.data.employees} onAddEmployee={f.addEmployee} canCreate={f.act('master:create')}/></Guard>
+  return (
+    <Guard module="HR & Payroll">
+      <HR
+        employees={f.data.employees}
+        onAddEmployee={f.addEmployee}
+        canCreate={f.act('master:create')}
+      />
+    </Guard>
+  )
 }

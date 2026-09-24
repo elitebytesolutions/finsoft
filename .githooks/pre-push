@@ -1,0 +1,131 @@
+#!/bin/sh
+#
+# FinSoft pre-push hook.
+#
+# GitHub branch protection is unavailable on a private repository on the Free
+# plan (verified: the API returns 403 "Upgrade to GitHub Pro"). This hook is
+# the local substitute. It is a speed bump, not a boundary — `--no-verify`
+# bypasses it, and anyone with push access can do that. It exists to make the
+# wrong thing require a deliberate act rather than a moment of inattention.
+#
+# Two jobs:
+#   1. Refuse any direct push to a protected branch, unconditionally.
+#   2. On a feature branch, run the checks that are cheap locally.
+#
+# Job 1 is NOT "allow it once the tests pass". main and develop are reached
+# through a reviewed pull request or not at all; a green test run is not a
+# substitute for review, and a direct push bypasses CI entirely.
+#
+# Installed by `npm run hooks:install`, which the `prepare` script runs on
+# every `npm install`, so a fresh clone or worktree gets it automatically.
+# `npm run hooks:verify` confirms it is active.
+
+set -e
+
+PROTECTED="refs/heads/main refs/heads/develop"
+
+# ---------------------------------------------------------------------------
+# 1. Protected branches
+#
+# git feeds one line per ref being pushed on stdin:
+#   <local ref> <local sha> <remote ref> <remote sha>
+# ---------------------------------------------------------------------------
+blocked=""
+while read -r _local_ref local_sha remote_ref _remote_sha; do
+  [ -z "$remote_ref" ] && continue
+
+  for protected in $PROTECTED; do
+    if [ "$remote_ref" = "$protected" ]; then
+      # A delete is pushed as an all-zero local sha. Refuse those too:
+      # branch deletion is the other thing protection would have blocked.
+      if [ "$local_sha" = "0000000000000000000000000000000000000000" ]; then
+        blocked="$blocked\n  deleting ${remote_ref#refs/heads/}"
+      else
+        blocked="$blocked\n  pushing to ${remote_ref#refs/heads/}"
+      fi
+    fi
+  done
+done
+
+if [ -n "$blocked" ]; then
+  printf '\n  REFUSED:%b\n\n' "$blocked"
+  cat <<'MESSAGE'
+  main and develop are reached through a reviewed pull request, never by a
+  direct push. This is not about whether the tests pass — a direct push
+  bypasses CI and review entirely.
+
+      git switch -c feature/FND-0NN-what-it-does
+      git push -u origin HEAD
+      gh pr create --base develop
+
+  Agents push feature branches only. They do not merge, do not push to a
+  protected branch, and do not use --no-verify.
+
+MESSAGE
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# 2. Feature-branch checks
+#
+# Deliberately not the full CI gate. A pre-push hook that takes minutes gets
+# bypassed, and a bypassed hook protects nothing. CI runs everything; this
+# catches the things that are fast and embarrassing.
+# ---------------------------------------------------------------------------
+printf '\n  pre-push checks\n'
+
+printf '    typecheck ... '
+if npm run --silent typecheck >/dev/null 2>&1; then
+  printf 'ok\n'
+else
+  printf 'FAILED\n\n'
+  echo "  npm run typecheck"
+  exit 1
+fi
+
+# Lint only what this push changes.
+#
+# A full `npm run lint` is CI's job. Scoping it here keeps the hook fast, and
+# means pre-existing debt in a directory you did not touch cannot block an
+# unrelated push — while code you DID touch is still held to the rules.
+BASE=$(git merge-base HEAD origin/develop 2>/dev/null || git merge-base HEAD origin/main 2>/dev/null || echo "")
+if [ -n "$BASE" ]; then
+  CHANGED=$(git diff --name-only --diff-filter=ACMR "$BASE" HEAD -- '*.ts' '*.tsx' '*.mjs' '*.cjs' 2>/dev/null || true)
+  if [ -n "$CHANGED" ]; then
+    COUNT=$(printf '%s\n' "$CHANGED" | wc -l | tr -d ' ')
+    printf '    lint (%s changed files) ... ' "$COUNT"
+
+    # Batched through xargs rather than expanded onto one command line.
+    #
+    # On Windows npx runs through cmd.exe, which caps a command line at about
+    # 8191 characters. A branch that had diverged by 229 files blew past that,
+    # and the hook printed FAILED for a command that had never run — a tool
+    # that cannot start being indistinguishable from a tool that found a
+    # problem. xargs splits the list and returns non-zero if ANY batch fails,
+    # so a real finding still stops the push.
+    LINT_LOG=$(mktemp)
+    if printf '%s\n' "$CHANGED" | xargs -d '\n' -n 40 npx eslint >"$LINT_LOG" 2>&1; then
+      printf 'ok\n'
+      rm -f "$LINT_LOG"
+    else
+      printf 'FAILED\n\n'
+      # The findings themselves, not a command to re-run by hand — the whole
+      # point of the batching is that the by-hand command may not fit.
+      sed 's/^/  /' "$LINT_LOG" | head -60
+      rm -f "$LINT_LOG"
+      exit 1
+    fi
+  fi
+fi
+
+printf '    unit tests ... '
+if npm run --silent test --workspaces --if-present >/dev/null 2>&1; then
+  printf 'ok\n\n'
+else
+  printf 'FAILED\n\n'
+  echo "  npm test"
+  echo "  (the data plane must be up: npm run db:up)"
+  exit 1
+fi
+
+exit 0

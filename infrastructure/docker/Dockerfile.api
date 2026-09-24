@@ -1,0 +1,99 @@
+# syntax=docker/dockerfile:1
+
+# apps/api — NestJS, served behind the reverse proxy at /api/*.
+#
+# Built once and deployed by digest: infrastructure/README.md is explicit that
+# the image which passed staging is the image that runs in production. Nothing
+# here may differ by environment; environments differ by environment variable.
+
+ARG NODE_VERSION=24.17.0
+
+# ---------------------------------------------------------------------------
+# build
+#
+# The whole workspace is copied before `npm ci`, rather than the manifests
+# first. That costs the npm layer cache on any source change, and it is
+# deliberate: a manifest-first build needs every workspace package.json listed
+# by hand, and this repository has thirteen. A list like that goes stale the
+# first time someone adds a package — silently, because `npm ci` resolves the
+# workspace graph as a whole and simply installs something different.
+#
+# Correctness over a cache hit. `.dockerignore` keeps the context small.
+# ---------------------------------------------------------------------------
+FROM node:${NODE_VERSION}-alpine AS build
+WORKDIR /app
+
+COPY . .
+
+# `prepare` installs git hooks (tools/hooks/install.mjs) and there is no .git
+# in the build context. --ignore-scripts skips it; nothing this image needs is
+# produced by a lifecycle script.
+RUN npm ci --ignore-scripts
+
+# SWC, per nest-cli.json. NestJS DI needs emitDecoratorMetadata, which Node's
+# type stripping cannot perform, so apps/api is the one workspace that really
+# compiles. nest-cli.json sets typeCheck: false — types are checked as their
+# own CI step, so a type error fails the pipeline instead of shipping.
+RUN npm run build --workspace @finsoft/api
+
+# ---------------------------------------------------------------------------
+# runtime
+# ---------------------------------------------------------------------------
+FROM node:${NODE_VERSION}-alpine AS runtime
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+# dumb-init reaps zombies and forwards signals. Without an init, SIGTERM is
+# delivered to node as PID 1, where there is no default handler — so the
+# process does not stop and the orchestrator SIGKILLs it. main.ts closes the
+# connection pool on SIGTERM, and that only runs if the signal arrives.
+RUN apk add --no-cache dumb-init
+
+COPY --from=build /app/package.json /app/package-lock.json ./
+COPY --from=build /app/apps apps
+COPY --from=build /app/packages packages
+
+# The migration runner reads database/migrations from disk, so the SQL has to
+# be in the image — the image is what runs `migrate` on staging, as a one-shot
+# (infrastructure/staging/compose.yaml). Omitting it produced
+# "ENOENT: scandir '/app/database/migrations'" at deploy time, after every
+# gate had passed, because nothing before that point runs migrations FROM the
+# image.
+#
+# `database/tests` is excluded by .dockerignore, so this is the migrations,
+# their checksums, fixtures and seeds — not the test suite.
+COPY --from=build /app/database database
+
+# Production dependencies only: the build stage's SWC, Nest CLI and vitest do
+# not reach the final image. Run after the source is in place so the workspace
+# graph resolves.
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
+
+# The packages ship TypeScript SOURCE, loaded by Node's native type stripping
+# — there is no dist to copy. apps/api/tsconfig.json says so directly: its
+# imports of @finsoft/database resolve to .ts files at runtime. An image
+# carrying only build output could not start.
+
+# node:alpine ships an unprivileged `node` user. Nothing here needs root, and
+# running as root means a container escape begins as root.
+USER node
+
+EXPOSE 3001
+
+# Liveness only, never readiness. A readiness failure means "send me no
+# traffic"; a liveness failure means "restart me". Pointing this at
+# /api/health/ready would restart a healthy API every time the database
+# blipped — turning a short outage into a restart storm, which is exactly what
+# health.service.ts splits the two probes to avoid.
+#
+# The path is /api/health, NOT /api/health/live: the controller maps liveness
+# to @Get() on the health route and readiness to @Get('ready'). An earlier
+# version of this file guessed /live, which 404s — so the healthcheck could
+# never pass and the container would sit permanently unhealthy while serving
+# traffic perfectly well. Caught by running the image, not by reading it.
+HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:3001/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["node", "apps/api/dist/main.js"]

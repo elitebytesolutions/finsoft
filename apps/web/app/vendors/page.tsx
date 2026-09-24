@@ -7,5 +7,14 @@ import { useFinsoft } from '@/app-context'
 
 export default function Page() {
   const f = useFinsoft()
-  return <Guard module="Masters"><PartyList data={f.data} kind="Vendor" onAdd={f.addMaster} canCreate={f.act('master:create')}/></Guard>
+  return (
+    <Guard module="Masters">
+      <PartyList
+        data={f.data}
+        kind="Vendor"
+        onAdd={f.addMaster}
+        canCreate={f.act('master:create')}
+      />
+    </Guard>
+  )
 }

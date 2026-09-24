@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.packages.json",
+  "compilerOptions": {
+    // Node 24 executes TypeScript directly by stripping types, so the runner
+    // needs no build step. Imports therefore carry .ts extensions, which is
+    // what Node resolves at runtime.
+    "allowImportingTsExtensions": true
+  },
+  "include": ["src/**/*.ts"]
+}

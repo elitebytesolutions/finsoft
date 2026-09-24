@@ -8,5 +8,5 @@ import { useNavigate } from '@/lib/router'
 export default function Page() {
   const f = useFinsoft()
   const navigate = useNavigate()
-  return <Dashboard go={navigate} data={f.data}/>
+  return <Dashboard go={navigate} data={f.data} />
 }

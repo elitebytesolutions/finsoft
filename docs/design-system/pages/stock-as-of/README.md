@@ -46,8 +46,8 @@ Panel         "Stock as on <date>" — Product · Category · Quantity · Avg. c
 | Product | left | name (700) |
 | Category | left | plain text |
 | Quantity | right | reconstructed as-of quantity: current stock minus every non-transfer movement dated after the cutoff |
-| Avg. cost | right | money — the product's **current** weighted-average cost, not a historical cost as of the cutoff (see §8) |
-| Stock value | right | money, 700 — `Quantity × Avg. cost` |
+| Avg. cost | right | money — the product's **current** weighted-average cost, not a historical cost as of the cutoff (see §8). It is a **rate, shown for information**; it is never multiplied by a quantity to produce a value |
+| Stock value | right | money, 700 — the **carried value as at the cutoff**: `Σ inventory_value_delta` over movements dated on or before the cutoff, for the costing scope. **Not `Quantity × Avg. cost`** (ADR-0015 §7), and **not today's `value_on_hand`** — that is a different date's answer. See §8 |
 | Reorder status | left | `Below level` (`warn`) / `Sufficient` (`good`), compared to the product's **current** reorder point |
 
 ## 5. Actions
@@ -81,13 +81,19 @@ date in the current implementation (see §8). Error loading the movement set —
 
 ## 8. Deviations from the prototype
 
-- **Avg. cost and Reorder status use the product's current values, not historical ones.** A
-  snapshot "as of 1 January" that prices every unit at today's weighted-average cost and compares
-  it to today's reorder point is not a true historical snapshot — it will misstate stock value for
-  any product whose cost has moved since. This needs a decision: either the cost and reorder
-  columns are relabelled as current-value context alongside a true historical quantity, or the
-  server-side reconstruction (`stock-overview` §10 already requires this to move server-side) also
-  reconstructs historical cost.
+- **Stock value is reconstructed to the cutoff, and this is now decided.** A historical snapshot
+  must sum `inventory_value_delta` over movements dated on or before the cutoff. It must **not**
+  read today's `stock_costing_state.value_on_hand`, which answers a different question, and it must
+  not multiply a historical quantity by today's average — that is the ADR-0015 §7 recomputation
+  with a date error layered on top. Both the quantity and the value are reconstructed from the
+  movement ledger over the same cutoff, so they agree with each other and with the inventory GL as
+  at that date.
+
+- **Avg. cost and Reorder status still use current values, and this remains open.** The average is
+  a rate, shown for information only, so it no longer feeds the value column — which removes the
+  misstatement. But a column headed `Avg. cost` in a snapshot dated 1 January, showing today's
+  rate, is still misleading. Either relabel it as current-value context, or reconstruct the
+  historical rate. Reorder status has the same problem and the same two options.
 - **The "All locations" select does nothing.** It renders with a static option list but the
   quantity calculation (`data.movements.filter(...)`) has no location dimension at all. Either the
   reconstruction becomes location-aware or the control should not be shown until it is.

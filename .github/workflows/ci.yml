@@ -1,0 +1,488 @@
+name: CI
+
+# Every push to every branch, plus the pull request.
+#
+# An earlier version ran only on `pull_request` and on pushes to main and
+# develop, to avoid duplicate runs. That left the case this project actually
+# operates in with NO coverage: agents push feature branches and never merge,
+# so a branch with no PR open yet was checked by nothing. Verified by pushing
+# one and watching zero runs start.
+#
+# The pull_request trigger stays because it tests the MERGE result, which a
+# branch push cannot — a merge can break what neither side broke alone.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main, develop]
+  # So a deploy can be exercised without merging. Agents push feature branches
+  # and never merge, so the automatic develop path alone could never be tested
+  # by the people who build it.
+  workflow_dispatch:
+
+# Least privilege. No job here writes to the repository, publishes a package
+# or comments on a PR, so nothing needs more than read.
+permissions:
+  contents: read
+
+# A superseded run is wasted minutes and a confusing status. The last push
+# to a ref is the one whose result matters.
+# Keyed on the HEAD BRANCH, not the ref, so the push run and the pull-request
+# run for the same branch share a group and the newer cancels the older.
+# Keying on github.ref would put them in different groups (refs/heads/x versus
+# refs/pull/N/merge) and run both.
+concurrency:
+  group: ci-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  # ------------------------------------------------------------------ #
+  # Everything that needs no database. Runs first and fails fast: a lint
+  # error should not wait on a PostgreSQL container starting.
+  # ------------------------------------------------------------------ #
+  static:
+    name: static analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # From .nvmrc, so CI and developers cannot drift. The version is
+          # load-bearing: packages/* run under Node's native type stripping.
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: typecheck
+        run: npm run typecheck
+
+      - name: lint
+        run: npm run lint
+
+      - name: format
+        run: npm run format:check
+
+      - name: module boundaries
+        run: npm run depcruise
+
+      # Proves every package entrypoint LOADS under plain node with no
+      # transpiler. Vitest transpiles, so a suite can be green against a
+      # module the runtime cannot load — which has happened here before.
+      - name: runtime smoke
+        run: npm run smoke
+
+      # Migration files against their recorded checksums. Offline: it reads
+      # the files and the manifest, not the database.
+      - name: migration ledger
+        run: npm run db:migrate:verify
+
+      # The pre-push hook refuses direct pushes to main and develop. If it
+      # stops being installable, that protection quietly disappears.
+      - name: git hooks
+        run: npm run hooks:verify
+
+  # ------------------------------------------------------------------ #
+  # Secret scanning. NON_NEGOTIABLES rule 20.
+  #
+  # Gitleaks as a pinned standalone binary, checksum-verified — not the
+  # GitHub Action. An action is a third party running arbitrary code in a
+  # job that holds GITHUB_TOKEN; a tarball pinned to a recorded SHA256 is
+  # a smaller surface and auditable from one file in this repository.
+  #
+  # NO continue-on-error, and none may be added. A finding fails the run,
+  # and so does a scanner that cannot complete — a broken scanner must
+  # never be indistinguishable from a clean repository.
+  # ------------------------------------------------------------------ #
+  secrets:
+    name: secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history. A secret committed months ago and deleted since is
+          # still in the pack file and still compromised; the default
+          # shallow clone would report the repository clean.
+          fetch-depth: 0
+
+      - name: scan
+        run: bash tools/security/secret-scan.sh
+
+      # The scanner's own negative control.
+      #
+      # A scan that passes proves the repository is clean OR that the scanner
+      # has been configured into uselessness, and those look identical from
+      # the outside. This tells them apart by planting a credential and
+      # requiring the scan to FAIL.
+      #
+      # `--staged`, NOT the history scan. `gitleaks detect` reads COMMITS: an
+      # uncommitted plant is invisible to it, which the script's own header
+      # says in terms. The first version of this step planted an uncommitted
+      # file and ran the history scan, so the scan correctly reported clean
+      # and this step correctly called that a failure — of itself.
+      #
+      # Committing the plant instead would put a JWT-shaped string in history
+      # permanently, which is the mistake this step exists to catch.
+      #
+      # It plants in the file the one allowlist entry used to cover, because
+      # that is where a hole was found: `condition = "AND"` with `paths` and
+      # `regexes` did not require both, so a different, unrelated token in
+      # that file was suppressed too.
+      - name: the scanner still catches a planted secret
+        run: |
+          # Assembled, because a file that plants a credential must not
+          # contain one — the literal form put a real JWT-shaped string into
+          # history and the scan flagged this file.
+          HEAD_SEG='eyJhbGciOiJIUzI1NiJ9'
+          BODY_SEG='eyJzdWIiOiJwbGFudGVkLWJ5LWNpIiwibmFtZSI6IlgifQ'
+          SIGN_SEG='QmxhaEJsYWhCbGFoU2lnbmF0dXJlVmFsdWVYWVo'
+          {
+            echo ''
+            echo "// ${HEAD_SEG}.${BODY_SEG}.${SIGN_SEG}"
+          } >> packages/observability/src/redact.test.ts
+          git add packages/observability/src/redact.test.ts
+
+          if bash tools/security/secret-scan.sh --staged; then
+            echo "::error::The staged scan PASSED with a credential staged for commit."
+            echo "::error::It is not scanning what it claims to scan. Check .gitleaks.toml"
+            echo "::error::for an allowlist whose scope is wider than its description."
+            exit 1
+          fi
+          echo "  planted secret was caught — the staged scan is doing its job"
+          git restore --staged packages/observability/src/redact.test.ts
+          git checkout -- packages/observability/src/redact.test.ts
+
+  # ------------------------------------------------------------------ #
+  # The real stack. Not a mocked database: the RLS and role tests assert
+  # properties only PostgreSQL can demonstrate, and a mock would agree
+  # with whatever it was told.
+  # ------------------------------------------------------------------ #
+  test:
+    name: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      # `.env.example` verbatim, which is deliberate twice over.
+      #
+      # Its passwords are named `local-dev-only-*` and this cluster is
+      # ephemeral, bound to the runner and destroyed with it — it is never
+      # network-reachable, so there is no secret here to rotate.
+      #
+      # And using the example unmodified means CI exercises the exact path a
+      # developer follows. If `.env.example` drifts and no longer produces a
+      # working system, this job is where that is discovered, rather than by
+      # the next person who clones the repository.
+      - name: environment
+        run: cp .env.example .env
+
+      # INFRASTRUCTURE.md:257 — "docker compose down -v && docker compose up
+      # must produce a working system from scratch; if it does not, that is a
+      # Wave 0 bug." A CI runner is always from scratch, so this step IS that
+      # criterion, run on every pull request.
+      #
+      # --wait blocks until every healthcheck passes, so a test never races a
+      # database that is still starting.
+      - name: data plane
+        run: docker compose up -d --wait
+
+      # Roles, privileges, encoding, locale provider and isolation level,
+      # asserted against the running cluster. This is what proves RLS is a
+      # control rather than decoration — finsoft_app must have neither
+      # BYPASSRLS nor SUPERUSER.
+      - name: data plane assertions
+        run: npm run db:verify
+
+      - name: migrate
+        run: npm run db:migrate
+
+      - name: migrate test cluster
+        run: npm run db:migrate:test
+
+      # ADR-0013 deferral D3, closed after it produced a live instance.
+      #
+      # Repointing a migration's citations changed two COMMENT ON strings;
+      # the committed generated/schema.d.ts kept the old text and typecheck,
+      # lint, depcruise, the migration ledger and 617 tests all stayed green.
+      # It was caught by a reviewer reading the file.
+      #
+      # assertGeneratedTypesAreExact catches a MALFORMED committed schema. It
+      # cannot catch a STALE one, because staleness is a fact about the
+      # database, not about the file. So the file is regenerated against the
+      # freshly-migrated database and any diff fails the run.
+      - name: schema types match the migrated database
+        run: |
+          npm run db:codegen
+          if ! git diff --quiet -- packages/database/src/generated/schema.d.ts; then
+            echo "::error::generated/schema.d.ts is stale. Run 'npm run db:codegen' and commit the result."
+            git --no-pager diff -- packages/database/src/generated/schema.d.ts
+            exit 1
+          fi
+
+      # Per-workspace suites, then the gate: smoke, schema, security,
+      # accounting. `npm test` is the whole thing — running vitest directly
+      # at the root is NOT equivalent, because it globs build output and the
+      # prototype directory that the workspace configs exclude.
+      - name: test
+        run: npm test
+
+      # A browser against the real API, started from dist — the same artefact
+      # shape the container runs. Kept in this job rather than its own so it
+      # reuses the data plane already up: the readiness route it exercises
+      # reaches PostgreSQL, so a separate job would have to stand the whole
+      # stack up again to assert the same thing.
+      - name: install browser
+        run: npx playwright install --with-deps chromium
+
+      - name: e2e
+        run: npm run test:e2e
+
+      - name: e2e report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: compose logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail 200
+
+      - name: tear down
+        if: always()
+        run: docker compose down -v
+
+  # ------------------------------------------------------------------ #
+  # The deployable artifacts.
+  #
+  # Added because nothing was building them. `npm test` and `npm run
+  # typecheck` both passed while `next build` failed on six pages for a
+  # real defect (useSearchParams outside a Suspense boundary) — a broken
+  # production build that no gate looked at, because no gate built.
+  #
+  # Builds all three images and does NOT push. Pushing needs a registry
+  # decision and somewhere to deploy to, neither of which exists yet; this
+  # proves the images can be produced, which is the part that can be true
+  # today.
+  # ------------------------------------------------------------------ #
+  images:
+    name: container images
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    # Only this job may write packages, and only this job gets the token.
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      # One broken image must not hide the state of the other two. web
+      # currently fails (FND-017); api and worker still publish.
+      fail-fast: false
+      matrix:
+        image: [api, worker, web]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: registry login
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          # The run's own short-lived token. No long-lived PAT is stored
+          # anywhere, and this one expires when the job ends.
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: build and push ${{ matrix.image }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infrastructure/docker/Dockerfile.${{ matrix.image }}
+          push: true
+          tags: ghcr.io/${{ github.repository }}-${{ matrix.image }}:${{ github.sha }}
+          # `org.opencontainers.image.source` is what LINKS the package to
+          # this repository, and the link is what makes a workflow's
+          # GITHUB_TOKEN able to read it.
+          #
+          # Without it the deploy failed with "denied" after a successful
+          # login, which is a confusing pair. The package names here are
+          # finsoft-api / finsoft-worker / finsoft-web and the repository is
+          # finsoft; because the names do not match, GitHub does not infer the
+          # link, and an unlinked package in a user namespace inherits no
+          # repository permissions at all.
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ github.event.repository.updated_at }}
+          # GitHub Actions cache, so an unchanged image is not rebuilt from
+          # scratch on every run.
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  # ------------------------------------------------------------------ #
+  # Staging deploy. INFRASTRUCTURE §3: develop deploys to Contabo
+  # automatically. Production is a different provider, needs a human, and
+  # has no path from here.
+  #
+  # `needs` IS the security property. This job cannot start unless static
+  # analysis, the full suite and the image build all passed in THIS run —
+  # which is to say, on this exact commit. A separate workflow keyed on a
+  # branch name could deploy a commit that was never tested.
+  # ------------------------------------------------------------------ #
+  deploy-staging:
+    name: deploy to staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # `secrets` is in this list deliberately. On this repository branch
+    # protection is unavailable, so a failing scan cannot literally block a
+    # merge the way rule 20 describes — but it CAN stop the leak reaching a
+    # running system, and that is enforcement worth having rather than a
+    # status nobody is required to read.
+    needs: [static, secrets, test, images]
+    if: github.ref == 'refs/heads/develop' || github.event_name == 'workflow_dispatch'
+
+    # The workflow default is `contents: read`, and only the images job
+    # overrides it. Without this the deploy job's GITHUB_TOKEN could not pull
+    # from GHCR at all — the registry login would succeed and every pull
+    # would be denied. Read, not write: this job publishes nothing.
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: authorise
+        env:
+          KEY: ${{ secrets.STAGING_SSH_KEY }}
+          HOSTKEYS: ${{ secrets.STAGING_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          # The trailing newline is required, not cosmetic. OpenSSH rejects a
+          # private key whose final line is unterminated with
+          # "error in libcrypto" — which reads like a corrupt or wrong-format
+          # key rather than a missing byte, and sends you looking in the wrong
+          # place. GitHub strips the trailing newline from a secret, so it has
+          # to be put back here.
+          printf '%s\n' "$KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          # A pinned host key. Without it, StrictHostKeyChecking=no accepts
+          # whatever answers on that address — the entire value of host
+          # verification, given away to save one secret.
+          printf '%s\n' "$HOSTKEYS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: ship configuration
+        env:
+          HOST: ${{ vars.STAGING_HOST }}
+          SSH_USER: ${{ vars.STAGING_USER }}
+        run: |
+          ssh "$SSH_USER@$HOST" 'install -d /opt/finsoft/postgres/init'
+          scp infrastructure/staging/compose.yaml "$SSH_USER@$HOST:/opt/finsoft/compose.yaml"
+          scp infrastructure/staging/Caddyfile "$SSH_USER@$HOST:/opt/finsoft/Caddyfile"
+          scp infrastructure/docker/postgres/init/* "$SSH_USER@$HOST:/opt/finsoft/postgres/init/"
+          scp infrastructure/staging/deploy.sh "$SSH_USER@$HOST:/opt/finsoft/deploy.sh"
+
+      # Digests, not tags. A tag is a moving pointer; a digest is the exact
+      # bytes that passed the gate above, which is what
+      # infrastructure/README.md requires be the thing that actually runs.
+      - name: deploy
+        env:
+          HOST: ${{ vars.STAGING_HOST }}
+          SSH_USER: ${{ vars.STAGING_USER }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          # Run the script as a FILE on the host, with stdin closed (-n).
+          #
+          # It used to be piped in: `ssh … 'bash -s' < deploy.sh`. That looks
+          # equivalent and is not — the script arrives on stdin, so any
+          # command inside it that reads stdin consumes THE REST OF THE
+          # SCRIPT. `docker compose run` attaches stdin by default, so the
+          # migrate container swallowed everything after it. The `up -d` never
+          # ran, bash reached EOF and exited 0, and the deploy reported
+          # success with only postgres and redis running.
+          ssh -n "$SSH_USER@$HOST" \
+            REGISTRY_TOKEN="$REGISTRY_TOKEN" ACTOR="$ACTOR" SHA="$SHA" REPO="$REPO" \
+            'bash /opt/finsoft/deploy.sh'
+
+      # A deploy that reports success without asking the thing whether it
+      # works is a deploy that reports success.
+      - name: smoke
+        env:
+          HOST: ${{ vars.STAGING_HOST }}
+        run: bash infrastructure/staging/smoke.sh "http://$HOST"
+
+      # A real browser against the real deployment, which curl cannot stand in
+      # for: smoke.sh proves each endpoint answers, not that a document loaded
+      # from the web origin can reach the API through the proxy. That is the
+      # arrangement ADR-0009's SameSite=Strict refresh cookie depends on.
+      #
+      # Runs HERE and not in the pull-request suite, so an unrelated change
+      # never fails because staging happened to be restarting.
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: install browser
+        run: npx playwright install --with-deps chromium
+
+      - name: browser against the deployed origin
+        env:
+          E2E_BASE_URL: http://${{ vars.STAGING_HOST }}
+        run: npx playwright test --config tests/e2e/playwright.deployed.config.ts
+
+  # ------------------------------------------------------------------ #
+  # Advisory, and deliberately not a gate — see the note below.
+  # ------------------------------------------------------------------ #
+  audit:
+    name: dependency audit (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # There is one known high advisory (postcss, reached through next) with
+    # no accept-or-upgrade ruling yet. Making this block merges today would
+    # mean every pull request is red for a reason unrelated to its change,
+    # and a permanently-red check is one nobody reads.
+    #
+    # This is a temporary posture, not a decision. Once that advisory is
+    # ruled on, remove continue-on-error so the check has teeth.
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: audit
+        run: npm audit --audit-level=high

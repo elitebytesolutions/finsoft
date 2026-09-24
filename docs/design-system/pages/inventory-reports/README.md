@@ -35,7 +35,9 @@ Recent      Recently generated, with format chips
 
 ## 4. Standard columns
 
-Valuation: `SKU · Product Name · Class · Company · Warehouse · Qty · Unit Cost · Total Value`
+Valuation: `SKU · Product Name · Class · Company · Qty · Unit Cost · Total Value`
+
+**No `Warehouse` column on the valuation report.** Inventory value exists only at the tenant/product costing scope (ADR-0015, ADR-0018 §8), so a per-warehouse value cannot be produced without multiplying a warehouse quantity by an average cost — the recomputation ADR-0015 §7 forbids, and one that does not sum back to the tenant value. Warehouse **quantities** are available on the stock-overview and stock-as-of pages; warehouse **valuations** are not invented here.
 (the column set the prototype's report engine already defines).
 Every report adds, in its header: company, as-at date or range, warehouse and class filters,
 accounting method for valuation, and generated-at.
@@ -47,6 +49,10 @@ accounting method for valuation, and generated-at.
 - Zero-quantity rows are excluded by default with an explicit "Include zero-stock items" toggle, and
   the toggle's state is printed on the output.
 - Valuation uses weighted-average cost and the report states so.
+- **The valuation figure is the carried value reconstructed to the report's as-at date** —
+  `Σ inventory_value_delta` over movements dated on or before it. It is never `Qty × Unit Cost`
+  (ADR-0015 §7), and never today's `value_on_hand` when the report is dated earlier. `Unit Cost` is
+  a rate shown for information; the `Total Value` column is not derived from it.
 
 ## 6. Actions
 
@@ -62,6 +68,10 @@ accounting method for valuation, and generated-at.
 - Inventory valuation is a **financial statement input**. The figure here must equal the inventory
   balance in the trial balance at the same date; the report shows both and flags a difference rather
   than presenting only one.
+- That equality only holds because both sides are reconstructed over the **same cutoff** from the
+  same stored amounts (ADR-0015). A report that sums movements to a past date on one side and reads
+  a current balance on the other will show a difference that is a date error, not a control
+  failure — and someone will then widen a tolerance to silence it.
 - Cost columns are hidden from roles without `stock:view-cost`, and the report refuses to export
   them for those roles rather than exporting a blank column.
 

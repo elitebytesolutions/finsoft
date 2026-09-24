@@ -1,0 +1,12 @@
+{
+  // Typechecked like every other suite. A test that does not compile is not a
+  // test; see tests/security/tsconfig.json.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "types": ["node"]
+  },
+  "include": ["**/*.ts"]
+}

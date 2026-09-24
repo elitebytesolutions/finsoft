@@ -151,7 +151,7 @@ Per-tenant variation is **configuration** — account mappings and posting-rule 
 
 **A generic `postJournalEntry(lines[])` API that modules call with accounts and amounts.** Rejected, and this is the near-miss worth naming explicitly. It looks central but is not: the accounting decision — which account, which direction — stays in the module, so the kernel degrades into a validation utility, per-tenant COA mapping leaks into feature code, and the Accounting Guardian has nothing reviewable. Typed events are what keep the *decision* in the kernel.
 
-**Asynchronous posting: modules emit events to a queue, a posting service consumes them.** Rejected. The journal entry would commit after the sale, leaving a window in which stock had moved and the books had not caught up — the exact "books may be wrong for a while" condition ADR-0001 rejects. Posting is synchronous and in-transaction; only *side effects* are asynchronous (ADR-0010).
+**Asynchronous posting: modules emit events to a queue, a posting service consumes them.** Rejected. The journal entry would commit after the sale, leaving a window in which stock had moved and the books had not caught up — the exact "books may be wrong for a while" condition ADR-0001 rejects. Posting is synchronous and in-transaction; only *side effects* are asynchronous (ADR-0019).
 
 **A rules engine with tenant-editable posting scripts.** Rejected for v1. Tenant-authored accounting logic is unreviewable and untestable against golden scenarios. Tenants configure account mappings and select among Guardian-approved rule variants; they do not author rules.
 
@@ -174,6 +174,6 @@ Per-tenant variation is **configuration** — account mappings and posting-rule 
 - [ADR-0007](ADR-0007-weighted-average-costing.md) — how that figure is computed
 - [ADR-0011](ADR-0011-money-representation.md) — amounts, precision and the rounding account
 - [ADR-0012](ADR-0012-fiscal-period-locking.md) — the period check at step 3
-- [ADR-0010](ADR-0010-transactional-outbox.md) — side effects, after the commit
+- [ADR-0019](ADR-0019-transactional-outbox.md) — side effects, after the commit
 - [../NON_NEGOTIABLES.md](../NON_NEGOTIABLES.md) — rules 1, 5, 9, 11, 12, 13, 14, 17, 19, 22
 - [../ARCHITECTURE.md](../ARCHITECTURE.md) — §3 the accounting kernel, §5 dependency rules

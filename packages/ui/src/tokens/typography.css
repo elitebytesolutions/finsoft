@@ -1,30 +1,30 @@
 /* Typography tokens — docs/design-system/01-foundations.md §2
  * The family/colour/background declarations are the prototype :root verbatim. */
-:root{
-  font-family:Inter,"SF Pro Display","Segoe UI",sans-serif;
-  color:#1e293b;
-  background:#F3F7FA;
-  font-synthesis:none;
+:root {
+  font-family: Inter, 'SF Pro Display', 'Segoe UI', sans-serif;
+  color: #1e293b;
+  background: #f3f7fa;
+  font-synthesis: none;
 
-  --font-sans:Inter,"SF Pro Display","Segoe UI",sans-serif;
-  --figures:tabular-nums lining-nums;
+  --font-sans: Inter, 'SF Pro Display', 'Segoe UI', sans-serif;
+  --figures: tabular-nums lining-nums;
 
-  --t-page-title:700 27px/1.2 var(--font-sans);
-  --t-doc-title:700 22px/1.2 var(--font-sans);
-  --t-kpi:700 22px/1.2 var(--font-sans);
-  --t-section:700 13px/1.45 var(--font-sans);
-  --t-body:600 12.5px/1.45 var(--font-sans);
-  --t-body-sm:500 11.5px/1.45 var(--font-sans);
-  --t-table:500 12px/1.2 var(--font-sans);
-  --t-table-strong:700 12px/1.2 var(--font-sans);
-  --t-label:600 10.5px/1.45 var(--font-sans);
-  --t-caption:500 9.5px/1.45 var(--font-sans);
-  --t-eyebrow:800 9px/1.2 var(--font-sans);
-  --t-th:700 9px/1.2 var(--font-sans);
-  --t-badge:700 10px/1.2 var(--font-sans);
+  --t-page-title: 700 27px/1.2 var(--font-sans);
+  --t-doc-title: 700 22px/1.2 var(--font-sans);
+  --t-kpi: 700 22px/1.2 var(--font-sans);
+  --t-section: 700 13px/1.45 var(--font-sans);
+  --t-body: 600 12.5px/1.45 var(--font-sans);
+  --t-body-sm: 500 11.5px/1.45 var(--font-sans);
+  --t-table: 500 12px/1.2 var(--font-sans);
+  --t-table-strong: 700 12px/1.2 var(--font-sans);
+  --t-label: 600 10.5px/1.45 var(--font-sans);
+  --t-caption: 500 9.5px/1.45 var(--font-sans);
+  --t-eyebrow: 800 9px/1.2 var(--font-sans);
+  --t-th: 700 9px/1.2 var(--font-sans);
+  --t-badge: 700 10px/1.2 var(--font-sans);
 
-  --tracking-page-title:-1px;
-  --tracking-doc-title:-.5px;
-  --tracking-eyebrow:1.3px;
-  --tracking-th:.6px;
+  --tracking-page-title: -1px;
+  --tracking-doc-title: -0.5px;
+  --tracking-eyebrow: 1.3px;
+  --tracking-th: 0.6px;
 }

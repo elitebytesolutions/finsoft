@@ -45,3 +45,12 @@ ui-prototype/
 # One-off debugging harnesses pinned to local dev servers. Real tooling
 # lives in tools/ and is reviewed; these are not.
 /.*.mjs
+playwright-report/
+test-results/
+
+# ---- depcruise negative-control probes ----
+# tests/security/depcruise-negative-control.spec.ts writes deliberately
+# rule-violating files into the real tree, because the rules are path-based
+# and cannot match a temp directory. They are deleted in afterEach; this
+# guarantees an interrupted run can never leave one committable.
+**/__depcruise_probe_*__.ts

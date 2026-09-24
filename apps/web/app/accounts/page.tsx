@@ -7,5 +7,14 @@ import { useFinsoft } from '@/app-context'
 
 export default function Page() {
   const f = useFinsoft()
-  return <Guard module="Cash, Bank & GL"><ChartOfAccounts data={f.data} onAdd={f.addMaster} onRemove={f.removeMaster} canCreate={f.act('master:create')}/></Guard>
+  return (
+    <Guard module="Cash, Bank & GL">
+      <ChartOfAccounts
+        data={f.data}
+        onAdd={f.addMaster}
+        onRemove={f.removeMaster}
+        canCreate={f.act('master:create')}
+      />
+    </Guard>
+  )
 }

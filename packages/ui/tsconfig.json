@@ -1,0 +1,21 @@
+{
+  // packages/ui is consumed by apps/web (a browser bundle), not executed by
+  // Node — so it does NOT extend tsconfig.packages.json and carries no
+  // erasableSyntaxOnly. It is typechecked here so it is checked at all:
+  // without a tsconfig and a script, `--workspaces --if-present` skipped it
+  // entirely and its .tsx was compiler-checked by nothing.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    // bundler, not node16: packages/ui is consumed by apps/web through Next's
+    // bundler (transpilePackages), which resolves extensionless relative
+    // imports. Inheriting node16 from tsconfig.base would demand `.js`
+    // specifiers this package neither has nor needs.
+    "module": "Preserve",
+    "moduleResolution": "bundler",
+    "lib": ["dom", "dom.iterable", "ES2022"],
+    "allowImportingTsExtensions": true,
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
+}

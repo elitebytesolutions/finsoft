@@ -1,0 +1,108 @@
+# Secret scanning configuration. NON_NEGOTIABLES rule 20.
+#
+# Every entry here is a REVIEWED exception with a stated reason. That is the
+# point of suppressing in a committed file rather than passing a flag: a flag
+# on a command line is invisible in review and permanent by accident, whereas
+# this diff has to be read and approved by someone.
+#
+# Before adding anything, the test is not "is this noisy" but "is this
+# provably not a credential". If a value could authenticate as anything,
+# anywhere, it is rotated — not allowlisted.
+
+[extend]
+# Gitleaks' full default rule set, then our additions. Never replaced: an
+# allowlist that silently drops the defaults is how a scanner keeps passing
+# while checking less and less.
+useDefault = true
+
+# ---------------------------------------------------------------------------
+# The one exception: a public documentation token, exempted BY STRING
+# ---------------------------------------------------------------------------
+
+[[allowlists]]
+description = """
+The public RFC 7519 / jwt.io example token. HS256, signed with the literal
+secret "your-256-bit-secret", payload {"sub":"1234567890"}. It authenticates
+to nothing, anywhere, and it is the canonical counter-example every JWT
+redaction test needs.
+
+EXEMPTED BY STRING, WITH NO PATH SCOPE, and that is the correction rather
+than an oversight.
+
+The previous entry paired this regex with `paths` under `condition = "AND"`,
+which reads as "this exact string, in that one file". Measured against
+gitleaks 8.30.1, it did not behave that way: a DIFFERENT, unrelated JWT added
+to an allowlisted file was suppressed as well, while the same token in any
+other file was caught. The `paths` clause was doing the work and the regex
+was decoration -- so the entry silenced the jwt rule for a whole file while
+claiming to exempt one value.
+
+Dropping `paths` inverts that. The exemption now attaches to the VALUE, which
+is the thing that is provably not a credential, rather than to a LOCATION,
+which is not. A real JWT in any file -- including the test files -- still
+fails.
+
+The fixtures were ALSO changed to assemble the token from its three segments
+rather than hold it as a literal, so nothing in the working tree matches this
+rule at all. This entry is still necessary because gitleaks scans FULL
+HISTORY and the literal is in past commits: a secret committed once is in the
+pack file forever, which is precisely why the scan is configured that way.
+"""
+regexes = [
+  '''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJzdWIiOiIxMjM0NTY3ODkwIn0\.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk''',
+]
+
+# VERIFIED, not assumed. Reproduce the measurement before adding any entry
+# here: add a DIFFERENT secret of the same shape to whatever the exception is
+# meant to cover, and confirm the scan still fails. An exception whose scope
+# has not been measured is an exception of unknown size -- which is what the
+# previous version of this entry turned out to be.
+
+# ---------------------------------------------------------------------------
+# What this entry's history demonstrates, recorded because it is evidence
+# ---------------------------------------------------------------------------
+#
+# The scan was RED for 13 consecutive commits and nobody noticed, because
+# nothing required anyone to read it. The fixture was added to logger.test.ts
+# in 1dd0044 and to log-leak.spec.ts in e9d4dcc; every push after the first
+# of those failed the secrets job, and every one of them was pushed anyway.
+# The branch then merged with the check red.
+#
+# That is GAP-001 happening, not in the abstract. GAP-001 says: "A person
+# with write access can merge a pull request whose secret scan failed, and
+# nothing in the repository will stop them." It was written as an exposure to
+# be aware of. It is now an observed event with a date.
+#
+# Note what did NOT go wrong, because the difference matters for the ruling:
+# the scanner was correct on every one of those runs, the finding was a true
+# positive by its own rules, and no actual credential was committed. What
+# failed was the human loop — the only control GAP-001 leaves in place.
+#
+# The compensating control that DID hold: deploy-staging lists `secrets` in
+# its `needs`, so a red scan cannot reach a running system. Staging was never
+# deployed from any of those commits.
+#
+# ---------------------------------------------------------------------------
+# Deliberately NOT allowlisted
+# ---------------------------------------------------------------------------
+#
+# .env.example — it carries values named `local-dev-only-*`, which are
+# placeholders rather than credentials, and gitleaks does not flag them. It is
+# left OUT of this file on purpose, so that it remains in scope.
+#
+# That is worth stating accurately rather than optimistically: keeping it in
+# scope does NOT mean every real password pasted there will be caught. A
+# scanner matches known token shapes and high entropy, and an arbitrary
+# human-chosen password — `Bhatti2026!` — has neither. It would pass.
+#
+# So the reason to keep the file in scope is that it costs nothing and catches
+# the recognisable cases (an API key, a token, a connection string with
+# credentials in it). The control that actually covers the rest is that real
+# secrets never live in the repository at all: staging generates its database
+# passwords on the host, and production credentials exist only in that
+# environment's protected store (INFRASTRUCTURE §6).
+#
+# infrastructure/staging/** — the staging stack reads its database passwords
+# from a .env generated ON the host, which is not in the repository and never
+# passes through CI. There is nothing here to exempt, and that is the design
+# (INFRASTRUCTURE §6).

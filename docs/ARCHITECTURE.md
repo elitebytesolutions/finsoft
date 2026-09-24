@@ -81,6 +81,7 @@ finsoft/
 │   ├── validation/          Shared schemas (zod), money/date/decimal primitives
 │   ├── ui/                  Financial UI Kit — design system components
 │   ├── reporting/           Report definitions, query builders, exporters
+│   ├── observability/       Structured logging, correlation context, redaction (ADR-0016)
 │   └── shared-types/        DTOs and contracts shared by web/api/worker
 │
 ├── modules/
@@ -223,9 +224,25 @@ modules/inventory ─────┘         (kernels never import modules)
 
 packages/accounting-kernel ──► packages/database, validation, shared-types
                                (and NOTHING else)
+
+packages/observability ──► packages/shared-types
+                           (and node core — nothing else first-party)
+
+apps/api, apps/worker ─────────┐
+modules/*/{api,application,    ├──► packages/observability
+           infrastructure}     │
+packages/database, auth,       │
+  permissions, reporting,      │
+  validation ──────────────────┘
 ```
 
 Hard rules:
+
+- **Who may log, and who may not.** Amended by ADR-0016. The services, the modules outside their domain layer, and the five lower-level packages above may log — through `@finsoft/observability` only, never through `console`. The **kernels**, `modules/*/domain` and `apps/web` may not log at all: the kernels because §5's allow-list is the strongest sentence in this document and a logger would be its first exception; the domain layer because it is pure TypeScript that returns a result or throws, and the caller decides what is worth a line; `apps/web` because a server logger in a browser writes to a console nobody reads.
+
+  Enforced in both directions — `observability-imports-almost-nothing` for what the logger may import, `observability-importers-are-allowlisted` for who may import it. The second exists because `packages/database` became the first importer while nothing constrained the inbound side, and an edge that is legal only because nobody wrote a rule is the same posture that let a dead `exclude` pattern survive two reviews.
+
+  **Note what this does not say.** `packages/database` may log, and a kernel may import `packages/database`, so a kernel will transitively link against the logger once the kernels have any content. That is accepted: "and NOTHING else" has always been a statement about **direct** edges enforced by a direct-edge allow-list, and `packages/database` already carries `pg`, `kysely` and `node:async_hooks` behind it. The containment is that `packages/database`'s public surface re-exports nothing from observability, so `getLogger` is not nameable through the allowed edge.
 
 - **The kernels know nothing about feature modules, HTTP, or UI.** `accounting-kernel` importing from `modules/sales` is a build failure.
 - **Modules do not import each other's internals.** `modules/sales` may not import `modules/inventory/domain/*`. Cross-module interaction goes through a published application-layer interface or a domain event.
@@ -393,7 +410,7 @@ Each has its own database, credentials, secrets, storage and queues. Staging nev
 | Costing | Weighted average | ADR-0007 |
 | Inventory | Movement ledger + FEFO batch selection | ADR-0008 |
 | Sessions | JWT access + rotating refresh | ADR-0009 |
-| Side effects | Transactional outbox | ADR-0010 |
+| Side effects | Transactional outbox | ADR-0019 |
 | Money | `numeric` + decimal library | ADR-0011 |
 | Periods | Fiscal period locking | ADR-0012 |
 | Cache/queue | Redis | ADR-0002 |
