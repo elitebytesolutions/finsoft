@@ -113,4 +113,13 @@ Asking costs one message. Guessing wrong about accounting costs a restatement.
 
 ## Current state
 
-Wave 0 — factory foundation. The constitution exists; the monorepo does not yet. Build the factory before building features.
+**Wave 0 — the factory foundation — is built.** Thirteen workspaces, four migrations, a staging environment that deploys automatically from `develop`, and a gate of 714 tests. ADR-0013, 0014, 0016 and 0019 are Accepted; ADR-0010 is superseded by 0019.
+
+**No feature exists yet, and both kernels are `export {}`.** Nothing can post a journal entry, move stock or raise an invoice. Wave 1 is Platform — authentication, tenancy, RBAC, audit chain.
+
+Two things worth knowing before you start:
+
+- **[GAP-001](docs/COMPLIANCE_GAPS.md) is open.** Branch protection is unavailable on this plan, so a failing check cannot block a merge. Every gate runs and reports; nothing enforces the result. It is accepted for foundation and staging only — **production is blocked** until merge protection is enabled *and* a deliberately failing secret scan is proven to block a merge.
+- **[docs/WAVE_0_REGISTER.md](docs/WAVE_0_REGISTER.md)** is the contract-by-contract record, including what is deferred and why. A deferral there is a decision with a signature, not a gap someone forgot.
+
+Build the factory before building features — and the factory is now the thing you are building on, not the thing you are building.
