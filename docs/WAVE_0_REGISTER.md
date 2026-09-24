@@ -206,11 +206,32 @@ The schema it needs is now built and reviewed: `004_create_outbox.sql` carries t
 
 Delivered: accounting (58), schema (36), security (50), integration (20), performance (3), e2e (4). Fixtures are built through the real `withGlobal`/`withTenant` surface with unique naming per run; cleanup is by disposable cluster.
 
-Not delivered: **reconciliation** has no suite. See the scope decision below.
+Delivered since: **reconciliation**, in the only form that is honest today — see below.
 
 **Evidence.** `7fdc9b5` harness and golden scenarios · `a5093af` foundation suites.
 
-**Outstanding.** Reconciliation scope approval — separate from GAP-001's signatures.
+**Reconciliation, and what it does and does not prove.**
+
+`tests/reconciliation/` used to be empty, with a README arguing — correctly — that a suite asserting zero equals zero would be worse than none, because it would appear in the run as coverage and stay green through every change that later broke reconciliation for real.
+
+That argument is about the DATA, not the COMPARISON. The thing a reconciliation suite has to get right is detecting a break and saying exactly where it is, and that can be built and proved against fixtures now. 32 tests, covering all eight acceptance criteria the README records:
+
+| | |
+|---|---|
+| Exact equality | A difference of 0.0001 is a break. No tolerance parameter exists and a test greps to keep it that way |
+| Decimal, not float | 300 rows of 0.1000 sum to exactly 30.0000 |
+| Survives reversals | A mixed run of postings and their negations reconciles; a reversal that reached the GL but not the subledger does not |
+| **Per tenant, not by accident** | T1 over by 100 and T2 under by 100 produce **two** breaks. A reconciler that grouped by account and forgot the tenant would report clean while both tenants' books were wrong |
+| Names the break | Account and tenant, both directions — a GL line with no subledger row, and a subledger row that never reached the GL |
+| Valuation is the carried value | `13000.0000 − 3466.6667 = 9533.3333` reconciles; the forbidden `110 × 86.666667 = 9533.3334` is reported as a break of 0.0001 |
+| Zero together | Value left behind by stock that is gone, and stock carried at nothing — **both reported even when the two ledgers agree with each other** |
+| Never recomputes | The reconciler takes no average cost. The test computes one only to show the two figures differ, and never passes it in |
+
+**What it does NOT prove: that any real ledger reconciles.** There is no real ledger. So `dormant.spec.ts` is a tripwire rather than a test — it asserts both kernels are still `export {}` and that no `journal_entries`, `journal_lines`, `stock_movements` or `stock_balances` table has been migrated. The moment any of those changes, it fails with instructions to wire the reconcilers to real rows. All three tripwires were verified to fire by making each condition true in turn.
+
+A test that fails when the code improves is normally a bad test. This one is deliberate: it is the only mechanism that turns "deferred to Wave 5" from a note in a README into something that happens.
+
+**Outstanding.** The scope approval below is still owed — this closes the "one test of each kind" criterion, and does not by itself decide that reconciliation coverage may legitimately begin at Wave 5.
 
 ---
 
@@ -251,13 +272,52 @@ Not delivered: **reconciliation** has no suite. See the scope decision below.
 
 **Acceptance criteria.** One health endpoint · one page · one table · one migration · one test of each kind · deployed automatically, with no manual dispatch.
 
-**Status: blocked.**
+**Status: complete, except for one acceptance criterion — see Outstanding.**
 
-Every component exists and has been deployed. The remaining word is **automatically**: the `develop → staging` path has never run. Deployment to date has been by `workflow_dispatch`, which executes every gate and deploys only their artifacts — no bypass — but is a manual trigger.
+The word that mattered was **automatically**, and it is now demonstrated. Every deployment before this one was a `workflow_dispatch` — every gate ran and only their artifacts shipped, no bypass, but a human pressed it.
 
-**Blocked by.** A merge to `develop`, which is a human action. Agents do not merge.
+**Evidence, 2026-09-24T00:16Z.** `develop` at `3de7822`. Nobody triggered anything; the merge did.
 
-**Outstanding.** "One test of each kind" — reconciliation has none. See below.
+```
+finsoft-staging-web-1       Up 9 minutes (healthy)      ← redeployed
+finsoft-staging-api-1       Up 9 minutes (healthy)      ← redeployed
+finsoft-staging-worker-1    Up 9 minutes (healthy)      ← redeployed
+finsoft-staging-postgres-1  Up 25 hours (healthy)       ← data plane untouched
+finsoft-staging-redis-1     Up 25 hours (healthy)
+```
+
+Readiness, through the proxy:
+
+```
+GET /api/health        {"status":"ok","uptimeSeconds":573}
+GET /api/health/ready  {"status":"ready","checks":{"database":
+                        {"status":"up","detail":"schema 4, requires 4"}}}
+```
+
+`schema 4, requires 4` is the load-bearing line: **the outbox migration reached staging through the pipeline**, not by hand. The ledger there now reads 001, 002, 003, 004.
+
+Images are **digest-pinned**, never tags:
+
+```
+api     ghcr.io/elitebytesolutions/finsoft-api@sha256:7fcc7119…
+worker  ghcr.io/elitebytesolutions/finsoft-worker@sha256:5aeee4c2…
+web     ghcr.io/elitebytesolutions/finsoft-web@sha256:471ab048…
+```
+
+And the worker came up with the dispatcher configured, reporting the commit it was built from:
+
+```json
+{"msg":"worker started","version":"3de78225ab84dfaa77777b09e77d58f9d6bc7b14",
+ "outbox":{"leaseSeconds":300,"batchSize":50,"consumers":0}}
+```
+
+`consumers: 0` is correct, not unfinished — ADR-0019 puts a consumer with the code that raises its topic, and nothing can post a sale until Wave 5. The loop runs, enumerates every tenant, reaps expired leases and finds nothing, which is how the machinery gets exercised on every deployment instead of first running in anger in Wave 5. It logs only when it does something, so silence here is the designed behaviour rather than a stalled loop.
+
+**What this did NOT prove**, because the criterion is narrower than it sounds: that a *failing* check can stop a merge. It cannot, on this plan — see [GAP-001](COMPLIANCE_GAPS.md), which was observed happening during this very branch. The pipeline gates the deploy; the merge button gates nothing.
+
+**"One test of each kind" is now met.** `tests/reconciliation/` was the last kind with nothing in it; see FND-012 for what the 32 tests there prove and, more importantly, what they do not.
+
+**Outstanding.** Nothing in this contract. What remains for Wave 0 is signatures — the Product Owner on ADR-0013, 0014, 0016 and 0019, on [GAP-001](COMPLIANCE_GAPS.md), on the reconciliation scope, and on the D1–D9 deferrals — plus the FND-016/018 restate-or-retire decision.
 
 ---
 

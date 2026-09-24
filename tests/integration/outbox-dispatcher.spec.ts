@@ -347,6 +347,27 @@ describe('3 — the fence, as the dispatcher sees it', () => {
  * 4. REPEATED FAILURES REACH THE CAP
  * ==================================================================== */
 describe('4 — nothing retries forever', () => {
+  /*
+   * A LONGER BUDGET, and the reason is a real property rather than slowness.
+   *
+   * `runCycle` visits EVERY tenant — that is the liveness guarantee, since a
+   * tenant nobody enumerates is a tenant whose rows are never dispatched. So
+   * the cost is O(tenants) per cycle, and this test runs ten of them.
+   *
+   * 004's scaling note predicted this: "one claim probe per tenant per poll
+   * cycle is O(tenants) queries per interval. Fine at Wave 0 volumes; measure
+   * it before the tenant count reaches three figures." This test measured it.
+   * A local test database that has accumulated 728 tenants across many runs
+   * took over 30 seconds for ten cycles.
+   *
+   * Nothing cleans up — rule 4 means no role holds DELETE and the harness
+   * says so — so a long-lived local cluster grows without bound. CI starts
+   * from scratch every run and sees roughly fifteen tenants. `npm run
+   * db:reset` is the remedy locally.
+   *
+   * The budget is raised rather than the behaviour changed, because the
+   * behaviour is correct and the measurement is worth keeping.
+   */
   it('a consistently failing consumer drives the row to FAILED at the attempt cap', async () => {
     const row = await enqueue()
 
@@ -376,7 +397,7 @@ describe('4 — nothing retries forever', () => {
       /unreachable/,
     )
     expect(after?.reclaims, 'the dispatcher never died, so no reclaim is charged').toBe(0)
-  })
+  }, 120_000)
 
   it('a consistently dying dispatcher drives it to FAILED at the RECLAIM cap instead', async () => {
     const row = await enqueue()

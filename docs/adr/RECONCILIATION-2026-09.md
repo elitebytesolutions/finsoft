@@ -80,7 +80,6 @@ Nothing in this section is approved by having been written down.
 | D2 | 0013 | Lint rule for the `types` option on `Pool`/`Client`/query config, and for `pg-types` in any `package.json` | **Open at both layers.** The runtime assertion covers `setTypeParser` and `pg.defaults` but a per-`Pool` `types` map does not alter the module-global parser, so it passes both |
 | D3 | 0013 | Codegen drift check in CI | **No longer hypothetical.** It went stale in `b4271b0` — two `COMMENT ON` strings changed and the committed `schema.d.ts` kept the old text while every gate stayed green. Caught by a reviewer reading the file, which is the detection mechanism this deferral says is missing. Highest priority in this table |
 | D4 | 0013 / 0014 | `numeric` round-trip integration test, and the negative type test | Both need a `numeric` column; migrations 001–004 create none. Deferred to the wave that adds the first monetary column, where they become writable and non-vacuous |
-| D5 | 0014 | Property-based generation over `Money.from`'s rejections | Needs a property-testing dependency. **Tooling decision — `fast-check` adoption — pending, Product Owner** |
 | D6 | 0014 | Lint rule forbidding float egress (`.toNumber()`, `Number()` on a decimal receiver) | Deferred **in favour of the cheaper fix**: making `Amount.value` internal closes the whole class and costs nothing, since nothing outside the package reads it. Recorded as the next change to `packages/validation` rather than as a rule to write |
 | D8 | 0016 | A distinguishable `sessionCorrelationId` minting format | So the guard can reject a value it did not mint rather than accepting any UUID (I10). Not urgent: no session concept exists until ADR-0009, Wave 1, and no session identifier of any kind appears in a log line today |
 | D9 | 0016 | `packages/database`'s error listener as a **log line** rather than `console.error`. Now carries a scoped `eslint-disable` with a stated reason, so it is visible rather than silently legal | The credential leak is closed (R9); the structured-logging migration is not. The listener runs inside an `'error'` handler and `getLogger()` throws before `initLogger()`, so a CLI or a test would turn a recoverable idle-socket error into a throw from an error handler. Needs a logger lifecycle `packages/database` does not have |
@@ -154,10 +153,10 @@ These are recommendations for sign-off. **Recording a decision here does not sup
 
 | Item | Owner | Status |
 |---|---|---|
-| Scope of this reconciliation, and the deferral of D1–D9 to their stated waves | Product Owner | ☐ not recorded |
-| The `packages/database → packages/observability` edge (R9) | Architecture Guardian | ☐ not recorded |
-| D5 — adopting `fast-check`, or declining it | Product Owner | ☐ not recorded |
-| [GAP-001](../COMPLIANCE_GAPS.md) — secret scanning cannot block merge | Product Owner **and** Architecture Guardian | ☐ not recorded — tracked separately, and **not** covered by the first row |
+| Scope of this reconciliation, and the deferral of D1–D9 to their stated waves | Product Owner | ☐ not recorded — **D3 and D5 are now closed**, so this covers D1, D2, D4, D6, D7 (built), D8 and D9 |
+| The `packages/database → packages/observability` edge (R9) | Architecture Guardian | ✅ **ACCEPTED**, 2026-09-23, conditional on `observability-importers-are-allowlisted`, which is built |
+| D5 — adopting `fast-check`, or declining it | Product Owner | ✅ **ADOPTED**, 2026-09-24. Security-reviewed, pinned, D5 closed with property tests |
+| [GAP-001](../COMPLIANCE_GAPS.md) — secret scanning cannot block merge | Product Owner **and** Architecture Guardian | ⚠️ **OPEN by decision**, 2026-09-24. Scoped to foundation/staging; production blocked until merge protection is enabled AND a deliberately failing scan is proven to block a merge |
 
 ---
 

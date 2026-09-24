@@ -1,6 +1,6 @@
 # ADR-0010: Transactional outbox for all external side effects
 
-**Status:** Accepted — **would be superseded by [ADR-0019](ADR-0019-transactional-outbox.md)** once that is accepted; the two statuses change together, as ADR-0007 and ADR-0015 do
+**Status:** Superseded by [ADR-0019](ADR-0019-transactional-outbox.md), 2026-09-24
 **Date:** 2026-09-22
 **Deciders:** Product Owner, Architecture Guardian
 **Authority:** LEVEL 1 — reversing this requires a superseding ADR

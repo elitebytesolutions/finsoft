@@ -1,6 +1,7 @@
 # ADR-0014: decimal.js as the single decimal implementation
 
-**Status:** Proposed
+**Status:** Accepted
+**Accepted:** 2026-09-24, by the Product Owner, on the guardian evidence recorded in the Signatures block below
 **Date:** 2026-09-22
 **Deciders:** Product Owner, Architecture Guardian, Accounting Guardian
 **Authority:** LEVEL 1 — reversing this requires a superseding ADR
@@ -177,7 +178,15 @@ Every bullet below states what enforces it and, where a mechanism does not exist
 
 ### Deferred, with a reason
 
-- **Property-based generation over `Money.from`'s rejections.** The repository has no property-testing dependency, and adding one is a tooling decision rather than a gap in this ADR. The fixed `it.each` tables cover the documented cases. **Deferred pending a decision on adopting `fast-check`.**
+- ~~**Property-based generation over `Money.from`'s rejections.**~~ **CLOSED, 2026-09-24.** The Product Owner adopted `fast-check`: *"Adopt fast-check now: security-review and pin it, then close D5 with property tests for money parsing, finite-value rejection, scale, and rounding boundaries."*
+
+  **Security review, before adoption.** `fast-check@4.10.2`, MIT, one transitive dependency — `pure-rand@8.4.2`, MIT, itself dependency-free. Pinned exactly (`--save-exact`), dev-only, declared in `packages/validation`'s own devDependencies as well as the root so the workspace that uses it says so. `npm audit` before and after: the same two advisories, both the pre-existing `postcss`-via-`next` chain recorded as [GAP-002](../COMPLIANCE_GAPS.md). **It introduced nothing.**
+
+  **`packages/validation/src/money.properties.test.ts`** — the four areas asked for, in four blocks. The rounding oracle is written in **BigInt string arithmetic, independent of decimal.js**: if both were decimal.js the test would assert only that the library agrees with itself. The oracle is itself checked against this ADR's hand-computed boundary table before anything trusts it.
+
+  What the properties add over the `it.each` tables is the cases nobody thought of — order-independent summation across shuffled arrays, `round(-x) = -round(x)` at every scale, and every kind accepting its own scale while rejecting one digit more.
+
+  **They found something on the first run**, and it was the generator: five properties failed because it emitted `00` and `007`, which `DECIMAL_NOTATION` rejects. That rejection is deliberate — `^-?(?:0|[1-9]\d*)(?:\.\d+)?$` keeps one value to one spelling and is why `0x1f` cannot arrive as 31 rupees. The generator was corrected. Recorded because the opposite conclusion, loosening the regex to make a test pass, is the easy one to reach at speed and would have widened an input filter that exists to keep hexadecimal out of a ledger.
 - **A `numeric` round-trip integration test, and the negative type test.** Both need a `numeric` column, and migrations 001–004 create none. **Deferred to the wave that adds the first monetary column**, where they become writable and non-vacuous.
 - **A rule requiring every `numeric` column to be SCALED.** `database/tests/schema.spec.ts` forbids `real`, `double precision`, `money` and `float`; nothing requires `numeric` to carry precision and scale. A bare `numeric amount` satisfies every rule in the repository and accepts `'Infinity'`, which the non-NaN CHECK does not stop — the scale is what stops it. **Owed with the first monetary column**, in the same migration.
 - **`Money.serialize(x)` with a defaulted scale is a second, undeclared rounding boundary.** `toJSON()` and `toString()` *throw* on a value carrying more decimals than its scale, deliberately, because an implicit `toFixed` on the way out is the "rounded twice" failure ADR-0011 forbids. But `serialize: (a, toScale = scale) => a.value.toFixed(toScale)` rounds **silently**, and with the default argument no scale was explicitly requested — so `260.000001` throws through `toJSON()` and becomes `"260.0000"` through `serialize(x)`. The justification in the code, that an explicitly requested scale is a documented boundary, holds for `serialize(x, 2)` and not for `serialize(x)`. **Resolve before the posting engine**, by requiring the argument or by recording the kind's own scale as a documented boundary — that is where a full-precision intermediate first meets a serialiser.
@@ -197,7 +206,7 @@ Every bullet below states what enforces it and, where a mechanism does not exist
 |---|---|
 | **Architecture Guardian** | ✅ **ACCEPTED**, 2026-09-23. Three citations corrected: the freeze assertion lives in `packages/validation/src/money.test.ts`, not a `decimal.test.ts` that does not exist; direct assignment and the `toFixed` descriptor pin are now asserted rather than merely implemented; the `one-decimal-library` rule is quoted as committed, including `decimal.js-light`. |
 | **Accounting Guardian** | ✅ **SIGNED** — see the line below. Refused first, over three findings; signed after all three landed and were independently re-verified. |
-| **Product Owner** | ☐ not recorded |
+| **Product Owner** | ✅ **SIGNED**, 2026-09-24 — see below |
 
 > Accounting Guardian — Accounting Domain Guardian (FinSoft), 2026-09-23 — signed for half-up rounding, modulo sign and non-finite rejection, all recomputed independently; the database non-NaN CHECK is dormant until the first numeric column in Wave 2, and Amount.value must be internal before any code outside packages/validation consumes an Amount.
 
@@ -209,7 +218,13 @@ Every bullet below states what enforces it and, where a mechanism does not exist
 
 **Two obligations in that signature line come due in Wave 2, at different moments.** The dormant `CHECK` fires when the first monetary column is written; the `Amount.value` gate fires when the first module imports `Money`. Likely different tickets. Both are in the deferrals above.
 
-**Status stays `Proposed`.** A record carrying two of three signatures and an `Accepted` status would claim more than it has, which is the defect class this document was rejected over the first time. The status flips when the last box carries a name and a date, and not before.
+> Product Owner — 2026-09-24 — "Accept ADR-0013, ADR-0014, ADR-0016, and ADR-0019 after the PO signs each dated signature block. Guardian evidence is present; no financial invariant violation was found."
+
+The last box now carries a date, so the status is **Accepted**.
+
+**D5 is no longer deferred.** The same decision adopted `fast-check`: *"Adopt fast-check now: security-review and pin it, then close D5 with property tests for money parsing, finite-value rejection, scale, and rounding boundaries."* See the deferrals above for what replaced it.
+
+The two obligations in the Accounting Guardian's signature line still come due in Wave 2, at different moments: the dormant `CHECK` fires when the first monetary column is written, the `Amount.value` gate when the first module imports `Money`.
 
 ## Related
 
