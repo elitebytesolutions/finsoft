@@ -251,13 +251,50 @@ Not delivered: **reconciliation** has no suite. See the scope decision below.
 
 **Acceptance criteria.** One health endpoint · one page · one table · one migration · one test of each kind · deployed automatically, with no manual dispatch.
 
-**Status: blocked.**
+**Status: complete, except for one acceptance criterion — see Outstanding.**
 
-Every component exists and has been deployed. The remaining word is **automatically**: the `develop → staging` path has never run. Deployment to date has been by `workflow_dispatch`, which executes every gate and deploys only their artifacts — no bypass — but is a manual trigger.
+The word that mattered was **automatically**, and it is now demonstrated. Every deployment before this one was a `workflow_dispatch` — every gate ran and only their artifacts shipped, no bypass, but a human pressed it.
 
-**Blocked by.** A merge to `develop`, which is a human action. Agents do not merge.
+**Evidence, 2026-09-24T00:16Z.** `develop` at `3de7822`. Nobody triggered anything; the merge did.
 
-**Outstanding.** "One test of each kind" — reconciliation has none. See below.
+```
+finsoft-staging-web-1       Up 9 minutes (healthy)      ← redeployed
+finsoft-staging-api-1       Up 9 minutes (healthy)      ← redeployed
+finsoft-staging-worker-1    Up 9 minutes (healthy)      ← redeployed
+finsoft-staging-postgres-1  Up 25 hours (healthy)       ← data plane untouched
+finsoft-staging-redis-1     Up 25 hours (healthy)
+```
+
+Readiness, through the proxy:
+
+```
+GET /api/health        {"status":"ok","uptimeSeconds":573}
+GET /api/health/ready  {"status":"ready","checks":{"database":
+                        {"status":"up","detail":"schema 4, requires 4"}}}
+```
+
+`schema 4, requires 4` is the load-bearing line: **the outbox migration reached staging through the pipeline**, not by hand. The ledger there now reads 001, 002, 003, 004.
+
+Images are **digest-pinned**, never tags:
+
+```
+api     ghcr.io/elitebytesolutions/finsoft-api@sha256:7fcc7119…
+worker  ghcr.io/elitebytesolutions/finsoft-worker@sha256:5aeee4c2…
+web     ghcr.io/elitebytesolutions/finsoft-web@sha256:471ab048…
+```
+
+And the worker came up with the dispatcher configured, reporting the commit it was built from:
+
+```json
+{"msg":"worker started","version":"3de78225ab84dfaa77777b09e77d58f9d6bc7b14",
+ "outbox":{"leaseSeconds":300,"batchSize":50,"consumers":0}}
+```
+
+`consumers: 0` is correct, not unfinished — ADR-0019 puts a consumer with the code that raises its topic, and nothing can post a sale until Wave 5. The loop runs, enumerates every tenant, reaps expired leases and finds nothing, which is how the machinery gets exercised on every deployment instead of first running in anger in Wave 5. It logs only when it does something, so silence here is the designed behaviour rather than a stalled loop.
+
+**What this did NOT prove**, because the criterion is narrower than it sounds: that a *failing* check can stop a merge. It cannot, on this plan — see [GAP-001](COMPLIANCE_GAPS.md), which was observed happening during this very branch. The pipeline gates the deploy; the merge button gates nothing.
+
+**Outstanding.** "One test of each kind" — **reconciliation has none**. That is the one acceptance criterion of this contract still unmet, and it is the reason this entry does not read simply "complete".
 
 ---
 
