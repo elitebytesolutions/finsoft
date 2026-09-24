@@ -119,7 +119,11 @@ else
   # Full history, not just the diff. A secret committed six months ago and
   # deleted yesterday is still in the pack file and still compromised; a
   # diff-only scan reports the repository clean.
-  echo "scanning full history and working tree"
+  # HISTORY, not the working tree. `detect` reads commits; an uncommitted
+  # change is invisible to it, which is why `--staged` exists and why the two
+  # modes cannot stand in for each other. The message used to say "and working
+  # tree", which is wrong and cost a CI debugging round.
+  echo "scanning full git history"
   set +e
   "$BIN" detect "${ARGS[@]}"
   CODE=$?

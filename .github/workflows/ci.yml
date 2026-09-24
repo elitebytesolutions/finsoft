@@ -118,27 +118,26 @@ jobs:
       # A scan that passes proves the repository is clean OR that the scanner
       # has been configured into uselessness, and those look identical from
       # the outside. This tells them apart by planting a credential and
-      # requiring the scan to fail.
+      # requiring the scan to FAIL.
       #
-      # It plants it in the file the ONE allowlist entry used to cover,
-      # because that is where the hole was: `condition = "AND"` with `paths`
-      # and `regexes` did not require both, so a different, unrelated JWT in
-      # that file was suppressed too. The entry claimed to exempt one value
-      # and actually disabled a rule for a whole file. This step would have
-      # caught that the day it was written.
+      # `--staged`, NOT the history scan. `gitleaks detect` reads COMMITS: an
+      # uncommitted plant is invisible to it, which the script's own header
+      # says in terms. The first version of this step planted an uncommitted
+      # file and ran the history scan, so the scan correctly reported clean
+      # and this step correctly called that a failure — of itself.
       #
-      # The planted value is left in place on failure, so whoever debugs the
-      # job can see exactly what the scanner was shown.
+      # Committing the plant instead would put a JWT-shaped string in history
+      # permanently, which is the mistake this step exists to catch.
+      #
+      # It plants in the file the one allowlist entry used to cover, because
+      # that is where a hole was found: `condition = "AND"` with `paths` and
+      # `regexes` did not require both, so a different, unrelated token in
+      # that file was suppressed too.
       - name: the scanner still catches a planted secret
         run: |
-          # ASSEMBLED, for the same reason the test fixtures are.
-          #
-          # The first version of this step wrote the token as a literal, and
-          # the scan then flagged THIS FILE — a real JWT-shaped string,
-          # committed. The step meant to prove the scanner works was itself
-          # the finding. Correct behaviour by the scanner, and a reminder
-          # that `gitleaks detect` reads COMMITS: verifying before committing
-          # this file is what let it through.
+          # Assembled, because a file that plants a credential must not
+          # contain one — the literal form put a real JWT-shaped string into
+          # history and the scan flagged this file.
           HEAD_SEG='eyJhbGciOiJIUzI1NiJ9'
           BODY_SEG='eyJzdWIiOiJwbGFudGVkLWJ5LWNpIiwibmFtZSI6IlgifQ'
           SIGN_SEG='QmxhaEJsYWhCbGFoU2lnbmF0dXJlVmFsdWVYWVo'
@@ -146,13 +145,16 @@ jobs:
             echo ''
             echo "// ${HEAD_SEG}.${BODY_SEG}.${SIGN_SEG}"
           } >> packages/observability/src/redact.test.ts
-          if bash tools/security/secret-scan.sh; then
-            echo "::error::The secret scan PASSED with a credential planted in the repository."
-            echo "::error::It is not scanning what it claims to scan. Check .gitleaks.toml for an"
-            echo "::error::allowlist whose scope is wider than its description."
+          git add packages/observability/src/redact.test.ts
+
+          if bash tools/security/secret-scan.sh --staged; then
+            echo "::error::The staged scan PASSED with a credential staged for commit."
+            echo "::error::It is not scanning what it claims to scan. Check .gitleaks.toml"
+            echo "::error::for an allowlist whose scope is wider than its description."
             exit 1
           fi
-          echo "  planted secret was caught — the scan is doing its job"
+          echo "  planted secret was caught — the staged scan is doing its job"
+          git restore --staged packages/observability/src/redact.test.ts
           git checkout -- packages/observability/src/redact.test.ts
 
   # ------------------------------------------------------------------ #
