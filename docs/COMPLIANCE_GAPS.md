@@ -9,7 +9,15 @@
 
 An entry stays **open** until both boxes carry a name and a date. Acknowledging a gap is not authorising it.
 
-**A recommended disposition has been offered for GAP-001** — accept the documented limitation for foundation and staging work, with Architecture Guardian concurrence, and a mandatory review before any production deployment. That is a recommendation awaiting signature. It is recorded here so the intent is not lost; it does **not** tick either box, and the gap remains open.
+### GAP-001 — Product Owner disposition, 2026-09-24
+
+> **Keep GAP-001 open.** It is acceptable only for foundation/staging; production remains blocked until required merge protection is enabled **and** a deliberately failing secret scan is proven to block merge.
+
+**The gap stays OPEN.** This is a scoped acceptance, not a closure, and the boxes below stay unticked deliberately — acknowledging a gap is not authorising it, and a gap marked signed is one nobody looks at again.
+
+Note what the second condition adds. The earlier recommendation asked for "a mandatory review before any production deployment", which is a promise about attention. This asks for **proof**: a scan made to fail on purpose, and a merge observed to be refused. That is the difference between believing the control works and having watched it work, and it is the right standard here — GAP-001 stopped being hypothetical on 2026-09-23, when a red scan rode through thirteen commits and a merge because nothing required anyone to read it.
+
+**Production is blocked until both hold.** Enabling branch protection is necessary and not sufficient; the second condition is what distinguishes a configured control from a working one.
 
 A register of places where a **LEVEL 0** requirement in [NON_NEGOTIABLES.md](NON_NEGOTIABLES.md) is not fully enforced by a mechanism.
 
@@ -72,7 +80,12 @@ None of these is the required control. They reduce the window; they do not close
 
 ### What would close it
 
-Any one of:
+**Both of these, not either.** Product Owner disposition, 2026-09-24:
+
+1. Required merge protection enabled, so a failing check cannot be merged past.
+2. **A deliberately failing secret scan proven to block a merge.** Configured is not the same as working, and this gap's own history is the argument: the scanner was correct on every one of thirteen runs and the merge happened anyway.
+
+The mechanism for (1) is one of:
 
 - A paid GitHub plan on this repository, then a ruleset marking `secret scan` a required status check. This is the intended fix and it is a billing decision, not a technical one.
 - Making the repository public, which enables branch protection at no cost — **rejected**: the repository must stay private.

@@ -1,6 +1,7 @@
 # ADR-0016: Structured logging in a dedicated observability package
 
-**Status:** Proposed
+**Status:** Accepted
+**Accepted:** 2026-09-24, by the Product Owner, on the guardian evidence recorded in the Signatures block below
 **Date:** 2026-09-22
 **Deciders:** Product Owner, Architecture Guardian
 **Authority:** LEVEL 1 — reversing this requires a superseding ADR
@@ -203,9 +204,11 @@ Accepted by the Architecture Guardian on the reasoning that "and NOTHING else" h
 | | |
 |---|---|
 | **Architecture Guardian** | ✅ **ACCEPTED**, 2026-09-23, subject to two stale paragraphs being corrected — both landed. §2 asserted that no depcruise negative-control harness existed, and the debt list repeated it; the harness exists, is cited by name, and proves all five rules in §2's table. A LEVEL 1 record asserting a control is absent is the mirror of asserting one that is not there. |
-| **Product Owner** | ☐ not recorded |
+| **Product Owner** | ✅ **SIGNED**, 2026-09-24 — see below |
 
-**Status stays `Proposed`.** A record carrying two of three signatures and an `Accepted` status would claim more than it has, which is the defect class this document was rejected over the first time. The status flips when the last box carries a name and a date, and not before.
+> Product Owner — 2026-09-24 — "Accept ADR-0013, ADR-0014, ADR-0016, and ADR-0019 after the PO signs each dated signature block. Guardian evidence is present; no financial invariant violation was found."
+
+Both signatures are recorded, so the status is **Accepted**. This record amends [ARCHITECTURE §2](../ARCHITECTURE.md)'s package list and §5's dependency rules; both edits are already landed, which was the Architecture Guardian's merge condition.
 
 ## Related
 

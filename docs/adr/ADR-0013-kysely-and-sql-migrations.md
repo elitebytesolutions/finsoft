@@ -1,6 +1,7 @@
 # ADR-0013: Kysely as the query builder, with hand-written SQL migrations
 
-**Status:** Proposed
+**Status:** Accepted
+**Accepted:** 2026-09-24, by the Product Owner, on the guardian evidence recorded in the Signatures block below
 **Date:** 2026-09-22
 **Deciders:** Product Owner, Architecture Guardian, Database Guardian
 **Authority:** LEVEL 1 — reversing this requires a superseding ADR
@@ -220,11 +221,15 @@ Every bullet states what enforces it. Where a mechanism does not exist the bulle
 |---|---|
 | **Architecture Guardian** | ✅ **ACCEPTED**, 2026-09-23, at `b4271b0`, subject to three text corrections which are landed: the harness proves nine of seventeen rules and names the eight it does not; the `.dependency-cruiser.cjs` path citation is corrected; the stale test count is removed. |
 | **Database Guardian** | ✅ **SIGNED** — see the line below. |
-| **Product Owner** | ☐ not recorded |
+| **Product Owner** | ✅ **SIGNED**, 2026-09-24 — see below |
 
 > Database Guardian — FinSoft Database Guardian, 2026-09-23 — signed at 5486e48 on verified evidence: the exclude pattern is anchored and both recurrences are pinned by test (verify:controls R1 and R11 both go red when the historical patterns are restored); nine of seventeen depcruise rules are proved to fire and the eight unproven are named exactly; the CHECKSUMS claim is correctly reduced to file-vs-manifest agreement with assertAppliedUnchanged named as the control that actually catches an edited migration; D3 is closed by a real CI gate. D1, D2 and D4 are accepted as disclosed debt, D2 confirmed open at both layers. Signed subject to three non-substantive errata being recorded, none of which changes a decision: (1) the zod sentence in "Boundaries — enforced" is withdrawn — zod was never inert, it resolves under the six runtime extensions and produces four importer edges, as .dependency-cruiser.cjs and depcruise-negative-control.spec.ts already record; (2) the repaired graph reads 304 modules / 678 dependencies, not 303 / 678; (3) kysely has six importers, not five.
 
-**All three errata are landed** in the bullets above. The status stays `Proposed` until the Product Owner's box carries a name and a date.
+**All three errata are landed** in the bullets above.
+
+> Product Owner — 2026-09-24 — "Accept ADR-0013, ADR-0014, ADR-0016, and ADR-0019 after the PO signs each dated signature block. Guardian evidence is present; no financial invariant violation was found."
+
+All three signatures are recorded, so the status is **Accepted**. D1, D2 and D4 remain open as disclosed debt — accepting this record accepts the debt as stated, not as closed. D3 was closed before signature.
 
 ## Related
 

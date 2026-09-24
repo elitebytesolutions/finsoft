@@ -1,6 +1,7 @@
 # ADR-0019: Transactional outbox for all external side effects
 
-**Status:** Proposed
+**Status:** Accepted
+**Accepted:** 2026-09-24, by the Product Owner, on the guardian evidence recorded in the Signatures block below
 **Date:** 2026-09-23
 **Deciders:** Product Owner, Architecture Guardian
 **Authority:** LEVEL 1 — reversing this requires a superseding ADR
@@ -273,9 +274,13 @@ Because every external interaction is already a row plus a consumer, moving noti
 |---|---|
 | **Architecture Guardian** | ✅ **ACCEPTED**, 2026-09-23, subject to three corrections outside this record — all landed: the committed `generated/schema.d.ts` was stale (ADR-0013 deferral D3's first live instance, in the commit that caused it, with every gate green); a line-number citation into a superseded record; and a "no DDL changed" claim in `004`'s revision note, when `COMMENT ON` is DDL and writes `pg_description`. |
 | **Accounting Guardian** | — not required. Confirmed at review. |
-| **Product Owner** | ☐ not recorded |
+| **Product Owner** | ✅ **SIGNED**, 2026-09-24 — see below |
 
-**ADR-0010's status flips to `Superseded by ADR-0019` in the same change that flips this one to `Accepted`.** The two move together, as ADR-0007 and ADR-0015 do. `database/migrations/004_create_outbox.sql` must not merge before both — it already cites this supersession in the present tense, which is the Database Guardian's condition C2.
+> Product Owner — 2026-09-24 — "Accept ADR-0013, ADR-0014, ADR-0016, and ADR-0019 after the PO signs each dated signature block. Guardian evidence is present; no financial invariant violation was found."
+
+Both signatures are recorded, so the status is **Accepted** and [ADR-0010](ADR-0010-transactional-outbox.md) is now `Superseded by ADR-0019`. The two moved together, as ADR-0007 and ADR-0015 do.
+
+**Database Guardian condition C2 was breached and is now satisfied, in that order.** C2 required that `004_create_outbox.sql` not merge before this record was accepted, because the migration cites the supersession in the present tense. The migration merged on 2026-09-23 and this was accepted on 2026-09-24, so for one day a released migration cited a Proposed record. No code consequence — the schema is identical either way — and it is recorded rather than passed over, because a condition quietly overtaken by events is a condition that stops being written next time.
 
 **Status stays `Proposed`.** A record carrying two of three signatures and an `Accepted` status would claim more than it has, which is the defect class this document was rejected over the first time. The status flips when the last box carries a name and a date, and not before.
 
