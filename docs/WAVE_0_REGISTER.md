@@ -14,6 +14,26 @@ Reference CI run for everything marked complete below: [35909452053](https://git
 | **partial** | Delivered in part; the remainder is named |
 | **blocked** | Cannot proceed; the blocker is named |
 | **deferred** | Deliberately out of Wave 0, with an owner and a target wave |
+| **retired** | The number is withdrawn. Nothing was built under it and nothing is owed |
+
+---
+
+## Where Wave 0 stands, 2026-09-24
+
+**Every contract is resolved.** Sixteen complete, one partial by permanent external limitation, two retired.
+
+| | |
+|---|---|
+| **FND-015**, the exit criterion | **Demonstrated.** `develop → staging` deployed automatically on merge; readiness reports `schema 4, requires 4`; images digest-pinned |
+| **FND-000** | **Permanently partial.** Branch protection is unavailable on this plan — [GAP-001](COMPLIANCE_GAPS.md), a billing decision, not work |
+| **FND-016**, **FND-018** | **Retired**, 2026-09-24 |
+| ADR-0013 · 0014 · 0016 · 0019 | **Accepted**, with guardian and Product Owner signatures dated |
+| GAP-001 | **Open by decision.** Foundation and staging only; production blocked until merge protection is enabled AND a deliberately failing scan is proven to block a merge |
+| GAP-002, D1 · D2 · D4 · D6 · D8 · D9 | Deferred with reasons in [RECONCILIATION-2026-09](adr/RECONCILIATION-2026-09.md). D3, D5 and D7 were closed |
+
+**What Wave 0 did not deliver, stated plainly:** any feature. Both kernels are `export {}`; nothing can post a journal entry, move stock or raise an invoice. That is the point of the wave — build the factory first — and it is worth stating because a register full of green entries can read as a working system.
+
+**The one acceptance criterion met by argument rather than by data** is reconciliation coverage. The comparison is built and proved against fixtures; there is no ledger to reconcile, and a tripwire fails the moment there is. The scope decision below is still owed.
 
 ---
 
@@ -321,9 +341,19 @@ And the worker came up with the dispatcher configured, reporting the commit it w
 
 ---
 
-## FND-016 · *candidate: design-system reconciliation*
+## FND-016 · RETIRED
 
-**Status: unknown — awaiting restatement or retirement.**
+**Status: retired, 2026-09-24, by the Product Owner.**
+
+The number is withdrawn. It is not renumbered, reused or quietly reassigned — it stays here as a retired entry so that a future reader finding "FND-016" in an old commit message or planning note can see what happened to it rather than assume the register lost it.
+
+**Nothing was built under it and nothing is owed.** Retiring an unrecoverable contract is the honest outcome: the alternative was to invent a scope, adopt it, and then report progress against the invention.
+
+The candidate description below is left in place as the record of what the number *may* have meant. **It is not a backlog item.** If reconciling `packages/ui` and `docs/design-system/` against what `apps/web` renders is worth doing, it needs a contract of its own with acceptance criteria, raised on its own merits — not inherited from a number whose meaning nobody can establish.
+
+---
+
+### The original entry, preserved
 
 The number was used in planning conversation and its contract was never committed, so it cannot be recovered from the repository.
 
@@ -331,11 +361,9 @@ The number was used in planning conversation and its contract was never committe
 
 That description comes from recollection of a planning discussion. It is recorded so the intent is not lost, and it is explicitly **not** a scope anyone should build against — the register would otherwise be inventing a contract and then reporting progress against its own invention.
 
-**Action required.** Product Owner to either restate it as a real contract with acceptance criteria, or retire the number. Wave 0 should not close with a task in this state.
-
 | Decision | Status |
 |---|---|
-| Restate or retire | ☐ not recorded |
+| Restate or retire | ✅ **RETIRED**, 2026-09-24, Product Owner |
 
 ---
 
@@ -352,9 +380,19 @@ That description comes from recollection of a planning discussion. It is recorde
 
 ---
 
-## FND-018 · *candidate: CLAUDE.md correction*
+## FND-018 · RETIRED
 
-**Status: unknown — awaiting restatement or retirement.** As FND-016.
+**Status: retired, 2026-09-24, by the Product Owner.** As FND-016.
+
+**But the defect it pointed at was real, and retiring the number does not fix a document.** That is the one thing worth separating here: FND-018's candidate description was recollection, and the recollection happened to name a live problem.
+
+`CLAUDE.md`'s "Current state" section read *"Wave 0 — factory foundation. The constitution exists; the monorepo does not yet."* Thirteen packages, four migrations, 714 tests and a deployed staging environment later, that was plainly false — and `CLAUDE.md` is loaded into **every** agent session, so the drift misinformed every one of them from its first token.
+
+Corrected in the same change that retired the number, and narrowly: **only the factual status paragraph**. No rule, authority level, boundary or hard rule was touched. A retired number is not authority to edit a governing document, and the edit stands on being a false statement rather than on FND-018.
+
+---
+
+### The original entry, preserved
 
 **Candidate description, not an authoritative contract:** correcting `CLAUDE.md` where it has drifted from the repository — for instance its "Current state" section, which still reads *"Wave 0 — factory foundation. The constitution exists; the monorepo does not yet."* That sentence is now plainly false, and CLAUDE.md is loaded into every agent's context, so the drift misinforms every session that starts.
 
@@ -362,7 +400,7 @@ Whether that is what FND-018 meant is not established.
 
 | Decision | Status |
 |---|---|
-| Restate or retire | ☐ not recorded |
+| Restate or retire | ✅ **RETIRED**, 2026-09-24, Product Owner. The `CLAUDE.md` drift it named was fixed on its own merits |
 
 ---
 
