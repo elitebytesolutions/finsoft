@@ -190,18 +190,23 @@ Stating a protection the mechanism does not provide is the defect `004` draft 2 
 #### The mechanism, as built and tested
 
 ```sql
-seq            bigint NOT NULL CHECK (seq >= 1),
+seq            bigint NOT NULL CHECK (seq >= 0),
 hash           text   NOT NULL CHECK (hash ~ '^[0-9a-f]{64}$'),
-previous_hash  text   NOT NULL CHECK (previous_hash ~ '^[0-9a-f]{64}$'),
+previous_hash  text          CHECK (previous_hash ~ '^[0-9a-f]{64}$'),
 
 CONSTRAINT audit_log_tenant_seq_key  UNIQUE (tenant_id, seq),
 CONSTRAINT audit_log_tenant_hash_key UNIQUE (tenant_id, hash),
-CONSTRAINT audit_log_tenant_prev_key UNIQUE (tenant_id, previous_hash),
-CONSTRAINT audit_log_not_self        CHECK  (previous_hash <> hash),
+CONSTRAINT audit_log_tenant_prev_key UNIQUE (tenant_id, previous_hash),   -- see note
+CONSTRAINT audit_log_not_self        CHECK  (previous_hash IS NULL OR previous_hash <> hash),
+CONSTRAINT audit_log_anchor_ties     CHECK  ((seq = 0) = (previous_hash IS NULL)),
 CONSTRAINT audit_log_genesis_ties    CHECK  ((seq = 1) = (previous_hash = repeat('0', 64))),
+CONSTRAINT audit_log_prev_fkey       FOREIGN KEY (tenant_id, previous_hash)
+                                       REFERENCES audit_log (tenant_id, hash) ON DELETE RESTRICT,
 ```
 
-plus a `BEFORE INSERT` trigger asserting the link:
+**Each tenant's chain starts with an ANCHOR row at `seq = 0`**: `previous_hash NULL`, `hash = repeat('0',64)`, `actor_user_id NULL`, a synthetic `action` and `entity_type`. It is a chain anchor, not a hashed record — §6's verifier starts at `seq 1` and continues to treat the 64 zeros as the genesis constant.
+
+plus a `BEFORE INSERT` trigger asserting the link is to the immediately preceding row:
 
 ```sql
 IF NEW.seq > 1 AND NOT EXISTS (
@@ -210,9 +215,43 @@ IF NEW.seq > 1 AND NOT EXISTS (
 ) THEN RAISE EXCEPTION 'audit_log: previous_hash does not match the hash at seq %', NEW.seq - 1;
 ```
 
+**`UNIQUE (tenant_id, previous_hash)` is now derivable from the other four constraints plus the trigger — and it stays, for a better reason than the one first given.** It is the single constraint that still holds if the trigger is disabled, which makes it the last declarative line against a forked chain rather than a redundant one. A future author reading it as duplicated by the linkage trigger would be removing exactly the control that survives the trigger's removal.
+
 **`previous_hash` is `NOT NULL`, and that is load-bearing.** `UNIQUE` does not constrain NULLs — three `(tenant, NULL)` rows insert happily — so a nullable genesis marker voids the fork constraint entirely and silently.
 
-**The trigger, not a self-referencing foreign key.** A self-FK plus a per-tenant anchor row at `seq = 0` is the declarative alternative and was tested to work. It is rejected because the anchor row needs a `created_by` and 002 already rejected a per-tenant system user, making tenant provisioning carry an authorship problem to solve a linkage one. The trigger has a known limit — the owning role can `ALTER TABLE … DISABLE TRIGGER` — but the append-only control below already depends on a trigger and already requires a test asserting triggers are enabled, so this adds no new class of weakness.
+**BOTH the foreign key and the trigger. They are not alternatives and the first version of this section was wrong to treat them as such.**
+
+They answer different questions. The FK gives *every row has a parent*; the trigger gives *the parent is the row at `seq − 1`*, which an FK cannot express. Each is a few lines.
+
+The first version chose the trigger alone and gave two reasons, **both of which were wrong**:
+
+- *"The anchor row needs a `created_by`, and 002 rejected a per-tenant system user."* Void by this ADR's own Compliance section: `audit_log` is exempt from the §11 mandatory column set, so it carries no `created_by` and there is no authorship problem to import. The objection was against a column set this revision removes.
+- *"Adds no new class of weakness."* **False, and measured.** FK enforcement runs on *system* triggers, and a non-superuser owner cannot disable them:
+
+```
+ALTER TABLE audit_log DISABLE TRIGGER audit_log_link;  →  ALTER TABLE   (succeeds)
+ALTER TABLE audit_log DISABLE TRIGGER ALL;             →  ERROR: permission denied:
+                                                          "RI_ConstraintTrigger_c_…" is a system trigger
+SET session_replication_role = replica;                →  ERROR: permission denied
+```
+
+So an owner can defeat the plpgsql trigger but **not** the FK. It can only `DROP CONSTRAINT`, which changes the catalog and therefore fails `schema.spec.ts` and the codegen diff — whereas a disabled trigger changes nothing but `pg_trigger.tgenabled`, which a CI-only assertion never sees on the cluster where someone disabled it.
+
+And with the trigger disabled, **the orphan is the one forgery that becomes reachable** — every other is still caught by a constraint. It is precisely the case the linkage mechanism uniquely covers. With the FK present it is rejected anyway, measured: `violates foreign key constraint "audit_log_prev_fkey"`.
+
+The nullable `previous_hash` the anchor reintroduces is **bounded to exactly one row per tenant by `UNIQUE (tenant_id, seq)`** — not by the prev-hash index, which does not constrain NULLs. That is where the "NOT NULL is load-bearing" argument goes: the bound comes from `seq`, not from the nullability.
+
+**The residual control against the owner was never schema-level and was never meant to be: it is the chain itself.** An owner who drops every constraint and inserts a forgery still cannot make the hashes link, and `audit:verify` running as `readonly_support` names the first break by `seq`. **Constraints stop accidents; the hash catches intent.**
+
+**Which control catches what, by regime** — and the first version misattributed this, because `BEFORE` row triggers run before `CHECK` constraints, so the trigger wins every race it enters:
+
+| forgery | trigger enabled | trigger disabled |
+|---|---|---|
+| fork (two children of one parent) | trigger | `audit_log_tenant_prev_key` |
+| duplicate `hash` | trigger | `audit_log_tenant_hash_key` |
+| self-link | trigger | `audit_log_not_self` |
+| second genesis | `audit_log_tenant_seq_key` | same |
+| **orphan** | trigger | **`audit_log_prev_fkey`** |
 
 Measured with exactly this scheme: the orphan is rejected with `previous_hash does not match the hash at seq 499`, the duplicate hash by `audit_log_tenant_hash_key`, the self-link by `audit_log_not_self`, a second genesis by `audit_log_tenant_seq_key`, and a legitimate append succeeds.
 
@@ -220,15 +259,36 @@ Measured with exactly this scheme: the orphan is rejected with `previous_hash do
 
 **Transactional, gapless, from 1, allocated under the lock, and explicitly NOT a PostgreSQL sequence.**
 
-`MAX(seq) + 1` for the tenant, read under the advisory lock. This is the one sanctioned `MAX+1` in the codebase and the exception is narrow: rule 12 forbids it for *document numbers*, where the risk is a gap or a duplicate in a user-facing series. Here gaplessness is the point — **§6 treats a `seq` gap as evidence of a deleted row**, so a sequence would manufacture a false tamper alert on every ordinary rollback.
+`MAX(seq) + 1` for the tenant, read under the advisory lock.
+
+**Rule 12 does not reach this, and this ADR does not except it from rule 12.** Rule 12 governs *document numbers* — "generated server/database-side, never client-side" — and `seq` is neither a document number nor client-generated. A locked per-tenant counter satisfies rule 12's actual requirement in any case. The first version of this paragraph called itself "a narrow exception to rule 12", which would have been a LEVEL 1 record asserting authority over a LEVEL 0 one, and would have needed the Accounting Guardian's signature that this block does not carry.
+
+Why not a sequence: **§6 treats a `seq` gap as evidence of a deleted row**, so a sequence would manufacture a false tamper alert on every ordinary rollback.
 
 #### Concurrency, and the isolation level it depends on
 
 ```sql
-SELECT pg_advisory_xact_lock( ('x' || substr(replace(tenant_id::text, '-', ''), 1, 16))::bit(64)::bigint );
+SELECT pg_advisory_xact_lock(
+  ( ('x' || substr(replace(tenant_id::text, '-', ''),  1, 16))::bit(64)::bigint
+  # ('x' || substr(replace(tenant_id::text, '-', ''), 17, 16))::bit(64)::bigint )
+);
 ```
 
-**The one-argument form, keyed on the tenant's own bits** — not `(4919, hashtext(tenant_id::text))`. Two reasons: `hashtext` is an undocumented internal function with no stability contract, and its `int4` output collides (2 collisions in 200k random uuids), which couples unrelated tenants — tenant A's posting could wait on tenant B's long import and time out because of it. That is an availability coupling in the posting path, cheaply removed. The cost is losing the namespace idea; see the debt note below.
+**The one-argument form, keyed on the tenant's own bits** — not `(4919, hashtext(tenant_id::text))`. `hashtext` is an undocumented internal function with no stability contract, and its `int4` output collides: 199 997 distinct in 200 000 random uuids, measured. A collision puts tenant A's posting behind tenant B's long import until `lock_timeout` fires — an availability coupling across a tenant boundary, in the posting path, in a multi-tenant ERP.
+
+**Both halves are XORed, and that is not decoration.** Reading only the first 64 bits works in production, where `001_create_tenants.sql` mints tenants with `gen_random_uuid()`, but it collapses on exactly the fixtures a cross-tenant test would use:
+
+```
+00000000-0000-4000-8000-000000000001   first 64 bits →  16384
+00000000-0000-4000-8000-000000000002   first 64 bits →  16384
+00000000-0000-4000-8000-000000000003   first 64 bits →  16384
+
+                                       folded        →  …759423 / …759422 / …759421
+```
+
+That would reintroduce the coupling `hashtext` was dropped to avoid, in the one place Compliance mandates testing for it — and would let the omitted-lock test variant pass for the wrong reason. Folded: 200 000 distinct in 200 000.
+
+**What dropping `4919` actually costs is less than it sounds.** PostgreSQL's one- and two-argument advisory spaces are provably disjoint — `pg_locks.objsubid` is 1 for the two-argument form and 2 for the one-argument form — so no future two-argument claimant can collide with this chain at all. That is a stronger separation than an unenforced namespace convention gave.
 
 **The scheme depends on READ COMMITTED, and the first version never said so.** Measured, same harness, only the isolation level changed:
 
@@ -238,7 +298,7 @@ REPEATABLE READ   T2 acquires the lock instantly, reads the head through its OLD
                   sees nothing → ERROR: duplicate key … (tenant_id, seq)=(…, 1)
 ```
 
-It fails closed, which is the right direction. [ARCHITECTURE §5](../ARCHITECTURE.md) fixes READ COMMITTED system-wide, so this is not live today — but a future ADR raising isolation on the posting path would turn every concurrent append into a posting error, and nothing would have warned them.
+It fails closed, which is the right direction. [ARCHITECTURE §7](../ARCHITECTURE.md), line 302, fixes READ COMMITTED system-wide, so this is not live today — but a future ADR raising isolation on the posting path would turn every concurrent append into a posting error, and nothing would have warned them.
 
 That divergence is also the proof that the constraints are **not** redundant with the lock: under REPEATABLE READ the lock granted instantly and the unique constraint was the only thing standing between that transaction and a duplicate.
 
@@ -247,6 +307,22 @@ That divergence is also the proof that the constraints are **not** redundant wit
 `pg_advisory_xact_lock` cannot be released before COMMIT, so hold time is everything from acquisition to commit.
 
 > **The audit append is the LAST write before commit. The lock is acquired at that point. No external call — HTTP, SMTP, queue — happens while it is held. A `lock_timeout` bounds the queue so contention surfaces as a bounded error rather than an unbounded stall.**
+>
+> **This advisory lock is TERMINAL in the global acquisition order. Nothing may be acquired after it**, with one named exception: the implicit `KEY SHARE` row locks the audit row's own foreign keys take on `tenants` and `users`.
+
+#### The divergence from ADR-0018 §6, stated rather than denied
+
+[ADR-0018](ADR-0018-stock-state-scopes-and-locking.md) §6 says: *"**No lock is acquired after the first write.** All locking happens in the ordered acquisition phase, before any row is modified. A write-then-lock sequence reintroduces the ordering problem the sort in §4(a) exists to solve."*
+
+Acquire-last **is** write-then-lock. That is a direct divergence, and an earlier draft of this ADR asserted "no conflict" while answering a different ADR-0018 objection entirely.
+
+The reconciliation, which the Architecture Guardian must rule on rather than this record assuming:
+
+- ADR-0018 §6 guards against **deadlock from unordered acquisition**. A lock that is *always last and never followed* cannot participate in a cycle, because a cycle requires the holder to wait on something.
+- The one lock acquired after it is the audit row's FK `KEY SHARE` on `tenants`/`users`. A cycle therefore requires a transaction that holds an exclusive lock on that same `tenants` row and then audit-appends. PostgreSQL detects it and aborts one posting — **availability, not corruption**, and bounded by `lock_timeout`.
+- ADR-0018 is `Proposed`, not Accepted, so nothing binds today. That is a reason to resolve the divergence before it is accepted, not a reason to leave it unstated.
+
+**Also diverges from [ARCHITECTURE](../ARCHITECTURE.md):302**, which sanctions *"an advisory lock keyed by `(tenant_id, entity)`"* — the two-part shape this ADR abandons. The one-argument form is the right call for the reasons measured above, and a LEVEL 1 record departing from ARCHITECTURE's stated shape should say so plainly rather than let a deferred registry imply it.
 
 This is stated normatively because the difference is roughly 40×. Against [ARCHITECTURE §11](../ARCHITECTURE.md)'s posting P95 < 800 ms: a lock held across a ~200 ms posting transaction caps one tenant at ~5 postings/second, and a month-end with 20 concurrent users in one tenant blows the budget on queueing alone. Held for the last few milliseconds, the same load is comfortable. Leaving that to "before reading the chain head" would have let Wave 2 discover it as a performance incident rather than choose it as a design.
 
@@ -380,22 +456,23 @@ The reasoning: `occurred_at` and `actor_user_id` already carry when and by whom,
 - A planted altered field, deleted row and reordered pair, each named by `seq` by the verifier.
 - **A concurrent append test running as `finsoft_app` under RLS**, not as the migration role — a fork test running with `BYPASSRLS` is not testing the table the application writes to.
 - **A variant that deliberately omits the advisory lock** and asserts the unique constraint fires. That turns "never remove this as redundant" from an instruction into an executable fact.
-- A test asserting both triggers are still enabled.
+- A test asserting both triggers are still enabled (`pg_trigger.tgenabled = 'O'`) **and that every constraint exists and is `convalidated`**. The same owner argument that reaches `DISABLE TRIGGER` reaches `NOT VALID`, so presence alone is not the assertion. **The `tgenabled` assertion needs a production-reachable counterpart**, because a CI-only check runs against a freshly migrated database and never sees the cluster where a trigger was disabled to run a bulk fix.
+- **A multi-row single-statement insert** in the concurrent test. `INSERT … VALUES (seq 3),(seq 4)` chains correctly because a `BEFORE INSERT … FOR EACH ROW` trigger does see rows inserted earlier in the same command — measured — but the linkage trigger silently depends on that behaviour and nothing currently asserts it.
 - The verifier runs as `readonly_support`, asserted.
 
 ### Deferred, and recorded rather than discovered
 
 - **Partitioning.** Intended key: RANGE on `occurred_at`. Not declared in 007. `UNIQUE (tenant_id, seq)` and the linkage trigger narrow the options **permanently** at 007, so this is the cheapest moment it will ever be — recorded now for that reason.
 - **Retention.** Rule 9 says statute, not disk. With `DELETE` granted to nobody the only compatible mechanism is `DETACH PARTITION`, which depends on the above. A detached partition is retained and archived, never dropped.
-- **Advisory-lock namespace registry.** Does not exist; this ADR is the first claimant and uses the one-argument space. Owed before the second claimant.
+- **Advisory-lock namespace registry. Owed NOW, not before a next claimant — there are already two.** `packages/database/src/migrate/apply.ts:72` holds `pg_advisory_lock(hashtext('finsoft.migrations')::bigint)`, the one-argument form, and it predates this ADR. No collision today (`-2043191111` against a 64-bit-spread audit key; ~2.3e-10 for random uuids), but "this ADR is the first claimant" was false and is corrected. The registry governs the two-argument space plus the one-argument space's two existing occupants.
 - **A named domain error at the audit-append boundary** for `jsonb`'s rejection of `U+0000` and lone surrogates, which currently surfaces as an opaque database error aborting a posting transaction.
 
 ## Related
 
-- [../NON_NEGOTIABLES.md](../NON_NEGOTIABLES.md) — rule 9, which this implements; rule 12, which §5 carves a narrow exception to
-- [../ARCHITECTURE.md](../ARCHITECTURE.md) §9 audit, §5 isolation level, §11 the P95 budget this constrains
+- [../NON_NEGOTIABLES.md](../NON_NEGOTIABLES.md) — rule 9, which this implements. **Rule 12 is not reached by `seq`** and is not excepted; see §5
+- [../ARCHITECTURE.md](../ARCHITECTURE.md) §9 audit, **§7 line 302** the READ COMMITTED commitment this scheme's liveness rests on, §11 the P95 budget it constrains
 - [ADR-0011](ADR-0011-money-representation.md), [ADR-0014](ADR-0014-decimal-js.md) — why money is a fixed-scale string before it arrives
-- [ADR-0018](ADR-0018-stock-state-scopes-and-locking.md) — rejects advisory locks for stock state. **No conflict:** that objection is that a lock released on commit never protected the prior row, and here there is no prior row — the lock guards a read-then-insert, which is the case advisory locks are correct for.
+- [ADR-0018](ADR-0018-stock-state-scopes-and-locking.md) — **two separate interactions, and only one of them is a non-conflict.** Its objection to advisory locks for *stock state* does not reach here: that objection is that a lock released on commit never protected the prior row, and here there is no prior row. But its **§6 "no lock is acquired after the first write" directly diverges** from this ADR's acquire-last placement; see §5, where the divergence is stated and the reconciliation is put to the Architecture Guardian rather than assumed.
 - [ADR-0006](ADR-0006-immutable-posted-transactions.md) — correction by reversal, which is what the chain records
 - [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785)
 
@@ -403,8 +480,12 @@ The reasoning: `occurred_at` and `actor_user_id` already carry when and by whom,
 
 | | |
 |---|---|
-| **Architecture Guardian** | ☐ not recorded — REJECTED 2026-09-25, 15 required changes, all addressed above |
+| **Architecture Guardian** | ✅ **APPROVED WITH CONDITIONS**, 2026-09-25 — all four conditions landed |
 | **Database Guardian** | ☐ not recorded — REJECTED 2026-09-25, 12 required changes, all addressed above |
 | **Product Owner** | ☐ not recorded |
 
-Migration 007 does not merge before all three.
+> Architecture Guardian — canonicalisation, chain integrity and boundary review, 2026-09-25 — accepted on independent reproduction of both golden vectors from the specification alone; conditional on four corrections: READ COMMITTED is ARCHITECTURE §7:302 not §5, the advisory-lock key must fold all 128 tenant bits, apply.ts:72 already claims the one-argument space, and rule 12 is not reached by `seq` rather than excepted for it.
+
+**All four landed**, each measured rather than asserted: the citation corrected to §7 line 302; the key folded and verified to separate the structured fixtures that collapsed to `16384` and to give 200 000 distinct in 200 000; `apply.ts:72` named as the prior claimant with the registry moved from "owed before the second claimant" to owed now; and the rule 12 wording withdrawn, since an ADR cannot except a LEVEL 0 rule and this one does not need to.
+
+Migration 007 does not merge before all three signatures.
