@@ -290,6 +290,32 @@ the real login path by definition has neither. **That IDOR property must be
 re-proved through whatever mechanism W1-002 introduces**, or it silently stops
 being tested at the moment it starts to matter.
 
+**D-W1-006 · ADR-0021 states condition 5's scope three times (`:68`, `:70`, `:80`), and the production-minter gate twice in different wordings.**
+Introduced by the `:55` amendment, which added paragraphs above the original
+without merging it. **Not corrected**: the record is Accepted and the text is
+accurate, merely redundant, so README §4 forbids tidying it — that rule exists
+precisely so LEVEL 1 records are not quietly rewritten. Had it been caught
+during the amendment it should have been merged; that window closed at
+acceptance.
+**Anyone editing one of the three must check the other two.** Merge them if
+ADR-0021 is ever superseded. Owner: Database Guardian.
+
+**D-W1-007 · A cost-based plan assertion over an append-only table will
+eventually flip for everyone.** No live instance — the one recorded during
+W1-001 was withdrawn as non-reproducing. The fix is to assert plans against a
+corpus the test constructs and controls (a dedicated tenant, its own `ANALYZE`)
+rather than against whatever the suite has accumulated. `refresh_tokens` is the
+same shape as `outbox` and will grow faster. Owner: Database Guardian, Wave 2.
+
+**D-W1-008 · `ADR-0008:25` instructs the wrong action at ADR-0018's acceptance.**
+It reads "This notice is removed when ADR-0018 lands." ADR-0018 supersedes
+ADR-0008 only on the balance row shape, the lock protocol and the negative-stock
+policy — partial, so under README §4 as amended the notice is **replaced** by a
+permanent scope notice, never removed. The sentence sits inside the notice
+rather than the body, and §4 permits notice edits, so it may be corrected at the
+Architecture Guardian's discretion at any time; it **must** be handled when
+ADR-0018 is signed. Third partial supersession in the directory.
+
 **D-W1-005 · `mfa_at`, `device_id`, `status` and `permission_version` are columns with no code.**
 Added per ADR-0009 and the Product Owner's decision, because today is the last
 cheap moment — each would otherwise be an `ALTER` on a released table. Nothing

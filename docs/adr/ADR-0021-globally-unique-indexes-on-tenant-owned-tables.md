@@ -47,7 +47,7 @@ The governing condition is **necessity**, and it is deliberately hard to satisfy
 
 A diagnostic justification does not qualify. Neither does log quality, query convenience, report simplicity, or "the value is random anyway". **"The value is system-generated" is not a criterion** — it describes how a value is produced, not why a tenant-scoped constraint cannot do the job, and it is satisfied by any column with a `DEFAULT`.
 
-Four mechanical conditions accompany it, each checkable against the live catalogue:
+Mechanical conditions accompany it, each checkable against the live catalogue:
 
 1. **Single column.** A multi-column globally unique index has no justification of this shape; if a second column exists, `tenant_id` can be the first.
 2. **Shape-pinned high-entropy value.** The column carries a `CHECK` constraint anchoring it to a fixed-length random-value format of at least 128 bits — `^[0-9a-f]{64}$`, `^scid_[0-9a-f]{32}$`. Checkable from `pg_constraint`.

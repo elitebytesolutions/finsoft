@@ -16,6 +16,18 @@ An ADR records a decision that the codebase is built on: what was decided, why, 
 
 4. **ADRs are immutable once Accepted.** They are superseded, never edited. A decision that is wrong in hindsight stays on the record with `Status: Superseded by ADR-00NN` so the reasoning trail survives. Correcting typos or adding links is permitted; changing the decision, the rationale or the consequences is not.
 
+   **Whether an edit is a permitted correction is a CATEGORICAL test, not a question of who owns the file.** Ownership does not appear in this rule, and asking "is this mine or the other guardian's?" produces different answers for identical edits on the same day. Ask instead:
+
+   | | |
+   |---|---|
+   | Did any normative text change — a decision, a condition, a rationale, a consequence? | If yes, **not permitted**. Supersede it. |
+   | Did the sentence state something **false about the document's own contents**? | If yes, **permitted**. The record mis-described itself. |
+   | Is the text merely redundant, or would you be tidying? | **Not permitted.** Correct is correct. Record the redundancy as debt instead. |
+
+   A prose count that must agree with a numbered list — "four mechanical conditions accompany it" — is the commonest instance, and the fix is to **delete the count**, not correct it: the list is numbered, the reader can see how many there are, and each correction is a fresh chance to get it wrong. ADR-0021 failed that consistency obligation three times in one day before the count was removed.
+
+   *This test was written on 2026-09-25 at the Database Guardian's direction, after the same categorical question was answered twice by ownership and once by category. Like the partial-supersession rule below, it is a record-keeping convention rather than an architecture decision.*
+
    **One further edit is permitted: a conflict notice.** When a defect is found in an Accepted ADR and its replacement is drafted but not yet Accepted, a notice may be added **at the head** of the Accepted record naming the defective provisions, the ADR that would replace it, and what is blocked meanwhile. This is permitted because the alternative is worse in both directions: marking it `Superseded` by a `Proposed` record would leave the decision with no ADR in force, and recording the defect only in the replacement leaves it invisible to the implementer, who opens the Accepted file. The notice annotates status only — it must not touch the decision, the rationale or the consequences, and the body below it stays exactly as accepted. Where the replacement supersedes the record **entirely**, the notice is removed when the supersession lands and the `Status:` line becomes `Superseded by ADR-00NN`. Where it supersedes **only named provisions**, the notice is replaced rather than removed — the partial case below.
 
    The lifecycle therefore has two more states than the diagram below shows, and two terminal shapes:
