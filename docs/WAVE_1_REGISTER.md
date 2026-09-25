@@ -93,7 +93,33 @@ MIT, zero runtime dependencies, RS256 and JWKS with key rotation. Pinned exactly
 
 Chosen over `jsonwebtoken` for one reason that matters here: `jose` requires the caller to state the permitted algorithms, so **algorithm-confusion is a compile-time concern rather than a runtime hope**. A verifier that accepts whatever the token's header claims will accept `alg: none`, or an RS256 public key presented as an HS256 secret.
 
-**Outstanding.** Three signatures on ADR-0020. Migration 007 does not merge before them.
+### Both guardians REJECTED the first draft, 2026-09-25
+
+27 required changes between them. The scheme survived; the document did not.
+
+**What held.** Both guardians independently regenerated the golden vector `38e6aa16…` from the specification alone — one with the input keys deliberately shuffled. That reproduction *is* the ADR's central claim, tested rather than asserted, and §1–§4's canonicalisation needed no change beyond corrections.
+
+**The serious finding: "forks are structurally impossible" was false.** With only the two unique constraints, three forged rows insert cleanly — an orphan referencing no parent, a duplicate `hash`, and a self-link. Reproduced here before accepting it. `UNIQUE (tenant_id, previous_hash)` gives *at most one child per parent hash* and nothing more.
+
+**That is the same defect `004` draft 2 was rejected for** — a document stating a protection it does not provide — written again by the same author who recorded that lesson. Now corrected with what the constraints actually give, plus `UNIQUE (tenant_id, hash)`, `NOT NULL` on both hash columns, a not-self CHECK, a genesis-ties CHECK and a linkage trigger. Measured: the orphan now fails with `previous_hash does not match the hash at seq 499`, and a legitimate append still succeeds.
+
+**The finding that broke the golden vector itself.** The ADR defined the record over *logical values* and required the verifier to recompute from *stored columns*, without ever stating the mapping. PostgreSQL does not render either of the two most exposed columns in the specified form:
+
+```
+'2026-09-24T00:16:59.383000Z'::timestamptz::text  →  2026-09-24 00:16:59.383      trailing zeros gone
+'203.0.113.7'::inet::text                         →  203.0.113.7/32               prefix appended
+Date.prototype.toISOString()                      →  ...383Z                      3 digits, not 6
+```
+
+**Under an `inet` column this ADR's own example did not verify.** `ip` is now `text`, `occurred_at` has a normative `to_char` expression, and §4 carries a column→canonical-value table for all twelve.
+
+**Other corrections worth naming:** §4 contradicted itself on whether `hash_version` is in the record, and the two readings give different hashes (`38e6aa16…` vs `50855dd5…`, both recomputed). The separator rationale described an attack that is not achievable — separators kept, justification replaced with forward compatibility. The `jsonb` numeric claim was wrong in the ADR's own favour: notation is normalised (`1e21` → `1000000000000000000000`), not preserved. The scheme's dependence on READ COMMITTED was undeclared. `previous_hash` was nullable, which voids a UNIQUE silently. `seq` allocation was unspecified while §6 treats a gap as a deleted row. RLS was mentioned zero times in a document authorising a tenant-owned table. And the `REVOKE` rationale named the wrong mechanism — default privileges apply at `CREATE TABLE`, so "granted to nobody" is satisfied by writing no `GRANT` while the application role can still rewrite history.
+
+**One deferral was rejected and split.** The per-tenant lock serialises every audited write, not just posting. Measurement stays in Wave 2; **lock placement is decided now** — last write before commit, no external calls while held, bounded by `lock_timeout` — because it is the variable the measurement depends on and the difference is roughly 40× against the 800 ms P95 budget.
+
+**Decisions taken in the revision**, each with its rejected alternative recorded: the linkage trigger over a self-FK plus anchor row (the anchor needs an authorship 002 deliberately does not provide); a one-argument advisory lock keyed on the tenant's own bits over `(4919, hashtext(…))` (which couples unrelated tenants and rests on an undocumented function); `audit_log` exempt from the §11 mandatory column set, named in `schema.spec.ts` rather than left to the migration author.
+
+**Outstanding.** Re-review, then three signatures. Migration 007 does not merge before them.
 
 ---
 
