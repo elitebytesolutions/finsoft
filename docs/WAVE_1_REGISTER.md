@@ -419,18 +419,110 @@ Both guardians confirmed at W1-001 that deferring was correct: the table's shape
 is invariant under every candidate mechanism, because all of them look up by
 hash alone.
 
-### The measured candidate, for ADR-0023 to accept or reject
+### The security review killed the login half, and the Product Owner ruled
 
-A `SECURITY DEFINER` resolver owned by a dedicated `finsoft_login` role with
-**no BYPASSRLS**, crossing the tenant boundary via a **named policy in
-`pg_policies`** rather than a role attribute. Verified on a live database:
+**Decision, Product Owner 2026-09-25: a tenant code field on the login form.**
+The login resolver is **not built**. Login resolves the tenant against the
+**global `tenants` table** — which ADR-0004:77 already sanctions, and whose own
+header says it is "read by login … before a tenant context exists" — then sets
+`app.tenant_id` and reads `users` under ordinary RLS with all four layers
+intact.
 
-- returns the right tenant for any email
-- the owning role can read `password_hash` but **not** `full_name` or
-  `last_login_at`, and holds no `UPDATE`
-- `finsoft_app` still raises on a tenantless read of `users`
-- `roles.spec.ts`'s *"`finsoft_migration` is the only BYPASSRLS role"*
-  assertion survives intact
+**What killed the email-only resolver.** `users_tenant_email_key` is
+`UNIQUE (tenant_id, lower(email))` — **email is unique per TENANT, not
+globally** — so `lookup_login(email)` returns N rows for a user in N tenants,
+and every disposal of N>1 is a distinct vulnerability: verifying against each
+hash is an N× argon2id CPU amplification an attacker can seed by provisioning
+the same address across tenants; returning the tenant list is cross-tenant
+disclosure to an unauthenticated caller who knows only an email address;
+picking the first row is tenant assignment by physical row order. The obvious
+escape — a globally unique index on `lower(email)` — is closed at LEVEL 1:
+ADR-0021's own text says an email "fails condition 2 on sight and condition 3
+in practice".
+
+**What the decision buys.** `users` — the table holding every password hash in
+the system — never carries a `USING (true)` policy. The pre-tenant surface
+halves, and what remains (`refresh_tokens`) holds SHA-256 digests of random
+values. Exactly one candidate row means exactly one argon2id verification,
+which makes the constant-time requirement achievable rather than aspirational.
+
+**The boundary ADR-0023 must draw in these words**, because "ADR-0023 allowed a
+tenant input" is exactly how a per-request `tenantId` comes back: a tenant hint
+**at the login form** is not what ADR-0009:151 rejected. That rejected
+`tenant_id` supplied per request on *authenticated* endpoints and validated
+against memberships, because correctness then depends on every handler checking
+forever. A login-form selector cannot grant access to a tenant the credential
+does not open — a wrong code yields the same 401 as a wrong password.
+
+**A form field, not a subdomain.** A subdomain gives better UX and a natural
+cookie scope but publishes every tenant code through DNS, TLS SNI and
+Certificate Transparency logs, permanently and publicly.
+
+**LEVEL 2 consequence:** there is no login page in `docs/design-system/pages/`
+and the PRD does not scope multi-tenant users. The field is a product
+requirement and is recorded here as the Product Owner's, not decided by
+implication in an ADR.
+
+### Decision, Product Owner 2026-09-25: throttling and lockout are split
+
+ADR-0009:121 and :147 specify account lockout on failed attempts. As written it
+is **a named-user denial of service**: the key is attacker-chosen, so anyone who
+knows an employee's email address can make that employee unable to work —
+possibly the only holder of `period.close` on the last day of a month.
+
+- **Throttling** is keyed on attacker-controllable input (email, IP prefix, the
+  pair, a global endpoint rate), always time-decaying, always self-recovering,
+  **never requiring administrator action**. It escalates to proof-of-work or
+  CAPTCHA rather than to a block, so the attacker pays and the victim does not.
+- **Lockout** — a sticky state needing an unlock — may only be keyed on
+  something an attacker cannot choose on someone else's behalf: **(user,
+  device/IP)**, never (user). That stops the attacker's source and leaves the
+  victim's own device working.
+
+This supersedes ADR-0009:121 and :147 on lockout, and ADR-0023 carries the
+supersession under README §4's partial rule.
+
+**Throttle state lives in Redis, not on `users`.** On `users` it would need
+`locked_until` and `failed_attempt_count` in a pre-tenant column grant, widening
+the read and putting a mutable counter behind a permissive policy. Redis keeps
+the grant narrow and the counters out of the tenant-owned table; the cost is
+that throttle state is lost on a flush, which is acceptable because a throttle
+is not an audit record.
+
+### The measured candidate — now for the REFRESH path only
+
+A `SECURITY DEFINER` resolver owned by a dedicated role with **no BYPASSRLS**,
+crossing the tenant boundary via a **named policy in `pg_policies`** rather than
+a role attribute — now for `refresh_tokens` only, returning
+`(tenant_id, token_id)` and no state.
+
+**TWO THINGS ABOUT MY MEASUREMENT OF IT WERE WRONG, and the second is a repeat.**
+
+1. **The DDL I circulated omitted the `SET ROLE`.** `CREATE SCHEMA … AUTHORIZATION`
+   sets the SCHEMA's owner; `CREATE FUNCTION` owns to the *executing* role. Run by
+   `finsoft_migration` — which has BYPASSRLS — the function would have been the
+   very design the proposal rejected, arrived at silently. My actual measurement
+   did use `SET ROLE` and I verified `proowner = finsoft_login`; the write-up did
+   not, and a write-up is what someone implements from.
+
+2. **I measured in a scratch database that never ran `00-bootstrap.sh`.** Verified
+   afterwards:
+
+   ```
+   real cluster:       PUBLIC has USAGE on schema public -> false
+   my scratch database:                                  -> true
+   ```
+
+   So `finsoft_login` inherited `USAGE` via `PUBLIC` and the function ran. On the
+   real cluster it would have raised `permission denied for schema public`. The
+   Security Guardian inferred this from `00-bootstrap.sh` without being able to
+   see my database.
+
+   **This is the second time in this wave**: the migration 005 grant check was
+   run in a scratch database that lacked `ALTER DEFAULT PRIVILEGES`, and hid a
+   defect for the same reason. **A security posture measured outside the
+   bootstrap is not measured.** Every future privilege measurement runs against
+   `finsoft_test`, or against a database provably built by the same script.
 
 The obvious alternative — a resolver owned by `finsoft_migration` — is a
 BYPASSRLS path by another name for every statement inside it, and breaks that
