@@ -28,6 +28,61 @@ import { columns, constraints, indexes, tables } from './catalog.ts'
  */
 const NULLABLE_AUTHORSHIP_ALLOWLIST = new Set(['users'])
 
+/*
+ * Unique indexes on tenant-owned tables that may omit `tenant_id`. ADR-0021.
+ *
+ * ADR-0003:28 reads without qualification: "Every unique constraint on
+ * tenant-owned data is scoped by tenant." ADR-0021 supersedes that bullet,
+ * and bullet 110, for a deliberately narrow class — and this list is the
+ * whole class.
+ *
+ * THE REASON THE RULE IS TIGHT IS NOT THE ONE THE OLD COMMENT HERE GAVE.
+ * That comment justified tenant-scoping as "one tenant's data constrains
+ * another's" — a tenant choosing an email or a code and being refused because
+ * a neighbour took it. That is the lesser harm. The larger one is that
+ * UNIQUE INDEX ENFORCEMENT IS NOT SUBJECT TO ROW LEVEL SECURITY. PostgreSQL
+ * checks the index across rows the current role cannot SELECT, so a globally
+ * unique index is a hole through ADR-0004's backstop. Measured on this
+ * schema, as finsoft_app under RLS in tenant A against a hash held only by
+ * tenant B:
+ *
+ *   SELECT ... WHERE token_hash = <B's hash>   ->  0 rows
+ *   INSERT ... token_hash = <B's hash>         ->  23505
+ *
+ * A 23505 is therefore a cross-tenant existence oracle, and one tenant's row
+ * can fail another tenant's insert.
+ *
+ * ADR-0021's gate is NECESSITY, not provenance: the uniqueness must be relied
+ * on by a lookup that runs BEFORE a tenant context exists, so that a scoped
+ * constraint would be unenforceable at the moment its guarantee is needed.
+ * "The value is system-generated" is explicitly NOT a criterion — it
+ * describes how a value is produced, not why scoping cannot work, and every
+ * column with a DEFAULT satisfies it.
+ *
+ * Adding a name to this list is an Architecture Guardian and Database
+ * Guardian decision recorded in an ADR, not a fix for a red test.
+ */
+interface GloballyUniqueExemption {
+  readonly index: string
+  readonly table: string
+  /** The ADR that admits it. */
+  readonly adr: string
+  readonly why: string
+}
+
+const GLOBALLY_UNIQUE_INDEX_ALLOWLIST: readonly GloballyUniqueExemption[] = [
+  {
+    index: 'rt_token_hash_key',
+    table: 'refresh_tokens',
+    adr: 'ADR-0021',
+    why:
+      'A refresh token is presented as a bare cookie value with no tenant context — establishing the tenant IS the lookup. ' +
+      'Under (tenant_id, token_hash) the same hash could legitimately exist in two tenants, so the lookup would have to ' +
+      'tolerate several rows and pick one, in response to an unauthenticated request. Picking wrong spends the wrong ' +
+      "tenant's token or revokes the wrong tenant's family: a cross-tenant write, rule 8.",
+  },
+]
+
 /** Columns IMPLEMENTATION §11 requires on every tenant-owned table. */
 const MANDATORY_COLUMNS = [
   'id',
@@ -196,19 +251,45 @@ describe('schema', () => {
       if (!index.is_unique) continue
 
       /*
-       * The primary key is exempt and only the primary key. `id` is a uuid
-       * and globally unique by construction, so it cannot collide across
-       * tenants; every *business* uniqueness rule — an email, a document
-       * number, a code — must be scoped, or one tenant's data constrains
-       * another's.
+       * The surrogate primary key is exempt. ADR-0021 §1 — the exemption
+       * lives there now rather than in this comment, which is the point:
+       * a LEVEL 1 rule whose only carve-out was documented in a test file
+       * was a rule whose meaning was set by whoever last edited the test.
        */
       if (index.is_primary) continue
+
+      const exemption = GLOBALLY_UNIQUE_INDEX_ALLOWLIST.find(
+        (e) => e.index === index.index_name && e.table === index.table_name,
+      )
+      if (exemption) continue
 
       expect(
         index.first_column,
         `${index.index_name} on ${index.table_name} is unique but does not lead with tenant_id: ` +
-          `${index.definition}`,
+          `${index.definition}. A unique index on tenant-owned data that omits tenant_id is a hole ` +
+          `through RLS — enforcement is not subject to row security, so a 23505 is a cross-tenant ` +
+          `existence oracle. If this is genuinely necessary, it needs an ADR and an entry in ` +
+          `GLOBALLY_UNIQUE_INDEX_ALLOWLIST, not a change to this assertion.`,
       ).toBe('tenant_id')
+    }
+  })
+
+  it('carries no stale entry in GLOBALLY_UNIQUE_INDEX_ALLOWLIST', async () => {
+    /*
+     * ADR-0021 condition 4. An exemption that outlives the index it names is
+     * how the next table inherits a carve-out nobody argued for: someone
+     * copies the pattern, the allowlist already contains a plausible-looking
+     * name, and the gate stays green. Failing on a stale entry makes the
+     * exemption expire with its index.
+     */
+    const live = new Set((await indexes()).map((i) => `${i.table_name}.${i.index_name}`))
+
+    for (const e of GLOBALLY_UNIQUE_INDEX_ALLOWLIST) {
+      expect(
+        live.has(`${e.table}.${e.index}`),
+        `GLOBALLY_UNIQUE_INDEX_ALLOWLIST names ${e.table}.${e.index} (${e.adr}), which does not ` +
+          `exist in the database. Remove the entry — an exemption must not outlive its index.`,
+      ).toBe(true)
     }
   })
 
