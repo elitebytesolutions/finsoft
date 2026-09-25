@@ -132,6 +132,39 @@ describe('correlation', () => {
       /outside a correlation scope/,
     )
   })
+
+  /*
+   * ADR-0021. `sessions.session_correlation_id` is unique PER TENANT, so the
+   * log join key is the pair. Both guardians refused a globally unique index
+   * on the grounds that this context already carries both — which is only
+   * true if something enforces it.
+   */
+  it('refuses a correlation id with no tenant', () => {
+    expect(() =>
+      withCorrelation(
+        { requestId: newRequestId(), sessionCorrelationId: newSessionCorrelationId() },
+        () => undefined,
+      ),
+    ).toThrow(/only be set alongside tenantId/)
+  })
+
+  it('refuses to extend a tenantless context with a correlation id', () => {
+    // Checked on the MERGED context: the id may arrive in a later call than
+    // the tenant, and a context that has neither is not yet in violation.
+    expect(() =>
+      withCorrelation({ requestId: newRequestId() }, () =>
+        extendCorrelation({ sessionCorrelationId: newSessionCorrelationId() }, () => undefined),
+      ),
+    ).toThrow(/only be set alongside tenantId/)
+  })
+
+  it('allows the id and the tenant to arrive in separate calls', () => {
+    expect(() =>
+      withCorrelation({ requestId: newRequestId(), tenantId: 't' }, () =>
+        extendCorrelation({ sessionCorrelationId: newSessionCorrelationId() }, () => undefined),
+      ),
+    ).not.toThrow()
+  })
 })
 
 describe('session correlation id', () => {
@@ -140,7 +173,9 @@ describe('session correlation id', () => {
     const log = pino(baseOptions({ service: 'api' }), stream)
     const sessionCorrelationId = newSessionCorrelationId()
 
-    withCorrelation({ requestId: newRequestId(), sessionCorrelationId }, () => {
+    // `tenantId` is required alongside a correlation id (ADR-0021). This test
+    // is about redaction, not pairing — the fixture simply never had a tenant.
+    withCorrelation({ requestId: newRequestId(), tenantId: 't', sessionCorrelationId }, () => {
       log.info({ sessionId: 'sess_raw_secret' }, 'request')
     })
 
@@ -157,9 +192,32 @@ describe('session correlation id', () => {
    * The guard that makes the rule mechanical rather than cultural: a raw
    * session id routed here throws instead of being logged.
    */
-  it('rejects a value that is not a minted UUID', () => {
+  it('rejects a value that is not a minted correlation id', () => {
     expect(() => asSessionCorrelationId('sess_abc123')).toThrow(/never be used here/)
     expect(() => asSessionCorrelationId('')).toThrow()
+  })
+
+  it('rejects a bare UUID — ADR-0016 debt D8', () => {
+    /*
+     * THE WHOLE POINT OF THE FORMAT CHANGE.
+     *
+     * The guard used to validate UUID *shape*. A raw session id from any
+     * randomUUID()-backed store is also a UUID, so the guard could not tell a
+     * correlation id from the credential it exists to replace — it would have
+     * accepted the one value it was written to refuse. `scid_` is a prefix
+     * this module mints for nothing else, so it is a value the guard can
+     * reject.
+     */
+    expect(() => asSessionCorrelationId('550e8400-e29b-41d4-a716-446655440000')).toThrow(
+      /a bare UUID is exactly what this guard exists to refuse/,
+    )
+  })
+
+  it('mints the format migration 005 stores', () => {
+    // sessions.session_correlation_id: DEFAULT scid_ || 32 hex, and a
+    // sessions_scid_shape CHECK. The guard and the column must agree, or the
+    // schema stores values the only sanctioned reader throws on.
+    expect(newSessionCorrelationId()).toMatch(/^scid_[0-9a-f]{32}$/)
   })
 
   it('accepts a minted id round-tripped through storage', () => {

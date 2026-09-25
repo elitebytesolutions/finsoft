@@ -378,7 +378,87 @@ same shape and will grow faster.
 
 ## W1-002 · `packages/auth`
 
-**Status: not started.**
+**Status: in progress — blocked on ADR-0023 (the pre-tenant lookup).**
+
+### Task contract — written BEFORE the work, unlike W1-001's
+
+```
+ALLOWED     docs/adr/ADR-0023-*.md              (the pre-tenant lookup)
+            packages/auth/**
+            packages/observability/src/context.ts   (ADR-0021 compliance:
+                                                     sessionCorrelationId only
+                                                     alongside tenantId; and the
+                                                     asSessionCorrelationId guard
+                                                     for the scid_ format)
+            docs/adr/ADR-0016-*.md              (control 2 and :176, which the
+                                                 scid_ format makes false)
+            database/migrations/006_*.sql       (only if ADR-0023 requires DDL)
+            tests/integration/**, tests/security/**
+            docs/WAVE_1_REGISTER.md, docs/TECH_DEBT.md
+READ ONLY   docs/adr/** (others), docs/NON_NEGOTIABLES.md, docs/ARCHITECTURE.md
+FORBIDDEN   database/migrations/005_*.sql  (RELEASED — forward migration only)
+            apps/**, modules/**, packages/database/src/** (except generated)
+```
+
+**Why the contract exists before the first line of code.** W1-001 started
+without one; the Architecture Guardian could not rule on scope because there was
+nothing to rule against, and two files (`health.service.ts`,
+`generated/schema.d.ts`) turned out to be outside a boundary nobody had drawn.
+CLAUDE.md is explicit: *"No task contract? Ask for one before starting."*
+
+### The blocker, and it is not negotiable
+
+**D-W1-004: no code may read `refresh_tokens` without a tenant until ADR-0023 is
+Accepted.** `refresh_tokens` is tenant-owned with RLS `ENABLE`+`FORCE` and
+`current_setting('app.tenant_id')` with no `missing_ok`, so an unauthenticated
+read **raises** rather than returning zero rows. ADR-0004:77 is unambiguous that
+a caller with no tenant operates only on global tables, and `withGlobal`
+structurally cannot name this table.
+
+Both guardians confirmed at W1-001 that deferring was correct: the table's shape
+is invariant under every candidate mechanism, because all of them look up by
+hash alone.
+
+### The measured candidate, for ADR-0023 to accept or reject
+
+A `SECURITY DEFINER` resolver owned by a dedicated `finsoft_login` role with
+**no BYPASSRLS**, crossing the tenant boundary via a **named policy in
+`pg_policies`** rather than a role attribute. Verified on a live database:
+
+- returns the right tenant for any email
+- the owning role can read `password_hash` but **not** `full_name` or
+  `last_login_at`, and holds no `UPDATE`
+- `finsoft_app` still raises on a tenantless read of `users`
+- `roles.spec.ts`'s *"`finsoft_migration` is the only BYPASSRLS role"*
+  assertion survives intact
+
+The obvious alternative — a resolver owned by `finsoft_migration` — is a
+BYPASSRLS path by another name for every statement inside it, and breaks that
+assertion. A global `token_directory` table was rejected by the Architecture
+Guardian at W1-001: it puts a credential-derived value on an unprotected table
+readable before authentication.
+
+**Three conditions on whatever ADR-0023 chooses**, from the W1-001 signatures:
+reviewed by the Database Guardian **and** the Architecture Guardian; returns
+`(tenant_id, token_id)` and nothing else, never surfacing or logging a `23505`
+or its `DETAIL`; and **rate limiting that does not depend on knowing the
+tenant**, because there is no tenant to key it by before the lookup succeeds.
+
+### Also in scope, carried from W1-001
+
+- **The IDOR property must be re-proved.** `cannot spend another tenant's token
+  by presenting its hash` derives its entire guarantee from RLS being in force
+  on the by-hash lookup — and the real login path, by definition, has neither.
+  It must be re-proved through whatever ADR-0023 introduces, or it silently
+  stops being tested at the moment it starts to matter.
+- **TD-005 goes live here.** Migration 002 grants table-level `UPDATE` on
+  `users`, so `tenant_id` and `created_by` are application-writable. Login
+  writes `last_login_at`. That is the first code path to touch it, so the
+  forward migration is W1-002's, not a later wave's.
+- **ADR-0016 control 2 and :176 become false** the moment the `scid_` format is
+  read back — `asSessionCorrelationId` throws on anything that is not a UUID.
+  Schema, guard and ADR land together; migration 005 already shipped the schema
+  half and says so.
 
 **A correction carried into the design, recorded because the plan had it wrong.**
 
