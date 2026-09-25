@@ -119,7 +119,35 @@ Date.prototype.toISOString()                      →  ...383Z                  
 
 **Decisions taken in the revision**, each with its rejected alternative recorded: the linkage trigger over a self-FK plus anchor row (the anchor needs an authorship 002 deliberately does not provide); a one-argument advisory lock keyed on the tenant's own bits over `(4919, hashtext(…))` (which couples unrelated tenants and rests on an undocumented function); `audit_log` exempt from the §11 mandatory column set, named in `schema.spec.ts` rather than left to the migration author.
 
-**Outstanding.** Re-review, then three signatures. Migration 007 does not merge before them.
+### Contract, extended by the Product Owner 2026-09-25
+
+```
+ALLOWED     docs/adr/ADR-0020-audit-hash-chain-canonicalisation.md
+            docs/ARCHITECTURE.md         (the :302 advisory-lock line only)
+            docs/LOCK_REGISTRY.md        (new)
+            docs/TECH_DEBT.md            (new)
+            docs/WAVE_1_REGISTER.md
+READ ONLY   docs/adr/** (others), docs/NON_NEGOTIABLES.md
+FORBIDDEN   docs/adr/ADR-0018-*.md, database/**, packages/**, apps/**
+```
+
+`docs/ARCHITECTURE.md` and `docs/LOCK_REGISTRY.md` were added on the
+Architecture Guardian's ruling, which refused to widen the contract itself:
+*"that is a one-line Product Owner action, and it is the correct route — not a
+quiet widening by whoever is holding the branch."*
+
+**`ADR-0018` is explicitly FORBIDDEN here**, and that is the same ruling. Its §6
+(*"No lock is acquired after the first write"*) is the record that must change,
+not ADR-0020 — but ADR-0018's deciders include the Accounting Guardian, and a
+third party amending a `Proposed` document between drafts stops it being
+reviewable by its own deciders. Replacement text is supplied in the guardian's
+ruling and recorded against ADR-0018's acceptance pass. **ADR-0018 must not be
+signed carrying :123 as written.**
+
+**Outstanding.** Database Guardian round 3 on §1–§4, the five §5 changes, then
+three signatures. Migration 007 does not merge before them, and ADR-0020 does
+not merge before the `ARCHITECTURE.md:302` amendment — two LEVEL 1 documents
+contradicting each other in `docs/` is escalated, not tolerated.
 
 ---
 
