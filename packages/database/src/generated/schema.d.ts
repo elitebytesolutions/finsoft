@@ -91,12 +91,80 @@ export interface Outbox {
   version: Generated<number>;
 }
 
+export interface RefreshTokenFamilies {
+  created_at: Generated<Timestamp>;
+  created_by: string;
+  id: Generated<string>;
+  revoked_at: Timestamp | null;
+  revoked_reason: string | null;
+  session_id: string;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+  updated_by: string;
+  version: Generated<number>;
+}
+
+export interface RefreshTokens {
+  created_at: Generated<Timestamp>;
+  created_by: string;
+  expires_at: Timestamp;
+  family_id: string;
+  id: Generated<string>;
+  issued_at: Generated<Timestamp>;
+  replaced_by: string | null;
+  tenant_id: string;
+  /**
+   * SHA-256 of the raw token. The raw value is never stored, so this column cannot have a DEFAULT and its entropy stays an application promise — see ADR-0021 condition 5.
+   */
+  token_hash: string;
+  updated_at: Generated<Timestamp>;
+  updated_by: string;
+  /**
+   * The single-use fence. Set once, never cleared: the column grant bounds WHICH columns change, refresh_tokens_enforce_transition() bounds which DIRECTION. Without the trigger, one UPDATE un-spends the token.
+   */
+  used_at: Timestamp | null;
+  version: Generated<number>;
+}
+
 export interface SchemaMigrations {
   applied_at: Generated<Timestamp>;
   checksum: string;
   execution_ms: number;
   filename: string;
   version: number;
+}
+
+export interface Sessions {
+  created_at: Generated<Timestamp>;
+  created_by: string;
+  device_id: string | null;
+  id: Generated<string>;
+  ip: string | null;
+  last_seen_at: Generated<Timestamp>;
+  /**
+   * ADR-0009:119. A timestamp, not a boolean: step-up re-authentication needs MFA RECENCY, which a flag cannot express.
+   */
+  mfa_at: Timestamp | null;
+  /**
+   * ADR-0009:102. Bumped when roles change; a token behind this version is refused at the guard, so a privilege reduction takes effect on the next request.
+   */
+  permission_version: Generated<number>;
+  revoked_at: Timestamp | null;
+  revoked_reason: string | null;
+  /**
+   * ADR-0016 §5. The non-secret identifier that appears in logs INSTEAD of the session id. Its entropy is a schema fact because finsoft_app holds no INSERT grant on this column and so cannot name it — the DEFAULT alone would be overridable by any caller that did. The scid_ prefix ENABLES the closure of ADR-0016 debt D8 — it does not close it: asSessionCorrelationId() still requires a UUID and would reject this format, so the guard change, this format and the ADR-0016 correction land together.
+   */
+  session_correlation_id: Generated<string>;
+  status: Generated<string>;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+  /**
+   * NOT pinned to created_by, unlike outbox: an administrator revoking another user's session is a legitimate write by a different actor. NOTE: nothing here verifies this is the acting principal — the audit record is the authority (rule 9).
+   */
+  updated_by: string;
+  user_agent: string | null;
+  user_id: string;
+  version: Generated<number>;
 }
 
 export interface Tenants {
@@ -151,7 +219,10 @@ export interface Users {
 
 export interface DB {
   outbox: Outbox;
+  refresh_token_families: RefreshTokenFamilies;
+  refresh_tokens: RefreshTokens;
   schema_migrations: SchemaMigrations;
+  sessions: Sessions;
   tenants: Tenants;
   users: Users;
 }

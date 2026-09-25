@@ -5,6 +5,30 @@
 **Deciders:** Product Owner, Architecture Guardian
 **Authority:** LEVEL 1 — reversing this requires a superseding ADR
 
+---
+
+> ## ⛔ Partial supersession — the grace window is no longer in force
+>
+> **This ADR is still in force**, and this notice is permanent. It annotates status only; the decision, rationale and consequences below are untouched and stay exactly as accepted, per [the ADR README](README.md) §4. Because the supersession is partial, this record does not become `Superseded by ADR-0022` — it stays `Accepted`, minus the three sites named here.
+>
+> [ADR-0022](ADR-0022-no-grace-window-on-refresh-rotation.md) (**Accepted 2026-09-25**) supersedes **the grace window, and nothing else in this record**, at three sites. The body below still states the window as a decision; this notice is the only thing that says otherwise, which is why it is not removed:
+>
+> | Provision | Superseded by ADR-0022 |
+> |---|---|
+> | Line 83 — "A short grace window (a few seconds) tolerates a genuine network retry replaying the same refresh, returning the already-issued pair…" | **No longer in force. Do not build it.** There is no tolerance at any delay: a replay in the same millisecond as the spend revokes the family exactly as a replay an hour later does |
+> | Line 138 — "Handled by the grace window and…" | **No longer in force as to the window.** The *serialising refresh per session* half stands, and is implemented by the row lock on the spend statement |
+> | Line 162 — "…replaying a consumed refresh token **beyond the grace window** revokes the whole family…" | **No longer in force as to those four words.** Read the bullet without them: replaying a consumed refresh token revokes the whole family. The rest of the bullet stands |
+>
+> Two reasons, found independently by the Architecture Guardian and the Database Guardian and rated blocking by both. First, the clause contradicts **line 85 of this record**: returning "the already-issued pair" requires re-sending the successor's *raw* value, and refresh tokens are stored only as SHA-256, so no implementation satisfies both lines. Second, a replayed stolen refresh token and a second browser tab present the **same evidence** to the server and cannot be distinguished; a window is therefore an interval in which a thief's replay is accepted and the family survives.
+>
+> Everything else here — rotation, reuse detection, family revocation, hash at rest, the signed `tenant_id` claim, revocation, MFA — is unaffected and in force.
+>
+> **Nothing is blocked by this record any longer.** `database/migrations/005_create_sessions.sql` and the `packages/auth` refresh endpoint are released; build rotation with no window, to ADR-0022. A `grace`-named symbol, column, configuration key or environment variable on the refresh path fails the build under ADR-0022's Compliance, so the window cannot return as a dead configuration surface.
+>
+> **Line numbers.** Every `ADR-0009:NN` citation in the repository was written against the **as-accepted** text. This notice adds 24 lines at the head, so an as-accepted line NN is now at NN+24 — :83 → 107, :85 → 109, :138 → 162, :162 → 186. Citations are not rewritten: the as-accepted numbering is the stable reference, and the clauses are quoted verbatim above so the reference survives the shift. The notice is permanent, so the offset is permanent and fixed at +24; any later edit here must preserve its line count.
+
+---
+
 ## Context
 
 The session mechanism determines two things that the rest of the system depends on absolutely: *who* is acting, and *which tenant* they are acting in. The second is the input to [ADR-0004](ADR-0004-postgresql-row-level-security.md) — `app.tenant_id` is set from the session, and every RLS policy in the database compares against it. If the session's tenant can be influenced by an attacker, RLS enforces the wrong tenant perfectly and the entire isolation model collapses in silence.

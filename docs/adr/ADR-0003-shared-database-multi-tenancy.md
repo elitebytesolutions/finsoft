@@ -5,6 +5,27 @@
 **Deciders:** Product Owner, Architecture Guardian
 **Authority:** LEVEL 1 — reversing this requires a superseding ADR
 
+---
+
+> ## ⛔ Partial supersession — two provisions are no longer in force
+>
+> **This ADR is still in force**, and this notice is permanent. It annotates status only; the decision, rationale and consequences below are untouched and stay exactly as accepted, per [the ADR README](README.md) §4. Because the supersession is partial, this record does not become `Superseded by ADR-0021` — it stays `Accepted`, minus the two provisions named here.
+>
+> [ADR-0021](ADR-0021-globally-unique-indexes-on-tenant-owned-tables.md) (**Accepted 2026-09-25**) supersedes this record **in respect of two provisions only**. The body below still states both as unqualified rules; this notice is the only thing that says otherwise, which is why it is not removed:
+>
+> | Provision | Superseded by ADR-0021 |
+> |---|---|
+> | Line 28 — "Every unique constraint on tenant-owned data is scoped by tenant: `UNIQUE (tenant_id, document_type, number)`, not `UNIQUE (number)`." | **No longer in force as written.** Read it as ADR-0021 states it: a single-column surrogate `uuid` primary key is exempt at LEVEL 1, and any other unique index omitting `tenant_id` must pass the necessity test — uniqueness relied upon by a lookup that runs *before a tenant context exists* — plus the six conditions ADR-0021 attaches to it, one of which is a review gate |
+> | Line 110 — "Schema test: every unique constraint on a tenant-owned table **includes** `tenant_id`." | **No longer in force as written.** *Includes* is settled as **leads with**: a trailing `tenant_id` gives a global namespace for the leading columns, which is the thing being forbidden. The operative assertion is ADR-0021's, in `database/tests/schema.spec.ts`, with `GLOBALLY_UNIQUE_INDEX_ALLOWLIST` |
+>
+> Everything else here — the discriminator itself, `NOT NULL` and the foreign key, `tenant_id` as the leading column of the access path, composite foreign keys, the global-table rule, configuration-not-forks — is unaffected and in force.
+>
+> **Before adding any unique index on a tenant-owned table, read ADR-0021.** It, not line 28, is the operative rule. The exemption is not self-service: an index claiming it is on the allowlist, with its conditions asserted against the live catalogue, or it does not merge.
+>
+> **Line numbers.** Every `ADR-0003:NN` citation in the repository was written against the **as-accepted** text. This notice adds 21 lines at the head, so an as-accepted line NN is now at NN+21 — :28 → 49, :110 → 131. Citations are not rewritten: the as-accepted numbering is the stable reference, and the two provisions are quoted verbatim above. The notice is permanent, so the offset is permanent and fixed at +21; any later edit here must preserve its line count.
+
+---
+
 ## Context
 
 FinSoft is multi-tenant SaaS. Bhatti Traders is tenant #1 and the pilot, and the product must be sellable to a second trading business **with configuration only, no code fork** ([PRD.md §2, §10](../PRD.md)). Expected shape for v1 and the foreseeable years after it: tens of tenants, each a single trading business with a handful to a few dozen users, not thousands of self-serve signups.
