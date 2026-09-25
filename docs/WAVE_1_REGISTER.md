@@ -385,13 +385,10 @@ same shape and will grow faster.
 ```
 ALLOWED     docs/adr/ADR-0023-*.md              (the pre-tenant lookup)
             packages/auth/**
-            packages/observability/src/context.ts   (ADR-0021 compliance:
-                                                     sessionCorrelationId only
-                                                     alongside tenantId; and the
-                                                     asSessionCorrelationId guard
-                                                     for the scid_ format)
-            docs/adr/ADR-0016-*.md              (control 2 and :176, which the
-                                                 scid_ format makes false)
+            packages/observability/src/context.ts   DONE — the ADR-0021 pairing
+                                                     guard and the scid_ format
+            docs/adr/ADR-0016-*.md              DONE — corrected by the
+                                                 architecture-guardian, D8 CLOSED
             database/migrations/006_*.sql       (only if ADR-0023 requires DDL)
             tests/integration/**, tests/security/**
             docs/WAVE_1_REGISTER.md, docs/TECH_DEBT.md
@@ -547,10 +544,15 @@ tenant**, because there is no tenant to key it by before the lookup succeeds.
   `users`, so `tenant_id` and `created_by` are application-writable. Login
   writes `last_login_at`. That is the first code path to touch it, so the
   forward migration is W1-002's, not a later wave's.
-- **ADR-0016 control 2 and :176 become false** the moment the `scid_` format is
-  read back — `asSessionCorrelationId` throws on anything that is not a UUID.
-  Schema, guard and ADR land together; migration 005 already shipped the schema
-  half and says so.
+- **ADR-0016 debt D8 — CLOSED 2026-09-25.** All three parts landed: migration
+  005's `DEFAULT`, `sessions_scid_shape` CHECK and absent INSERT grant (merged);
+  `newSessionCorrelationId`/`asSessionCorrelationId` moved to `scid_<32 hex>`
+  with a test named for the debt; and ADR-0016 corrected in place by the
+  Architecture Guardian under README §4's **fourth arm**, which they wrote for
+  this case — a record delivering debt it booked against itself. Control 2 and
+  :176 keep the gap in the past tense rather than erasing it, because for two
+  days that control rested on a naming coincidence and a reader is entitled to
+  know.
 
 **A correction carried into the design, recorded because the plan had it wrong.**
 
