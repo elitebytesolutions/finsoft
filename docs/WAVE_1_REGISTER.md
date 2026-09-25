@@ -23,7 +23,33 @@ The SQL half was met in Wave 0 — [FND-007/008](WAVE_0_REGISTER.md) proves isol
 
 **Acceptance criteria.** ADR-0020 written and signed by three parties · both dependencies security-reviewed, pinned exactly, `npm audit` unchanged · argon2id verified in a **musl** environment, not merely locally · parameters benchmarked on the staging host.
 
-**Status: in progress.** ADR-0020 is written and unsigned; the reviews are done.
+**Status: complete. ADR-0020 Accepted by the Product Owner 2026-09-25, on both guardian signatures.**
+
+Three review rounds. **Both guardians approved the canonicalisation on
+independent reproduction** — each regenerated both golden vectors and the
+rejected 13-column reading from the specification alone, one with the input
+record's keys deliberately shuffled. §1–§4 needed no change across any round.
+
+**Every blocking finding was in §5's mechanism, and the last one was a lesson
+W1-001 had already taught**: the linkage trigger read its parent row unlocked,
+so a concurrent `seq` rewrite slipped past a trigger that had already passed,
+leaving `0, 1, 3, 99` — a false gap, which §6 defines as evidence of a deleted
+row. Neither the advisory lock (it serialises *appenders*; the mutator is not
+one) nor the foreign key (`seq` is not in the referenced key, so `FOR KEY
+SHARE` does not conflict) covered it.
+
+The durable outcome is doctrine rather than a fix: **any row a trigger reads
+other than its own must be read `FOR SHARE`**, recorded at
+`database/migrations/005_create_sessions.sql:114-131` and now cited from
+ADR-0020 so the next trigger author inherits it instead of rediscovering it on
+a financial table.
+
+**Two facts were wrong while stated as measured**, and both are named in
+ADR-0020's Signatures block so a reader knows where to distrust it: `objsubid`
+had the one- and two-argument advisory forms inverted — and that sentence had
+already been copied into `LOCK_REGISTRY.md`, the file whose job is to be the
+authority on it — and `audit_log_ip_bounded` checked length only while citing a
+15-character value as its justification.
 
 ### ADR-0020 — audit hash chain canonicalisation
 

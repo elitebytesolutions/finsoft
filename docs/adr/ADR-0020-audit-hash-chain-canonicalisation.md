@@ -1,7 +1,8 @@
 # ADR-0020: Audit hash chain — canonicalisation and chain integrity
 
-**Status:** Proposed
-**Date:** 2026-09-24 · revised 2026-09-25 after guardian review
+**Status:** Accepted
+**Date:** 2026-09-24 · revised 2026-09-25 after three rounds of guardian review
+**Accepted:** 2026-09-25, by the Product Owner, on the guardian evidence recorded in the Signatures block below
 **Deciders:** Product Owner, Architecture Guardian, Database Guardian
 **Authority:** LEVEL 1 — reversing this requires a superseding ADR
 **Blocks:** migration 007 (`audit_log`) and everything that writes to it
@@ -584,7 +585,7 @@ The reasoning: `occurred_at` and `actor_user_id` already carry when and by whom,
 |---|---|
 | **Architecture Guardian** | ✅ **APPROVED WITH CONDITIONS**, 2026-09-25 — round 2's four conditions landed; round 3's ruling on §5 (acquire-last, the `ARCHITECTURE.md:302` amendment and the lock registry) applied |
 | **Database Guardian** | ✅ **APPROVED**, 2026-09-25 — three review rounds, every finding re-measured rather than taken on report |
-| **Product Owner** | ☐ not recorded |
+| **Product Owner** | ✅ **SIGNED**, 2026-09-25 |
 
 > Architecture Guardian — canonicalisation, chain integrity and boundary review, 2026-09-25 — accepted on independent reproduction of both golden vectors from the specification alone; conditional on four corrections: READ COMMITTED is ARCHITECTURE §7:302 not §5, the advisory-lock key must fold all 128 tenant bits, apply.ts:72 already claims the one-argument space, and rule 12 is not reached by `seq` rather than excepted for it.
 
@@ -601,6 +602,8 @@ Two further corrections worth naming because both were stated as *measured* and 
 **Round 2's four conditions landed**, each measured rather than asserted: the citation corrected to §7 line 302; the key folded and verified to separate the structured fixtures that collapsed to `16384` and to give 200 000 distinct in 200 000; `apply.ts:72` named as the prior claimant with the registry moved from "owed before the second claimant" to owed now; and the rule 12 wording withdrawn, since an ADR cannot except a LEVEL 0 rule and this one does not need to.
 
 > Database Guardian — 2026-09-25 — approved for ADR-0020 as it stands, and for the schema facts migration 007 must carry. §1–§4 on independent reproduction of both golden vectors and the rejected 13-column reading from the specification alone, with the input keys shuffled; §5 on measurement — five forgeries rejected as `finsoft_app` under `FORCE` RLS, and the `FOR SHARE` read re-measured **against the form as finally written** at a 4.0 s serialised wait, because a locking clause inside `NOT EXISTS` is exactly the kind of thing that parses and locks nothing.
+
+> Product Owner — 2026-09-25 — "adr 0020 is signed from my side". Accepted on both guardian signatures above: independent reproduction of the golden vectors from the specification alone, and measurement of the chain-integrity mechanism against forgery.
 
 ### Three conditions carried to migration 007
 
