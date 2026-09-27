@@ -96,4 +96,6 @@ DONE · FILES · TESTS · DECISIONS · BLOCKED · OBSERVED
 
 Legacy data is internally inconsistent · a mapping requires an accounting judgement (which account does this legacy bucket become?) · a merge would combine records that might be genuinely different entities · valuation cannot be reconstructed from legacy data · the posting engine rejects data and the correct fix is unclear.
 
+An accounting judgement goes to the Accounting seat of the Technical Council. What the legacy business *meant* — whether two customers are one, how an inconsistency is resolved — is the Product Owner's, because it changes the books a real business files. Work from a delivery brief; import tooling that posts is T3.
+
 Never resolve any of these by writing directly to the database.
