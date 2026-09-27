@@ -1,11 +1,18 @@
 import { Writable } from 'node:stream'
 import { Controller, Get, Module, type INestApplication } from '@nestjs/common'
+import { APP_GUARD } from '@nestjs/core'
 import { Test } from '@nestjs/testing'
+import cookieParser from 'cookie-parser'
+import { Redis } from 'ioredis'
 import request from 'supertest'
 import { initLogger, resetLoggerForTests } from '@finsoft/observability'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { prepareTestDatabase, teardownTestDatabase } from '@finsoft/database/testing'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { AllExceptionsFilter } from '../../apps/api/src/common/all-exceptions.filter.ts'
 import { FinsoftNestLogger } from '../../apps/api/src/common/nest-logger.ts'
+import { TenantGuard } from '../../apps/api/src/common/tenant.guard.ts'
+import { AuthModule } from '../../apps/api/src/auth/auth.module.ts'
+import { createActiveUserFixture } from './helpers/auth-seed.ts'
 
 /*
  * A deliberately sensitive error must not reach the log through EITHER
@@ -187,5 +194,157 @@ describe('framework messages go through the same redactor', () => {
     const line = lines.find((l) => String(l.msg).includes('mapped route'))
     expect(line?.level).toBe('info')
     expect(line?.service).toBe('api')
+  })
+})
+
+/*
+ * B6, security re-review 2026-09-27: the auth routes themselves, exercised
+ * with REAL secret-shaped values — a real password, a real bearer access
+ * token, a real cookie value (the raw refresh token) — asserting none of
+ * them, nor any bare 64-hex digest (a token hash), ever reaches a log line.
+ * A separate app instance and log stream from the generic tests above, so
+ * this can run against real PostgreSQL and Redis without disturbing them.
+ */
+describe('the auth routes leak neither credentials nor their hashes', () => {
+  @Module({
+    imports: [AuthModule],
+    providers: [{ provide: APP_GUARD, useClass: TenantGuard }],
+  })
+  class LogLeakAuthModule {}
+
+  let authApp: INestApplication
+  let authLines: Record<string, unknown>[]
+  const HEX_64 = /\b[0-9a-f]{64}\b/
+
+  beforeAll(async () => {
+    await prepareTestDatabase()
+    process.env['REDIS_URL'] = process.env['TEST_REDIS_URL'] ?? process.env['REDIS_URL']
+    const flusher = new Redis(process.env['TEST_REDIS_URL'] ?? 'redis://localhost:6379')
+    await flusher.flushdb()
+    await flusher.quit()
+  }, 120_000)
+
+  afterAll(async () => {
+    await authApp?.close()
+    await teardownTestDatabase()
+  })
+
+  beforeEach(async () => {
+    resetLoggerForTests()
+    authLines = []
+    const stream = new Writable({
+      write(chunk, _encoding, callback) {
+        authLines.push(JSON.parse(String(chunk)))
+        callback()
+      },
+    })
+    initLogger({ service: 'api', destination: stream, level: 'debug' })
+
+    const moduleRef = await Test.createTestingModule({ imports: [LogLeakAuthModule] }).compile()
+    authApp = moduleRef.createNestApplication()
+    authApp.setGlobalPrefix('api')
+    authApp.use(cookieParser())
+    authApp.useGlobalFilters(new AllExceptionsFilter())
+    await authApp.init()
+  }, 60_000)
+
+  afterEach(async () => {
+    await authApp?.close()
+    resetLoggerForTests()
+  })
+
+  const authLogged = (): string => JSON.stringify(authLines)
+
+  it('does not log the password on a failed login', async () => {
+    const user = await createActiveUserFixture('LLK1')
+    const password = 'S3cret-Password-Nobody-Should-See'
+
+    await request(authApp.getHttpServer())
+      .post('/api/auth/login')
+      .send({ tenantCode: user.code, email: user.email, password })
+
+    expect(authLogged(), 'the password leaked into a log line').not.toContain(password)
+  })
+
+  it('does not log the password, the access token or the raw refresh token on a successful login', async () => {
+    const user = await createActiveUserFixture('LLK2')
+
+    const res = await request(authApp.getHttpServer())
+      .post('/api/auth/login')
+      .send({ tenantCode: user.code, email: user.email, password: user.password })
+    expect(res.status).toBe(200)
+
+    const setCookie = (res.headers['set-cookie'] as unknown as string[]).find((c) =>
+      c.startsWith('finsoft_rt='),
+    )
+    const rawRefreshToken = setCookie?.split(';')[0]?.split('=')[1]
+    expect(rawRefreshToken).toBeTruthy()
+
+    expect(authLogged(), 'the password leaked').not.toContain(user.password)
+    expect(authLogged(), 'the access token leaked').not.toContain(res.body.accessToken)
+    expect(authLogged(), 'the raw refresh token (the cookie value) leaked').not.toContain(
+      rawRefreshToken,
+    )
+    // A bare 64-hex digest would be the token's SHA-256 hash — never logged
+    // either, per §5's own note on the refresh throttle key.
+    expect(authLogged(), 'a 64-hex digest (a token hash) leaked').not.toMatch(HEX_64)
+  })
+
+  it('does not log the cookie value or the new token on a rotation', async () => {
+    const user = await createActiveUserFixture('LLK3')
+    const login = await request(authApp.getHttpServer())
+      .post('/api/auth/login')
+      .send({ tenantCode: user.code, email: user.email, password: user.password })
+    const cookieHeader = (login.headers['set-cookie'] as unknown as string[])
+      .find((c) => c.startsWith('finsoft_rt='))
+      ?.split(';')[0]
+    expect(cookieHeader).toBeTruthy()
+
+    resetLoggerForTests()
+    authLines = []
+    const stream = new Writable({
+      write(chunk, _encoding, callback) {
+        authLines.push(JSON.parse(String(chunk)))
+        callback()
+      },
+    })
+    initLogger({ service: 'api', destination: stream, level: 'debug' })
+
+    const refreshed = await request(authApp.getHttpServer())
+      .post('/api/auth/refresh')
+      .set('Cookie', cookieHeader as string)
+      .set('X-Requested-With', 'finsoft')
+      .send()
+    expect(refreshed.status).toBe(200)
+
+    const rawPresented = (cookieHeader as string).split('=')[1]
+    expect(authLogged(), 'the presented raw refresh token leaked').not.toContain(rawPresented)
+    expect(authLogged(), 'the successor access token leaked').not.toContain(
+      refreshed.body.accessToken,
+    )
+    expect(authLogged(), 'a 64-hex digest leaked').not.toMatch(HEX_64)
+  })
+
+  it('does not log the bearer token on GET /me', async () => {
+    const user = await createActiveUserFixture('LLK4')
+    const login = await request(authApp.getHttpServer())
+      .post('/api/auth/login')
+      .send({ tenantCode: user.code, email: user.email, password: user.password })
+
+    resetLoggerForTests()
+    authLines = []
+    const stream = new Writable({
+      write(chunk, _encoding, callback) {
+        authLines.push(JSON.parse(String(chunk)))
+        callback()
+      },
+    })
+    initLogger({ service: 'api', destination: stream, level: 'debug' })
+
+    await request(authApp.getHttpServer())
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${login.body.accessToken}`)
+
+    expect(authLogged(), 'the bearer access token leaked').not.toContain(login.body.accessToken)
   })
 })

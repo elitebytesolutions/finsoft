@@ -2,6 +2,7 @@ import 'reflect-metadata'
 import { NestFactory } from '@nestjs/core'
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger'
 import cookieParser from 'cookie-parser'
+import { preloadJwtKeys } from '@finsoft/auth'
 import { closeDatabase, openDatabase } from '@finsoft/database'
 import { initLogger } from '@finsoft/observability'
 import { FinsoftNestLogger } from './common/nest-logger'
@@ -32,6 +33,14 @@ async function bootstrap(): Promise<void> {
    */
   assertProductionCookieSecurity()
   refreshCookieName()
+
+  /*
+   * C1: load (or generate, dev/test only) the RS256 key set before the
+   * server accepts a single connection — a malformed AUTH_JWT_PRIVATE_KEY/
+   * AUTH_JWT_PUBLIC_KEYS pair, or an ephemeral pair reached for outside
+   * development/test, is discovered here, not on the first login.
+   */
+  await preloadJwtKeys()
 
   /*
    * Before anything that might log. NestJS's own bootstrap messages are

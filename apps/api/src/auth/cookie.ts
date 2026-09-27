@@ -89,7 +89,13 @@ export function setRefreshCookie(res: Response, rawToken: string, expiresAt: Dat
 }
 
 export function clearRefreshCookie(res: Response): void {
-  res.clearCookie(refreshCookieName(), { path: refreshCookiePath() })
+  // B7: the SAME options as setRefreshCookie (secure, sameSite, path) — a
+  // browser does not require them to match to clear a cookie by name+path,
+  // but a clearing Set-Cookie issued with different attributes than the one
+  // it targets is exactly the kind of asymmetry that quietly stops working
+  // the day a browser tightens its matching rules. One options object,
+  // shared by both.
+  res.clearCookie(refreshCookieName(), cookieOptions(0))
 }
 
 export function readRefreshCookie(req: Request): string | undefined {

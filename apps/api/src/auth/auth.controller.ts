@@ -13,7 +13,8 @@ import {
   UsePipes,
 } from '@nestjs/common'
 import type { Request, Response } from 'express'
-import { ThrottleUnavailableError } from '@finsoft/auth'
+import { HashingQueueFullError, ThrottleUnavailableError } from '@finsoft/auth'
+import { logCommittedBusinessEvent } from '@finsoft/observability'
 import { Public } from '../common/tenant.guard'
 import { ZodValidationPipe } from '../common/zod-validation.pipe'
 import { AuthService } from './auth.service'
@@ -39,6 +40,21 @@ function throttled(retryAfterSeconds: number, res: Response): never {
     { statusCode: 429, error: 'rate_limited', message: 'Too many attempts. Try again later.' },
     429,
   )
+}
+
+/**
+ * B4: ADR-0023 §5 layer 4 (global) never blocks — it alerts. This is the
+ * alert: a business event, logged after the fact, never in the request's
+ * own success/failure path. `alertedLayers` is empty on every ordinary
+ * request, so this is a no-op except during an actual volume spike.
+ */
+function logThrottleAlerts(alertedLayers: readonly string[]): void {
+  for (const key of alertedLayers) {
+    logCommittedBusinessEvent({
+      event: 'THROTTLE_LAYER_ALERTED',
+      detail: { layer: key },
+    })
+  }
 }
 
 @Controller('auth')
@@ -75,8 +91,17 @@ export class AuthController {
           message: 'Try again shortly.',
         })
       }
+      if (error instanceof HashingQueueFullError) {
+        throw new ServiceUnavailableException({
+          statusCode: 503,
+          error: 'busy',
+          message: 'Try again shortly.',
+        })
+      }
       throw error
     }
+
+    logThrottleAlerts(result.alertedLayers)
 
     if (result.outcome === 'throttled') throttled(result.retryAfterSeconds, res)
     if (result.outcome === 'failed') throw new UnauthorizedException(INVALID_CREDENTIALS)
@@ -134,6 +159,20 @@ export class AuthController {
     if (result.outcome === 'failed') {
       // Reuse or expiry: the spent/unknown cookie must not linger client-side.
       clearRefreshCookie(res)
+
+      if (result.reason === 'reused' && result.reuse) {
+        // Ids only — never the presented hash or any credential-shaped
+        // value. The audit sink itself is still a no-op (M1-D); this is the
+        // seam the coordinator asked for so wiring a real sink later needs
+        // no change here.
+        logCommittedBusinessEvent({
+          event: 'REFRESH_REUSE_DETECTED',
+          entityType: 'session',
+          entityId: result.reuse.sessionId,
+          detail: { tenantId: result.reuse.tenantId, familyId: result.reuse.familyId },
+        })
+      }
+
       throw new UnauthorizedException(INVALID_CREDENTIALS)
     }
 

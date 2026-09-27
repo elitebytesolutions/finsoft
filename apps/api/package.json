@@ -22,6 +22,7 @@
     "vitest": "4.1.11"
   },
   "dependencies": {
+    "@finsoft/auth": "0.1.0",
     "@finsoft/database": "0.1.0",
     "@finsoft/observability": "0.1.0",
     "@finsoft/validation": "0.1.0",

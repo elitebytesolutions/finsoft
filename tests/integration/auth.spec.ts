@@ -5,14 +5,18 @@ import cookieParser from 'cookie-parser'
 import { Redis } from 'ioredis'
 import request from 'supertest'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { decodeJwt } from 'jose'
+import { decodeJwt, SignJWT } from 'jose'
 import { prepareTestDatabase, teardownTestDatabase, unique } from '@finsoft/database/testing'
 import { initLogger, resetLoggerForTests } from '@finsoft/observability'
 import { resetVerificationCountForTests, verificationCountForTests } from '@finsoft/auth'
 import { AllExceptionsFilter } from '../../apps/api/src/common/all-exceptions.filter.ts'
 import { TenantGuard } from '../../apps/api/src/common/tenant.guard.ts'
 import { AuthModule } from '../../apps/api/src/auth/auth.module.ts'
-import { createActiveUserFixture, type ActiveUserFixture } from './helpers/auth-seed.ts'
+import {
+  createActiveUserFixture,
+  disableUser,
+  type ActiveUserFixture,
+} from './helpers/auth-seed.ts'
 
 /*
  * The auth HTTP contract, end to end, against real PostgreSQL and real
@@ -276,6 +280,23 @@ describe('POST /api/auth/login, /refresh, /logout, GET /me, /jwks', () => {
         'the successor token must also be dead once reuse revoked the family',
       ).toBe(401)
     })
+
+    it('401s a refresh for a since-DISABLED user, without spending the token (C4)', async () => {
+      const u = await fresh()
+      const login = await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ tenantCode: u.code, email: u.email, password: u.password })
+      const cookie = cookieHeaderFrom(login)
+
+      await disableUser(u)
+
+      const res = await request(app.getHttpServer())
+        .post('/api/auth/refresh')
+        .set('Cookie', cookie)
+        .set(CSRF)
+        .send()
+      expect(res.status).toBe(401)
+    })
   })
 
   describe('logout', () => {
@@ -345,6 +366,43 @@ describe('POST /api/auth/login, /refresh, /logout, GET /me, /jwks', () => {
         'base64url',
       )
       const forged = `${noneHeader}.${parts[1]}.`
+
+      const res = await request(app.getHttpServer())
+        .get('/api/auth/me')
+        .set('Authorization', `Bearer ${forged}`)
+      expect(res.status).toBe(401)
+    })
+
+    it('401s on an HS256-signed token (algorithm confusion) even with the real claims', async () => {
+      // The classic RS256->HS256 confusion: an attacker who can obtain the
+      // RS256 PUBLIC key (GET /api/auth/jwks is public by design) tries
+      // signing a token with HS256 using the public key material as the
+      // HMAC secret, hoping a verifier that trusts the token's own `alg`
+      // header will use the public key symmetrically. `verifyAccessToken`
+      // pins `algorithms: ['RS256']` independently of the header, so this
+      // must be rejected before the signature is even checked.
+      const u = await createActiveUserFixture(`HS${unique()}`.slice(0, 6))
+      const login = await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ tenantCode: u.code, email: u.email, password: u.password })
+      const claims = decodeJwt(login.body.accessToken)
+
+      const jwks = await request(app.getHttpServer()).get('/api/auth/jwks')
+      const publicKeyMaterial = JSON.stringify(jwks.body.keys[0])
+
+      const forged = await new SignJWT({
+        tenant_id: claims['tenant_id'],
+        session_id: claims['session_id'],
+        perm_ver: claims['perm_ver'],
+        mfa: claims['mfa'],
+      })
+        .setProtectedHeader({ alg: 'HS256' })
+        .setSubject(claims.sub as string)
+        .setIssuer('finsoft')
+        .setAudience('finsoft-api')
+        .setIssuedAt()
+        .setExpirationTime('15m')
+        .sign(new TextEncoder().encode(publicKeyMaterial))
 
       const res = await request(app.getHttpServer())
         .get('/api/auth/me')
