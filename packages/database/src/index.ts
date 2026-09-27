@@ -67,3 +67,17 @@ export type { ClaimedOutboxRow, FailureRecord, ReclaimResult } from './outbox.ts
 export { readSchemaHealth } from './health.ts'
 export type { SchemaHealth } from './health.ts'
 export { DatabaseConfigError } from './env.ts'
+
+/*
+ * RBAC queries. ARCHITECTURE §8, migration 008_create_rbac.sql.
+ *
+ * Exported because packages/permissions is not on depcruise's
+ * kysely-is-allowlisted allow-list and so must not build these queries
+ * itself (Architecture seat ruling, docs/briefs/M1-R-rbac.md). What is
+ * exported is row access and nothing else: this package does not know what a
+ * permission code means, which ones are privileged, or what a system role
+ * template contains.
+ */
+export { selectEffectivePermissionCodes } from './rbac/resolve-permissions.ts'
+export { insertSeededRoles } from './rbac/seed-roles.ts'
+export type { RoleSeed } from './rbac/seed-roles.ts'
