@@ -122,6 +122,8 @@ A posted JV is corrected only by reversal ([reversal.md](reversal.md)) — throu
 
 **PO-Q2 — does a manual journal voucher need a second person to approve it before it posts?**
 
+**Decided — Product Owner, 2026-09-27: Option A** (single step for the MVP; maker–checker returns with Wave 2 scope after the MVP).
+
 | | |
 |---|---|
 | **Option A** — single step (this rule as written) | A user with `voucher.post` posts. Every voucher is audited with its author, and any error is corrected by visible reversal. No extra screen, no date impact on M2 |

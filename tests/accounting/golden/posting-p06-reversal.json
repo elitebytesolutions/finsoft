@@ -11,7 +11,7 @@
   "source": "docs/posting-rules/reversal.md",
   "governedBy": ["ADR-0006", "ADR-0012", "ADR-0014", "Invariant 6"],
   "executableFrom": "M3",
-  "status": "Specified, hand-computed. Not yet executed: needs invoices and receipts (M3). Step 3 depends on PO-Q1 (service-sale.md §8); Option A is specified.",
+  "status": "Specified, hand-computed. Not yet executed: needs invoices and receipts (M3). Step 3 follows PO-Q1 Option A, decided by the Product Owner 2026-09-27.",
   "description": [
     "Setup: P05's invoice (10000.0000, 2026-09-15) and receipt (6000.0000, 2026-09-20).",
     "",

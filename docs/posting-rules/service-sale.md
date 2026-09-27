@@ -126,11 +126,13 @@ Because both sides are built from the same rounded line nets, **no residual can 
 
 Through the invoice only ([reversal.md](reversal.md) §5):
 
-- **Precondition — decided, subject to PO-Q1:** an invoice with any **live allocation** (from a receipt that is not reversed) cannot be reversed: `INVOICE_HAS_LIVE_ALLOCATIONS`, naming the receipts. The receipts are reversed first. Reason: reversing the invoice while a receipt stays allocated to it would leave the customer with a credit balance the size of the receipt — an **advance**, and advances are deferred in the MVP. The system would be holding a state it has no rule for.
+- **Precondition — decided (PO-Q1 Option A, Product Owner 2026-09-27):** an invoice with any **live allocation** (from a receipt that is not reversed) cannot be reversed: `INVOICE_HAS_LIVE_ALLOCATIONS`, naming the receipts. The receipts are reversed first. Reason: reversing the invoice while a receipt stays allocated to it would leave the customer with a credit balance the size of the receipt — an **advance**, and advances are deferred in the MVP. The system would be holding a state it has no rule for.
 - Effect, in one transaction: kernel reverses the entry (`Dr SERVICE_REVENUE / Cr AR_CONTROL [customer]`, same amounts); invoice `POSTED → REVERSED`; outstanding becomes `0.0000` and the invoice leaves the open-items list.
 - Date: [reversal.md](reversal.md) §4.
 
 **PO-Q1 — a customer has paid part of an invoice; the user wants to cancel the invoice.**
+
+**Decided — Product Owner, 2026-09-27: Option A** (refuse until the receipt is reversed).
 
 | | |
 |---|---|
