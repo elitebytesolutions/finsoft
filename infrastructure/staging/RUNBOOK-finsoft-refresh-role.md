@@ -78,6 +78,17 @@ DO $do$ BEGIN
   END IF;
 END $do$;
 
+-- D6, security/database re-review 2026-09-27. Idempotent correction for a
+-- role that might already exist on this cluster from an earlier, HAND-RUN
+-- provisioning attempt (exactly the failure mode ADR-0023 §2's own
+-- "measurement rule" names — a role created by hand during a measurement
+-- session, absent from any script, that every later assertion would then
+-- pass for the wrong reason). Restates the two attributes CREATE ROLE
+-- already set on a fresh role, and adds NOSUPERUSER, which the DO block
+-- above never asserts either way. A no-op on a role this script itself just
+-- created; a correction if the role pre-existed with different attributes.
+ALTER ROLE finsoft_refresh NOLOGIN NOBYPASSRLS NOSUPERUSER;
+
 GRANT finsoft_refresh TO finsoft_migration WITH INHERIT FALSE, SET TRUE;
 SQL
 ```

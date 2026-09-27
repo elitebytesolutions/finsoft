@@ -163,6 +163,38 @@ for (const [service, db] of [
     },
   )
 
+  /*
+   * D6, security/database re-review 2026-09-27. `pg_has_role` treats a
+   * superuser as a member of every role, so this is deliberately a direct
+   * `rolsuper` read rather than a role-membership check — and a separate
+   * check that finsoft_refresh holds no membership OF ITS OWN, distinct
+   * from the check above (which only asserts finsoft_migration's options as
+   * a member OF finsoft_refresh).
+   */
+  check(`${service}: finsoft_refresh is not a superuser`, 'ADR-0023 §2', () => {
+    const rolsuper = psql(
+      service,
+      db,
+      "SELECT rolsuper::text FROM pg_roles WHERE rolname = 'finsoft_refresh'",
+    )
+    return rolsuper === 'false' ? true : `rolsuper = ${rolsuper || '(role missing)'}`
+  })
+
+  check(
+    `${service}: finsoft_refresh holds no membership of its own`,
+    'a NOLOGIN, non-superuser role picking up passive privilege through a role it was granted would be a hole nobody granted directly',
+    () => {
+      const count = psql(
+        service,
+        db,
+        `SELECT count(*)::text FROM pg_auth_members m
+         JOIN pg_roles g ON g.oid = m.member
+        WHERE g.rolname = 'finsoft_refresh'`,
+      )
+      return count === '0' ? true : `finsoft_refresh is a member of ${count} role(s)`
+    },
+  )
+
   check(`${service}: finsoft_app owns nothing and cannot create`, 'ADR-0004:59', () => {
     const canCreate = psql(
       service,
