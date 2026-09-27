@@ -1,0 +1,75 @@
+/* Layout only for the /login route — page composition, not a shared component
+ * (docs/design-system/08-governance.md §5 targets one-off buttons, tables, badges,
+ * modals and empty states; a page's own grid/centring is not one of those, and every
+ * other ported page already carries page-specific layout the same way in kit.css).
+ * This page has no prototype ancestor to inherit rules from, so its layout lives here
+ * instead, scoped to `.login-*` classes used only by apps/web/src/screens/login.tsx.
+ *
+ * Tokens only — every colour, radius, shadow and space below is a var() from
+ * packages/ui/src/tokens/, per 08-governance.md §5's drift-review checklist. */
+
+.login-page {
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-6);
+  background: var(--bg-app);
+}
+
+.login-card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  box-shadow: var(--e-2);
+  padding: var(--sp-8) var(--sp-7);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+}
+
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  color: var(--brand-700);
+}
+
+.login-brand svg {
+  width: 22px;
+  height: 22px;
+}
+
+.login-brand b {
+  font-size: 15px;
+  letter-spacing: -0.01em;
+}
+
+.login-card h1 {
+  font-size: 20px;
+  margin: 0;
+  color: var(--ink);
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-field);
+}
+
+/* Button has no className prop (packages/ui/src/components.tsx) — targeted via the
+ * form's own class rather than reaching past the kit's public API. */
+.login-form .btn {
+  width: 100%;
+  justify-content: center;
+}
+
+.login-footnote {
+  margin: 0;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--muted);
+  text-align: center;
+}
