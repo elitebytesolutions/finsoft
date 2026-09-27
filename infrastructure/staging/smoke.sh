@@ -66,14 +66,29 @@ echo "  no internal detail in the public body"
 #    rather than assuming it.
 # ---------------------------------------------------------------------------
 HOSTONLY=${BASE#http://}
+HOSTONLY=${HOSTONLY#https://}
 HOSTONLY=${HOSTONLY%%/*}
 HOSTONLY=${HOSTONLY%%:*}
 for PORT in 5432 6379 3001 3002; do
   if timeout 3 bash -c "</dev/tcp/$HOSTONLY/$PORT" 2>/dev/null; then
-    fail "port $PORT is reachable from the internet; only 80 may be"
+    fail "port $PORT is reachable from the internet; only 80 and 443 may be"
   fi
 done
 echo "  5432, 6379, 3001, 3002 all closed from outside"
+
+# ---------------------------------------------------------------------------
+# 4b. Plain HTTP redirects to HTTPS. Only meaningful once BASE is itself an
+#    https:// URL — PRD §6.1 requires staging over HTTPS, and a browser that
+#    is ever handed a plain http:// link to this host must land on a secure
+#    origin regardless.
+# ---------------------------------------------------------------------------
+if [ "${BASE#https://}" != "$BASE" ]; then
+  REDIRECT_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://$HOSTONLY/" || echo 000)
+  case "$REDIRECT_CODE" in
+    301 | 302 | 307 | 308) echo "  http://$HOSTONLY/ redirects ($REDIRECT_CODE) to HTTPS" ;;
+    *) fail "http://$HOSTONLY/ returned $REDIRECT_CODE, not a redirect to HTTPS" ;;
+  esac
+fi
 
 # ---------------------------------------------------------------------------
 # 5. A real application request through the proxy.

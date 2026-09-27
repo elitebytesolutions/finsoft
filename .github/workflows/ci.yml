@@ -761,10 +761,18 @@ jobs:
 
       # A deploy that reports success without asking the thing whether it
       # works is a deploy that reports success.
+      #
+      # `vars.STAGING_URL` is the deployment's real, HTTPS, public address
+      # (PRD §6.1: `https://31-220-74-159.sslip.io` on the current host) — a
+      # repo variable rather than a hardcoded literal so the hostname can
+      # change without editing this file. The `http://$STAGING_HOST` form is
+      # kept as a fallback, not removed, for a run where STAGING_URL is not
+      # yet configured (docs/workflows/ci-tiers.md documents both).
       - name: smoke
         env:
           HOST: ${{ vars.STAGING_HOST }}
-        run: bash infrastructure/staging/smoke.sh "http://$HOST"
+          BASE: ${{ vars.STAGING_URL }}
+        run: bash infrastructure/staging/smoke.sh "${BASE:-http://$HOST}"
 
       # A real browser against the real deployment, which curl cannot stand in
       # for: smoke.sh proves each endpoint answers, not that a document loaded
@@ -785,8 +793,11 @@ jobs:
 
       - name: browser against the deployed origin
         env:
-          E2E_BASE_URL: http://${{ vars.STAGING_HOST }}
-        run: npx playwright test --config tests/e2e/playwright.deployed.config.ts
+          HOST: ${{ vars.STAGING_HOST }}
+          BASE: ${{ vars.STAGING_URL }}
+        run: |
+          export E2E_BASE_URL="${BASE:-http://$HOST}"
+          npx playwright test --config tests/e2e/playwright.deployed.config.ts
 
   # ------------------------------------------------------------------ #
   # GAP-002 (docs/COMPLIANCE_GAPS.md) — the blocking half. Fails the run on

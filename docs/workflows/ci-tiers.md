@@ -59,6 +59,23 @@ changed: a push to `develop`, a push to `release/*`, `workflow_dispatch`, and
 the nightly `schedule` (`0 21 * * *` UTC = 02:00 PKT). This is also when
 `deploy-staging` can run and when container images are published.
 
+## Staging address: `STAGING_URL` vs `STAGING_HOST`
+
+`deploy-staging` has always used the repo variable `vars.STAGING_HOST` (a bare host, e.g.
+`31.220.74.159`) to SSH in and to build a plain `http://$STAGING_HOST` URL for `smoke.sh` and the
+deployed Playwright suite. PRD §6.1 requires staging over HTTPS on `31-220-74-159.sslip.io`
+(`infrastructure/staging/Caddyfile`), which is not the same string as `STAGING_HOST` and is not
+`http://`.
+
+Rather than repoint `STAGING_HOST` itself (SSH still connects to the bare host/IP, not the
+sslip.io name), the workflow reads an additional repo variable, `vars.STAGING_URL` — the full
+public base URL a browser would use, e.g. `https://31-220-74-159.sslip.io`. Both the `smoke` step
+and the `browser against the deployed origin` step compute `${STAGING_URL:-http://$STAGING_HOST}`:
+if `STAGING_URL` is set it wins outright; if not, the original plain-HTTP behaviour is unchanged.
+Nothing breaks for a repository that has not set `STAGING_URL` yet — it degrades to exactly what
+ran before this note was added. Set `vars.STAGING_URL` (Settings → Secrets and variables → Actions
+→ Variables) once the host's certificate is live to exercise the real, HTTPS-enforced path.
+
 ## Images
 
 Each of `api`, `worker`, `web` is rebuilt only when its own paths (or a

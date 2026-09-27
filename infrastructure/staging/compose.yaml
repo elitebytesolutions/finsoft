@@ -27,6 +27,13 @@ services:
     restart: unless-stopped
     ports:
       - '80:80'
+      # 443/tcp for HTTPS (PRD §6.1) and Caddy's own ACME HTTP-01 redirect
+      # target; 80 stays published too because ACME's challenge and the
+      # automatic HTTP->HTTPS redirect both need it. 443/udp is HTTP/3
+      # (QUIC) — optional, since every client here also speaks HTTP/2, but
+      # cheap to allow and Caddy advertises it via alt-svc once it can.
+      - '443:443'
+      - '443:443/udp'
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
