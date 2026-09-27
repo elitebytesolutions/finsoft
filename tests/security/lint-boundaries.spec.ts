@@ -77,6 +77,57 @@ describe('apps/** may not construct queries (ADR-0013)', () => {
   })
 })
 
+describe('packages/auth may not construct queries either (ADR-0023, M1-A)', () => {
+  /*
+   * The same gap as apps/**, in the one other package where it is realistic:
+   * a transaction handle arrives through a callback from a
+   * @finsoft/database export, not an import of kysely or pg, so
+   * dependency-cruiser's module-graph view sees nothing. packages/auth is
+   * not on ADR-0013's kysely allowlist (.dependency-cruiser.cjs), so it
+   * must never build a query on a handle it is handed.
+   */
+  it('catches a query built on a handle received through a callback', async () => {
+    const messages = await messagesFor(
+      'packages/auth/src/login.ts',
+      `import { findLoginCandidate } from '@finsoft/database/auth'
+       export function check() {
+         return findLoginCandidate('CODE', 'x@example.test', async (tx) => {
+           return tx.selectFrom('users').select('id').execute()
+         })
+       }`,
+    )
+
+    expect(
+      matching(messages, 'packages/auth/** contains no query construction'),
+      'a query built on a callback-supplied handle must be caught in packages/auth/**',
+    ).toHaveLength(1)
+  })
+
+  it.each(['insertInto', 'updateTable', 'deleteFrom'])('catches %s too', async (method) => {
+    const messages = await messagesFor(
+      'packages/auth/src/thing.ts',
+      `export function w(tx: any) { return tx.${method}('users') }`,
+    )
+    expect(matching(messages, 'packages/auth/** contains no query construction')).toHaveLength(1)
+  })
+
+  it('leaves the same code alone inside packages/database, which owns it', async () => {
+    const messages = await messagesFor(
+      'packages/database/src/auth/login.ts',
+      `export function read(tx: any) { return tx.selectFrom('users').select('id').execute() }`,
+    )
+    expect(matching(messages, 'packages/auth/** contains no query construction')).toEqual([])
+  })
+
+  it('does not fire on a spec file, so a fixture test like this one can call selectFrom', async () => {
+    const messages = await messagesFor(
+      'packages/auth/src/login.spec.ts',
+      `export function w(tx: any) { return tx.selectFrom('users') }`,
+    )
+    expect(matching(messages, 'packages/auth/** contains no query construction')).toEqual([])
+  })
+})
+
 describe('connection ownership (ADR-0013, ADR-0004)', () => {
   it('catches a transaction opened outside packages/database', async () => {
     const messages = await messagesFor(

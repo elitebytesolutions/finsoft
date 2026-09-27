@@ -10,5 +10,12 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@finsoft/database": "*",
+    "@finsoft/shared-types": "*",
+    "@node-rs/argon2": "2.2.1",
+    "ioredis": "5.11.1",
+    "jose": "6.2.12"
   }
 }

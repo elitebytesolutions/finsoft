@@ -156,6 +156,33 @@ const appsQuerySyntax = [
   },
 ]
 
+/*
+ * packages/auth builds no queries either. ADR-0023 (M1-A): the Architecture
+ * seat ruled that ALL query construction for login/refresh stays in
+ * packages/database, and packages/auth is not on ADR-0013's kysely
+ * allowlist (.dependency-cruiser.cjs `kysely-is-allowlisted`) — so it must
+ * never receive a transaction handle and build a query on it.
+ *
+ * dependency-cruiser cannot see this class of violation: a handle arrives
+ * through a CALLBACK from a `@finsoft/database` export, not an import of
+ * `kysely` or `pg`, so the module graph looks clean either way. This is the
+ * same gap `appsQuerySyntax` above exists to close for apps/**, applied to
+ * the one package where an auth-shaped "just read the row here" temptation
+ * is realistic. A separate array (not a reuse of `appsQuerySyntax`) so its
+ * message names the right boundary instead of pointing someone at apps/**.
+ */
+const packagesAuthQuerySyntax = [
+  {
+    selector:
+      'CallExpression[callee.property.name=/^(selectFrom|insertInto|updateTable|deleteFrom|replaceInto|with)$/]',
+    message:
+      "ADR-0023: packages/auth/** contains no query construction. It is not on ADR-0013's " +
+      'kysely allowlist. A transaction handle received through a callback from ' +
+      '@finsoft/database is not an import dependency-cruiser can see — put the query behind a ' +
+      'named export in packages/database and call that.',
+  },
+]
+
 const stripOnlySyntax = [
   {
     selector: 'TSParameterProperty',
@@ -381,6 +408,29 @@ export default tseslint.config(
         ...invariantSyntax,
         ...connectionOwnershipSyntax,
         ...stripOnlySyntax,
+      ],
+    },
+  },
+
+  /* ---------------------------------------------------------------- *
+   * packages/auth builds no queries. ADR-0023 (M1-A), Architecture seat
+   * ruling 2026-09-27 — see packagesAuthQuerySyntax above.
+   *
+   * A later, more specific block: flat config REPLACES no-restricted-syntax
+   * per matching file rather than merging it, so this restates the full set
+   * (invariant + connection ownership + strip-only) alongside the new
+   * selector instead of losing the earlier three for this one package.
+   * ---------------------------------------------------------------- */
+  {
+    files: ['packages/auth/**/*.ts'],
+    ignores: ['packages/auth/**/*.spec.ts', 'packages/auth/**/*.test.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        ...invariantSyntax,
+        ...connectionOwnershipSyntax,
+        ...stripOnlySyntax,
+        ...packagesAuthQuerySyntax,
       ],
     },
   },
