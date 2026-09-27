@@ -389,7 +389,10 @@ ALLOWED     docs/adr/ADR-0023-*.md              (the pre-tenant lookup)
                                                      guard and the scid_ format
             docs/adr/ADR-0016-*.md              DONE — corrected by the
                                                  architecture-guardian, D8 CLOSED
-            database/migrations/006_*.sql       (only if ADR-0023 requires DDL)
+            database/migrations/006_*.sql, 007_*.sql   (resolver; users regrant)
+            infrastructure/docker/postgres/init/00-bootstrap.sh  (the role)
+            docs/ARCHITECTURE.md                      (the §6 carve-out only)
+            packages/database/src/**                  (withResolvedTenant, ResolvedTenantId)
             tests/integration/**, tests/security/**
             docs/WAVE_1_REGISTER.md, docs/TECH_DEBT.md
 READ ONLY   docs/adr/** (others), docs/NON_NEGOTIABLES.md, docs/ARCHITECTURE.md
@@ -515,6 +518,21 @@ a role attribute — now for `refresh_tokens` only, returning
    Security Guardian inferred this from `00-bootstrap.sh` without being able to
    see my database.
 
+   **AND THE RULE HAS A SECOND HALF I did not write, supplied by the Database
+   Guardian after finding four more instances:**
+
+   > **A privilege statement's success is not evidence that it did anything.**
+   > `GRANT`, `REVOKE` and `ALTER DEFAULT PRIVILEGES` report success on a no-op,
+   > sometimes with only a `WARNING`, and `ON_ERROR_STOP` does not see it.
+
+   So every privilege line in a migration needs an assertion after it in the
+   schema suite — `pg_proc.proacl`, `pg_attribute.attacl`, `pg_default_acl`,
+   `pg_auth_members`, `pg_namespace.nspacl` — **as an exact set, not a
+   `has_*_privilege` spot check.** Measured: `has_function_privilege` returned
+   **true** for `readonly_support` against a broken state where the role could
+   not actually reach the function, because it ignores schema `USAGE`. A spot
+   check would have misled in either direction.
+
    **This is the second time in this wave**: the migration 005 grant check was
    run in a scratch database that lacked `ALTER DEFAULT PRIVILEGES`, and hid a
    defect for the same reason. **A security posture measured outside the
@@ -589,13 +607,41 @@ Headers, body, query parameters and resource ids never override the authenticate
 
 ---
 
-## W1-004 · Migration 006 and `packages/permissions` — RBAC
+### Migration numbering, Product Owner 2026-09-26
+
+**006 resolver · 007 `users` regrant + trigger · 008 RBAC · 009 `audit_log`.**
+
+006 and 007 were double- and triple-booked across three branches, two of them
+unmerged: W1-002's contract and W1-004 both claimed 006; W1-005 and ADR-0020
+both claimed 007. That resolves as a merge conflict on a **numbered immutable
+artefact** — the one place a conflict is expensive, because `CHECKSUMS` pins a
+migration's identity and renumbering after review means re-reviewing.
+**ADR-0020 is amended rather than ADR-0023 bent around it**, because ADR-0023
+blocks a task in progress.
+
+TD-005 gets its own migration rather than riding with the resolver, for three
+measured reasons: a different signatory (a privilege change on the password
+table is the Security Guardian's); different lock footprints — `CREATE POLICY`
+takes **`AccessExclusiveLock` on `refresh_tokens`**, blocking every in-flight
+`/auth/refresh`, while `GRANT`/`REVOKE` takes **no lock on the target relation
+at all**, so bundling a lock-free grant behind the auth hot path buys nothing;
+and TD-005 is **not finished by a regrant**. Migration 005's own header states
+the rule — *"a column grant is only half a control… only a trigger says which
+DIRECTION they may change in"* — and `users` has no transition trigger. A
+column-scoped regrant must still include `status`, `version` and `email` for
+Wave 1 to function, leaving `status` settable `DISABLED → ACTIVE`, `version`
+decrementable and `email` rewritable. That is a second review with a trigger in
+it.
+
+---
+
+## W1-004 · Migration 008 and `packages/permissions` — RBAC
 
 **Status: not started.**
 
 ---
 
-## W1-005 · Migration 007 and the audit chain
+## W1-005 · Migration 009 and the audit chain
 
 **Status: not started.** Blocked on ADR-0020's signatures.
 
