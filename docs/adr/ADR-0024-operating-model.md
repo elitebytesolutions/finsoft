@@ -1,6 +1,6 @@
 # ADR-0024: Operating model — risk tiers, a Technical Council, demo-first MVP
 
-**Status:** Proposed
+**Status:** Accepted — 2026-09-27
 **Date:** 2026-09-27
 **Deciders:** Product Owner, Architecture Guardian
 **Authority:** LEVEL 1 — reversing this requires a superseding ADR
@@ -82,7 +82,7 @@ The only Product Owner signature this reset needs is on this record. **Unchanged
 
 | Seat | Verdict |
 |---|---|
-| **Product Owner** | ☐ not recorded |
+| **Product Owner** | ✅ **ACCEPTED, 2026-09-27** — "adr 24 is signed from my side" (in session) |
 | **Architecture Guardian** | ✅ **APPROVED, 2026-09-27** — author. See note |
 
 > **Architecture Guardian — author, 2026-09-27.** No module boundary, dependency direction, kernel surface or LEVEL 0 rule changes; this record moves *who decides* and *how much gate each risk tier pays*. Authorship and the Architecture verdict are the same seat — the Product Owner's signature is the independent one, and the status flips on it and not before.

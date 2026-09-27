@@ -41,7 +41,6 @@ Then **M2** accounting core · **M3** customers, service invoice, receipts · **
 
 | Decider | Decision | Asked | Council recommendation |
 |---|---|---|---|
-| **Product Owner** | Sign [ADR-0024](adr/ADR-0024-operating-model.md) | 2026-09-27 | Sign. Note one change from the brief: the FinancialInvariantSuite runs on every PR at every tier, because NON_NEGOTIABLES §3 requires it |
 | **Product Owner** | Names of the two demo tenants | 2026-09-27 | Two fictitious trading companies; no real business names on staging |
 | **Product Owner** | Weekly demo day | 2026-09-27 | One fixed day; the status page is written the day before |
 | **Council — Architecture** | ADR-0023, pre-tenant authentication reads — the remaining signature (Product Owner slot withdrawn by ADR-0024) | 2026-09-27 | — |
