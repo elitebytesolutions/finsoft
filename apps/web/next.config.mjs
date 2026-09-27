@@ -1,5 +1,6 @@
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import process from 'node:process'
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -40,5 +41,24 @@ const nextConfig = {
    */
   outputFileTracingRoot: join(fileURLToPath(import.meta.url), '../../..'),
   transpilePackages: ['@finsoft/ui', '@finsoft/shared-types'],
+  /*
+   * Local dev only. `npm run dev` serves apps/web alone on :3000 with nothing in
+   * front of it, while the API listens on its own port — so a same-origin
+   * `/api/*` call from the browser (apps/web/src/lib/api/client.ts) would 404
+   * against Next's own router instead of reaching the API. This rewrite makes
+   * dev behave like staging/production, where Caddy (infrastructure/staging/
+   * Caddyfile) does the same routing in front of the container: one origin,
+   * `/api/*` proxied through to the API, everything else served by Next. That
+   * is also the arrangement ADR-0009's SameSite=Strict refresh cookie requires
+   * — a cross-origin call to a different port would never send it.
+   *
+   * Kept unconditional rather than gated on NODE_ENV: in staging/production the
+   * request never reaches Next at all (Caddy intercepts /api/* first), so this
+   * rule is provably inert there rather than merely assumed harmless.
+   */
+  async rewrites() {
+    const apiPort = process.env.API_PORT || 3001
+    return [{ source: '/api/:path*', destination: `http://localhost:${apiPort}/api/:path*` }]
+  },
 }
 export default nextConfig
