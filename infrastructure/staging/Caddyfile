@@ -50,3 +50,23 @@ the fault is in the web container alone.
 ` 503
 	}
 }
+
+# Bare-IP catch-all. A request whose Host header is the literal IP
+# (someone typing 31.220.74.159 into a browser, or an old bookmark/link)
+# matches no block above — that block's address is the hostname, and Caddy
+# routes by Host, not by "whatever socket the connection arrived on". Left
+# unhandled, that request would get Caddy's default 421 rather than land
+# anywhere useful.
+#
+# Explicit `http://` and no TLS directives: Caddy does not — and cannot —
+# manage automatic HTTPS for a bare IP address (Let's Encrypt will not issue
+# a certificate for one), so this block only ever answers on :80. It is a
+# distinct site address (`31.220.74.159`, not `31-220-74-159.sslip.io`), so
+# Caddy dispatches it purely by Host header on the same :80 socket the
+# sslip.io block above already opens for its own HTTP->HTTPS redirect and
+# ACME HTTP-01 challenge — those requests arrive with
+# Host: 31-220-74-159.sslip.io and match the more specific block, never this
+# one, so this catch-all cannot shadow or race the certificate issuance.
+http://31.220.74.159 {
+	redir https://31-220-74-159.sslip.io{uri} permanent
+}

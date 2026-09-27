@@ -61,20 +61,41 @@ the nightly `schedule` (`0 21 * * *` UTC = 02:00 PKT). This is also when
 
 ## Staging address: `STAGING_URL` vs `STAGING_HOST`
 
-`deploy-staging` has always used the repo variable `vars.STAGING_HOST` (a bare host, e.g.
-`31.220.74.159`) to SSH in and to build a plain `http://$STAGING_HOST` URL for `smoke.sh` and the
-deployed Playwright suite. PRD §6.1 requires staging over HTTPS on `31-220-74-159.sslip.io`
-(`infrastructure/staging/Caddyfile`), which is not the same string as `STAGING_HOST` and is not
-`http://`.
+`deploy-staging` uses two different repo variables for two different purposes, and they are not
+interchangeable:
 
-Rather than repoint `STAGING_HOST` itself (SSH still connects to the bare host/IP, not the
-sslip.io name), the workflow reads an additional repo variable, `vars.STAGING_URL` — the full
-public base URL a browser would use, e.g. `https://31-220-74-159.sslip.io`. Both the `smoke` step
-and the `browser against the deployed origin` step compute `${STAGING_URL:-http://$STAGING_HOST}`:
-if `STAGING_URL` is set it wins outright; if not, the original plain-HTTP behaviour is unchanged.
-Nothing breaks for a repository that has not set `STAGING_URL` yet — it degrades to exactly what
-ran before this note was added. Set `vars.STAGING_URL` (Settings → Secrets and variables → Actions
-→ Variables) once the host's certificate is live to exercise the real, HTTPS-enforced path.
+- `vars.STAGING_HOST` — a bare host/IP, e.g. `31.220.74.159`. Used only to SSH in
+  (`$SSH_USER@$HOST`) and to `scp` configuration to the box. This is a transport address, not
+  something a browser or `curl` should ever be pointed at.
+- `vars.STAGING_URL` — the full public base URL a browser uses, e.g.
+  `https://31-220-74-159.sslip.io`. **Mandatory** from this merge onward. Used by the `smoke` step
+  and the `browser against the deployed origin` step as the one and only base URL.
+
+`vars.STAGING_URL` is mandatory, with **no fallback to `http://$STAGING_HOST`**, because that
+fallback does not degrade gracefully — it silently tests nothing. `infrastructure/staging/Caddyfile`
+has exactly one site block, addressed by the hostname `31-220-74-159.sslip.io`; Caddy dispatches by
+Host header, not by which socket the connection landed on. A request with `Host: 31.220.74.159`
+(what `http://$STAGING_HOST` sends) matches no site block Caddy owns for the app, so the old
+fallback was smoke-testing a dead end, not staging. (It now gets a real answer — the bare-IP
+catch-all documented below — but that answer is a redirect, not a running app, so it still cannot
+serve as the smoke/E2E base.) If `vars.STAGING_URL` is unset, `deploy-staging`'s `smoke` and
+`browser against the deployed origin` steps fail fast with `::error::` rather than pass while
+silently exercising nothing.
+
+### Cut-over checklist (one-time, before the first deploy under this rule)
+
+1. Set the repo variable: Settings → Secrets and variables → Actions → Variables →
+   `STAGING_URL` = `https://31-220-74-159.sslip.io`.
+2. On the staging host, open the HTTPS port: `sudo ufw allow 443/tcp`.
+3. Merge to `develop` (or dispatch the workflow) so `deploy-staging` ships the updated
+   `infrastructure/staging/Caddyfile`, which now also serves a bare-IP catch-all on `:80` that
+   redirects `http://31.220.74.159/...` to `https://31-220-74-159.sslip.io/...`.
+4. Verify by hand:
+   - `curl -sI https://31-220-74-159.sslip.io/api/health` returns `HTTP/2 200`.
+   - `curl -sI http://31-220-74-159.sslip.io/` returns a `30x` to the `https://` origin (Caddy's
+     automatic HTTP→HTTPS redirect for the named site).
+   - `curl -sI http://31.220.74.159/` returns a `301` to `https://31-220-74-159.sslip.io/` (the
+     bare-IP catch-all).
 
 ## Images
 
