@@ -163,11 +163,16 @@ describe('API skeleton', () => {
 
   describe('the tenant guard fails closed', () => {
     it('refuses a route that has not opted out', async () => {
-      // The substance of the whole guard. Authentication is Wave 1, so no
-      // request can present a verified tenant — and the default must be
-      // refusal, not "allow until auth arrives".
+      // The substance of the whole guard. M1-A replaces the fail-closed stub
+      // with the real one: a request with no bearer token is unauthenticated
+      // (401), not merely forbidden (403) — it never got far enough to be
+      // identified and then denied. The default is still refusal, not
+      // "allow until auth arrives"; only the status code changed, from the
+      // stub's blanket `return false` (Nest's default for a false guard) to
+      // this guard's explicit, typed 401.
       const res = await request(app.getHttpServer()).get('/api/probe/protected')
-      expect(res.status).toBe(403)
+      expect(res.status).toBe(401)
+      expect(res.body.error).toBe('unauthenticated')
       expect(res.body.reached).toBeUndefined()
     })
 
@@ -198,8 +203,11 @@ describe('API skeleton', () => {
     })
 
     it('preserves a deliberate status rather than flattening it to 500', async () => {
-      // IMPLEMENTATION.md:247 — a permission failure is 403, not 500, not 200.
-      expect((await request(app.getHttpServer()).get('/api/probe/protected')).status).toBe(403)
+      // IMPLEMENTATION.md:247 — a permission failure is 403/401, not 500,
+      // not 200. This route has no bearer token at all, so it is 401
+      // (unauthenticated) under the real guard M1-A ships; see the guard
+      // test above for why that is now the correct code, not 403.
+      expect((await request(app.getHttpServer()).get('/api/probe/protected')).status).toBe(401)
       expect((await request(app.getHttpServer()).get('/api/does-not-exist')).status).toBe(404)
     })
 

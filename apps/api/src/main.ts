@@ -1,6 +1,7 @@
 import 'reflect-metadata'
 import { NestFactory } from '@nestjs/core'
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger'
+import cookieParser from 'cookie-parser'
 import { closeDatabase, openDatabase } from '@finsoft/database'
 import { initLogger } from '@finsoft/observability'
 import { FinsoftNestLogger } from './common/nest-logger'
@@ -71,6 +72,14 @@ async function bootstrap(): Promise<void> {
    * travels the same path as real traffic, which is the point of a probe.
    */
   app.setGlobalPrefix('api')
+
+  /*
+   * ADR-0009: the refresh token travels only as an HttpOnly cookie, never in
+   * a header or body. Reading it back (`req.cookies`) needs this middleware;
+   * nothing here parses a *signed* cookie, because the refresh token is
+   * opaque and hashed at rest, not something this process signs.
+   */
+  app.use(cookieParser())
 
   /*
    * One error shape for every failure, and nothing internal in a response.
