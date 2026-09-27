@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common'
 import { APP_GUARD } from '@nestjs/core'
+import { AuditModule } from './audit/audit.module'
 import { TenantGuard } from './common/tenant.guard'
 import { HealthModule } from './health/health.module'
 
@@ -13,7 +14,7 @@ import { HealthModule } from './health/health.module'
  * protected unless it explicitly opts out with @Public().
  */
 @Module({
-  imports: [HealthModule],
+  imports: [HealthModule, AuditModule],
   providers: [{ provide: APP_GUARD, useClass: TenantGuard }],
 })
 export class AppModule {}
