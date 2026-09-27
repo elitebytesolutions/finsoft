@@ -38,7 +38,7 @@ per-tenant audit lock therefore stalls for up to fifteen seconds before anything
 intervenes.
 
 **Why it is accepted for now.** No posting path exists yet — both kernels are
-`export {}`, and `audit_log` does not exist until migration 007. There is
+`export {}`, and `audit_log` does not exist until migration 009. There is
 nothing to stall. Choosing the value blind is also worse than choosing it
 against a measurement: too low and legitimate contention becomes spurious
 posting failures, which is a worse failure than a slow posting.
@@ -46,7 +46,7 @@ posting failures, which is a worse failure than a slow posting.
 **Owner.** Database Guardian, with the Architecture Guardian on the value, since
 it trades against the §11 budget.
 
-**What would force it.** Migration 007, or the first code path that takes the
+**What would force it.** Migration 009, or the first code path that takes the
 per-tenant audit lock — whichever is first. ADR-0020's §5 sentence must either
 name the value and where it is set, or be withdrawn; it must not ship as a
 stated protection with no mechanism.

@@ -94,7 +94,7 @@ namespace convention it replaces.
 
 ## One ordering fact that existed only in someone's head
 
-**Migration 007 creates each tenant's `seq = 0` anchor row while the migration
+**Migration 009 creates each tenant's `seq = 0` anchor row while the migration
 runner holds position 1**, and creating that row takes position 6. So a
 migration transaction holds the first lock and then the terminal one.
 
@@ -120,7 +120,7 @@ here because that is what this file is for.
 register does not name. That is the same inbound allowlist posture the
 repository already uses for `observability-importers-are-allowlisted` — applied
 to the same class of problem, an edge that is legal only because nobody wrote a
-rule. Not yet built; it is a merge condition on migration 007.
+rule. Not yet built; it is a merge condition on migration 009.
 
 **There is deliberately no `packages/locks`.** Two claimants with different key
 shapes — a constant string hash and a folded uuid — do not share an
