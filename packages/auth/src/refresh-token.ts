@@ -17,6 +17,18 @@ import { createHash, randomBytes } from 'node:crypto'
  */
 
 const REFRESH_TOKEN_BYTES = 32
+
+/**
+ * Documentation/test constant only — matches migration 005's
+ * `rt_lifetime_ceiling` CHECK (`expires_at <= issued_at + interval
+ * '14 days'`). The actual expiry stored in the database is computed by
+ * PostgreSQL itself (`now() + interval '14 days'` in
+ * `packages/database/src/auth/{login,refresh}.ts`), never by this process's
+ * clock — see the security review finding (B5) that removed an `expiresAt`
+ * field from this function's return value: a skewed app clock computing its
+ * own expiry independently of the database's `issued_at` default is exactly
+ * how a few seconds of drift turns into an uncaught `23514`.
+ */
 export const REFRESH_TOKEN_TTL_MS = 14 * 24 * 60 * 60 * 1000
 
 export interface MintedRefreshToken {
@@ -24,18 +36,13 @@ export interface MintedRefreshToken {
   readonly raw: string
   /** SHA-256 hex digest of `raw`. What actually reaches the database. */
   readonly hash: string
-  readonly expiresAt: Date
 }
 
 export function hashRefreshToken(raw: string): string {
   return createHash('sha256').update(raw, 'utf8').digest('hex')
 }
 
-export function mintRefreshToken(now: Date = new Date()): MintedRefreshToken {
+export function mintRefreshToken(): MintedRefreshToken {
   const raw = randomBytes(REFRESH_TOKEN_BYTES).toString('hex')
-  return {
-    raw,
-    hash: hashRefreshToken(raw),
-    expiresAt: new Date(now.getTime() + REFRESH_TOKEN_TTL_MS),
-  }
+  return { raw, hash: hashRefreshToken(raw) }
 }

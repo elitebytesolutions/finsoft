@@ -40,6 +40,24 @@ export async function hashPassword(password: string): Promise<string> {
 
 const MAX_CONCURRENT_HASHES = 8
 
+/*
+ * C2: cap the queue too, not only the concurrent slots. Without a cap, a
+ * sustained burst past MAX_CONCURRENT_HASHES does not fail — it queues
+ * indefinitely, and every queued caller is a pending HTTP request (and,
+ * before the C2 transaction split, would have been a held database
+ * connection) that piles up until something else gives way first. A full
+ * queue means "the process is already at its hashing ceiling with a full
+ * backlog behind it" — the honest answer is 503, not an ever-growing wait.
+ */
+const MAX_QUEUE_LENGTH = 64
+
+export class HashingQueueFullError extends Error {
+  constructor() {
+    super('The password-verification queue is full.')
+    this.name = 'HashingQueueFullError'
+  }
+}
+
 let inFlight = 0
 const waiters: Array<() => void> = []
 
@@ -48,14 +66,31 @@ async function acquire(): Promise<void> {
     inFlight += 1
     return
   }
+  if (waiters.length >= MAX_QUEUE_LENGTH) {
+    throw new HashingQueueFullError()
+  }
+  // L5: does NOT increment inFlight here. A queued caller does not yet hold
+  // a slot; release() below hands one off DIRECTLY, and inFlight already
+  // accounts for the slot the outgoing holder is transferring — incrementing
+  // again here would let inFlight exceed MAX_CONCURRENT_HASHES whenever a
+  // brand-new (non-waiting) caller's acquire() interleaves with a hand-off.
   await new Promise<void>((resolve) => waiters.push(resolve))
-  inFlight += 1
 }
 
 function release(): void {
-  inFlight -= 1
+  // L5: hand the slot DIRECTLY to the next waiter rather than decrementing
+  // and letting whoever gets there first re-increment. The previous
+  // decrement-then-shift order left a window — between `inFlight -= 1` and
+  // the woken waiter's own `inFlight += 1` actually running — in which an
+  // unrelated, brand-new `acquire()` call could see `inFlight < MAX` and
+  // take the slot too, so two callers plus the about-to-resume waiter could
+  // all believe they hold one of MAX_CONCURRENT_HASHES slots.
   const next = waiters.shift()
-  if (next) next()
+  if (next) {
+    next()
+    return
+  }
+  inFlight -= 1
 }
 
 async function withHashingSemaphore<T>(fn: () => Promise<T>): Promise<T> {

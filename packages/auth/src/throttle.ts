@@ -12,10 +12,16 @@ import { Redis } from 'ioredis'
  * scope for this task: its table arrives with RBAC (docs/WAVE_1_REGISTER.md
  * §W1-002), and this module implements none of it.
  *
- * All layers are evaluated on every request; the request is rejected if ANY
- * is exhausted. Counters increment identically on a miss and a hit (§4 item
- * 5) — the caller (`login.ts`/`refresh.ts`) calls `recordAttempt` on every
- * outcome, never only on failure.
+ * All layers are evaluated on every request; a BLOCKING layer that is
+ * exhausted rejects the request. A non-blocking layer (§5 layer 4, the
+ * global rate) never rejects — it only reports itself in `alertedLayers` so
+ * the caller can log a business event / emit a metric (B4, security
+ * re-review: "never a hard block — a global block is self-DoS and is the
+ * attacker's actual goal").
+ *
+ * Counters increment identically on a miss and a hit (§4 item 5) — every
+ * layer is incremented before its outcome is evaluated, for every request,
+ * regardless of whether the credential turns out to be valid.
  *
  * FAILS CLOSED. If Redis is unreachable, the caller must return 503 — never
  * fall through to "not throttled", which is exactly the failure mode an
@@ -33,11 +39,15 @@ export interface ThrottleLayer {
   readonly key: string
   readonly limit: number
   readonly windowSeconds: number
+  /** Defaults to `true`. `false` = alert-only (ADR-0023 §5 layer 4). */
+  readonly blocking?: boolean
 }
 
 export interface ThrottleDecision {
   readonly throttled: boolean
   readonly retryAfterSeconds: number
+  /** Non-blocking layers that were exhausted on this call, for the caller to log/alert on. */
+  readonly alertedLayers: readonly string[]
 }
 
 let redis: Redis | undefined
@@ -77,36 +87,72 @@ export async function closeThrottleClient(): Promise<void> {
   }
 }
 
-async function incrementAndCheck(layer: ThrottleLayer): Promise<ThrottleDecision> {
+/*
+ * C6: INCR and EXPIRE atomically, via a Lua script run server-side, rather
+ * than two round trips. Two separate commands leave a window — a process
+ * crash, a network partition, or simply two requests interleaving between
+ * them — in which a key can be INCRemented to 1 and never get its EXPIRE,
+ * becoming a TTL-less counter that then blocks its key FOREVER (Redis TTL
+ * -1 means "no expiry"). A Lua script is a single atomic operation from
+ * Redis's point of view: no other command can run between the INCR and the
+ * conditional EXPIRE inside it.
+ */
+const INCR_AND_EXPIRE_IF_NEW = `
+  local count = redis.call('INCR', KEYS[1])
+  if count == 1 then
+    redis.call('EXPIRE', KEYS[1], ARGV[1])
+  end
+  local ttl = redis.call('TTL', KEYS[1])
+  return {count, ttl}
+`
+
+interface LayerResult {
+  readonly key: string
+  readonly blocking: boolean
+  readonly exhausted: boolean
+  readonly retryAfterSeconds: number
+}
+
+async function incrementAndCheck(layer: ThrottleLayer): Promise<LayerResult> {
   try {
-    const c = client()
     const key = `throttle:${layer.key}`
-    const count = await c.incr(key)
-    if (count === 1) {
-      await c.expire(key, layer.windowSeconds)
-    }
-    const ttl = await c.ttl(key)
+    const [count, ttl] = (await client().eval(
+      INCR_AND_EXPIRE_IF_NEW,
+      1,
+      key,
+      layer.windowSeconds,
+    )) as [number, number]
     const retryAfterSeconds = ttl > 0 ? ttl : layer.windowSeconds
-    return { throttled: count > layer.limit, retryAfterSeconds }
+    return {
+      key: layer.key,
+      blocking: layer.blocking ?? true,
+      exhausted: count > layer.limit,
+      retryAfterSeconds,
+    }
   } catch (error) {
     throw new ThrottleUnavailableError({ cause: error })
   }
 }
 
 /**
- * Evaluate every layer and return the strictest (longest) retry-after among
- * whichever are exhausted. Throws `ThrottleUnavailableError` — never
- * silently permits — if Redis cannot be reached for ANY layer.
+ * Evaluate every layer. A BLOCKING layer that is exhausted makes the whole
+ * call `throttled`; a non-blocking layer that is exhausted never does, and
+ * is reported in `alertedLayers` instead. Throws `ThrottleUnavailableError`
+ * — never silently permits — if Redis cannot be reached for ANY layer.
  */
 export async function checkLayers(layers: readonly ThrottleLayer[]): Promise<ThrottleDecision> {
   const results = await Promise.all(layers.map(incrementAndCheck))
-  const throttledResults = results.filter((r) => r.throttled)
-  if (throttledResults.length === 0) {
-    return { throttled: false, retryAfterSeconds: 0 }
+
+  const blockingExhausted = results.filter((r) => r.exhausted && r.blocking)
+  const alertedLayers = results.filter((r) => r.exhausted && !r.blocking).map((r) => r.key)
+
+  if (blockingExhausted.length === 0) {
+    return { throttled: false, retryAfterSeconds: 0, alertedLayers }
   }
   return {
     throttled: true,
-    retryAfterSeconds: Math.max(...throttledResults.map((r) => r.retryAfterSeconds)),
+    retryAfterSeconds: Math.max(...blockingExhausted.map((r) => r.retryAfterSeconds)),
+    alertedLayers,
   }
 }
 
@@ -124,6 +170,13 @@ export async function checkLayers(layers: readonly ThrottleLayer[]): Promise<Thr
  * self-recovering cooldown rather than to proof-of-work is a deliberate,
  * narrower substitute, not the design ADR-0023 specifies, and is recorded
  * as a decision rather than silently shipped as if it were the real thing.
+ *
+ * Layer 4 (global) is `blocking: false` (B4, security re-review): ADR-0023
+ * §5 is explicit that this layer is "alert and global slowdown, never a
+ * hard block — a global block is self-DoS and is the attacker's actual
+ * goal". The "slowdown" half is not implemented here (it would need a
+ * latency-injection mechanism this task does not build); the "never a hard
+ * block, always alert" half is.
  */
 export function loginLayers(input: {
   readonly normalisedEmail: string
@@ -143,7 +196,7 @@ export function loginLayers(input: {
       limit: 5,
       windowSeconds: 5 * 60,
     },
-    { key: 'login:global', limit: 2000, windowSeconds: 60 },
+    { key: 'login:global', limit: 2000, windowSeconds: 60, blocking: false },
   ]
 }
 

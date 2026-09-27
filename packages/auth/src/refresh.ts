@@ -1,11 +1,13 @@
 import { spendRefreshToken } from '@finsoft/database/auth'
 import { noopAuthAuditSink, type AuthAuditSink } from './audit-sink.ts'
+import { atAuthBoundary } from './db-error.ts'
 import { signAccessToken } from './jwt.ts'
 import { hashRefreshToken, mintRefreshToken } from './refresh-token.ts'
+import { invalidateSessionCache } from './session-cache.ts'
 import { checkLayers, refreshLayers } from './throttle.ts'
 
 /*
- * POST /api/auth/refresh. ADR-0022 (no grace window), ADR-0023 §2, §5.
+ * POST /api/auth/refresh. ADR-0022 (no grace window), ADR-0023 §2, §5, §6.
  */
 
 export interface RefreshInput {
@@ -19,6 +21,7 @@ export interface RefreshSuccessResult {
   readonly accessToken: string
   readonly expiresIn: number
   readonly refreshToken: string
+  /** Computed by PostgreSQL, never by this process's own clock. See B5. */
   readonly refreshTokenExpiresAt: Date
   readonly user: { readonly id: string; readonly fullName: string; readonly email: string }
   readonly tenant: { readonly id: string; readonly code: string; readonly name: string }
@@ -27,7 +30,18 @@ export interface RefreshSuccessResult {
 export interface RefreshFailedResult {
   readonly outcome: 'failed'
   /** For the caller's own logging/alerting decision — never surfaced to the client (§4 item 4 shape). */
-  readonly reason: 'unknown' | 'expired' | 'reused'
+  readonly reason: 'unknown' | 'expired' | 'reused' | 'inactive'
+  /**
+   * Present only when `reason === 'reused'`. Ids only — never a hash, a raw
+   * token, or any other credential-shaped value — so the caller (apps/api)
+   * can log a REFRESH_REUSE_DETECTED business event and M1-D's audit sink
+   * only has to wire itself to something that already carries what it needs.
+   */
+  readonly reuse?: {
+    readonly tenantId: string
+    readonly familyId: string
+    readonly sessionId: string
+  }
 }
 
 export interface RefreshThrottledResult {
@@ -56,25 +70,44 @@ export async function refresh(
 
   const minted = mintRefreshToken()
 
-  const outcome = await spendRefreshToken({
-    presentedTokenHash,
-    newTokenHash: minted.hash,
-    newTokenExpiresAt: minted.expiresAt,
-    deviceId: input.deviceId,
-  })
+  // newTokenExpiresAt is NOT passed: the database computes it (B5) so it can
+  // never disagree with the clock migration 005's rt_lifetime_ceiling CHECK
+  // measures issued_at against. ADR-0023 §6: any driver error is caught and
+  // rethrown carrying only a SQLSTATE code.
+  const outcome = await atAuthBoundary(() =>
+    spendRefreshToken({
+      presentedTokenHash,
+      newTokenHash: minted.hash,
+      deviceId: input.deviceId,
+    }),
+  )
+
+  if (outcome.outcome === 'reused') {
+    // B2: the family AND the session were already revoked, in the same
+    // transaction, by packages/database/src/auth/refresh.ts. The Redis
+    // session-active cache still has to be told directly — it is a cache,
+    // not a view of the database, and its TTL (15s) is the only thing that
+    // would otherwise catch this.
+    await invalidateSessionCache(outcome.tenantId, outcome.sessionId)
+    return {
+      outcome: 'failed',
+      reason: 'reused',
+      reuse: {
+        tenantId: outcome.tenantId,
+        familyId: outcome.familyId,
+        sessionId: outcome.sessionId,
+      },
+    }
+  }
 
   if (
-    outcome.outcome === 'reused' ||
     outcome.outcome === 'expired' ||
-    outcome.outcome === 'unknown'
+    outcome.outcome === 'unknown' ||
+    outcome.outcome === 'inactive'
   ) {
-    // `outcome.outcome === 'reused'` is where a family was actually revoked
-    // (packages/database/src/auth/refresh.ts does that write). Auditing the
-    // event itself — with the affected tenant/family ids — is left to M1-D:
-    // `RefreshOutcome`'s 'reused' arm carries no tenant here (ADR-0023 §6:
-    // "a resolver miss cannot be audited, only logged" covers 'unknown';
-    // 'reused' and 'expired' are a narrower gap this lane leaves open rather
-    // than threading tenant/family ids through a no-op sink).
+    // ADR-0023 §6: 'unknown' (a resolver miss) cannot be audited, only
+    // logged — there is no tenant to attach a row to. 'expired' and
+    // 'inactive' are ordinary, unremarkable refresh failures.
     return { outcome: 'failed', reason: outcome.outcome }
   }
 
@@ -99,7 +132,7 @@ export async function refresh(
     accessToken: access.token,
     expiresIn: access.expiresIn,
     refreshToken: minted.raw,
-    refreshTokenExpiresAt: minted.expiresAt,
+    refreshTokenExpiresAt: outcome.refreshTokenExpiresAt,
     user: outcome.user,
     tenant: outcome.tenant,
   }

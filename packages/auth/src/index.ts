@@ -31,7 +31,13 @@ export type {
 export { logout } from './logout.ts'
 export type { LogoutInput } from './logout.ts'
 
-export { getJwks, verifyAccessToken, TokenVerificationError, resetKeySetForTests } from './jwt.ts'
+export {
+  getJwks,
+  verifyAccessToken,
+  TokenVerificationError,
+  resetKeySetForTests,
+  preloadJwtKeys,
+} from './jwt.ts'
 export type { AccessTokenClaims, VerifiedAccessToken, SignedAccessToken } from './jwt.ts'
 
 export { verifyBearerToken, SessionInactiveError } from './guard.ts'
@@ -41,6 +47,7 @@ export {
   verifyCredential,
   verificationCountForTests,
   resetVerificationCountForTests,
+  HashingQueueFullError,
 } from './password.ts'
 
 export { hashRefreshToken, mintRefreshToken, REFRESH_TOKEN_TTL_MS } from './refresh-token.ts'
@@ -52,3 +59,5 @@ export { closeSessionCacheClient, invalidateSessionCache } from './session-cache
 
 export { noopAuthAuditSink } from './audit-sink.ts'
 export type { AuthAuditEvent, AuthAuditSink } from './audit-sink.ts'
+
+export { atAuthBoundary, SanitisedDatabaseError } from './db-error.ts'

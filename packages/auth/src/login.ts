@@ -1,5 +1,6 @@
 import { withLoginAttempt } from '@finsoft/database/auth'
 import { noopAuthAuditSink, type AuthAuditSink } from './audit-sink.ts'
+import { atAuthBoundary } from './db-error.ts'
 import { ACCESS_TOKEN_TTL_SECONDS, signAccessToken } from './jwt.ts'
 import { verifyCredential } from './password.ts'
 import { mintRefreshToken } from './refresh-token.ts'
@@ -30,18 +31,23 @@ export interface LoginSuccessResult {
   readonly accessToken: string
   readonly expiresIn: number
   readonly refreshToken: string
+  /** Computed by PostgreSQL, never by this process's own clock. See B5. */
   readonly refreshTokenExpiresAt: Date
   readonly user: { readonly id: string; readonly fullName: string; readonly email: string }
   readonly tenant: { readonly id: string; readonly code: string; readonly name: string }
+  /** ADR-0023 §5 layer 4 (global): non-blocking, reported here for the caller to log/alert on. */
+  readonly alertedLayers: readonly string[]
 }
 
 export interface LoginFailedResult {
   readonly outcome: 'failed'
+  readonly alertedLayers: readonly string[]
 }
 
 export interface LoginThrottledResult {
   readonly outcome: 'throttled'
   readonly retryAfterSeconds: number
+  readonly alertedLayers: readonly string[]
 }
 
 export type LoginResult = LoginSuccessResult | LoginFailedResult | LoginThrottledResult
@@ -61,15 +67,19 @@ export async function login(
     loginLayers({ normalisedEmail, normalisedTenantCode, ipPrefix: input.ipPrefix }),
   )
   if (throttle.throttled) {
-    return { outcome: 'throttled', retryAfterSeconds: throttle.retryAfterSeconds }
+    return {
+      outcome: 'throttled',
+      retryAfterSeconds: throttle.retryAfterSeconds,
+      alertedLayers: throttle.alertedLayers,
+    }
   }
 
   const minted = mintRefreshToken()
 
-  const attempt = await withLoginAttempt(
-    normalisedTenantCode,
-    normalisedEmail,
-    async (candidate) => {
+  // ADR-0023 §6: any driver error from here on is caught and rethrown
+  // carrying only a SQLSTATE code — never detail, hint, table or constraint.
+  const attempt = await atAuthBoundary(() =>
+    withLoginAttempt(normalisedTenantCode, normalisedEmail, async (candidate) => {
       // Exactly one verification, on every path inside the envelope, BEFORE
       // any status is evaluated (ADR-0023 §4 items 1 and 3). `?? null` covers
       // both "no user" and "user exists but has no password_hash yet".
@@ -89,9 +99,8 @@ export async function login(
         ip: input.ip,
         userAgent: input.userAgent,
         refreshTokenHash: minted.hash,
-        refreshTokenExpiresAt: minted.expiresAt,
       }
-    },
+    }),
   )
 
   if (attempt === null) {
@@ -99,11 +108,11 @@ export async function login(
     // mandatory verification happens here instead, against the decoy —
     // never zero verifications on any path (ADR-0023 §4 item 1).
     await verifyCredential(null, input.password)
-    return { outcome: 'failed' }
+    return { outcome: 'failed', alertedLayers: throttle.alertedLayers }
   }
 
   if (!attempt.authenticated) {
-    return { outcome: 'failed' }
+    return { outcome: 'failed', alertedLayers: throttle.alertedLayers }
   }
 
   const access = await signAccessToken({
@@ -127,9 +136,10 @@ export async function login(
     accessToken: access.token,
     expiresIn: access.expiresIn,
     refreshToken: minted.raw,
-    refreshTokenExpiresAt: minted.expiresAt,
+    refreshTokenExpiresAt: attempt.refreshTokenExpiresAt,
     user: attempt.user,
     tenant: attempt.tenant,
+    alertedLayers: throttle.alertedLayers,
   }
 }
 

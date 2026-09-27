@@ -48,8 +48,17 @@ interface PublicKeyEntry {
   readonly pem: string
 }
 
-function isProduction(): boolean {
-  return process.env['NODE_ENV'] === 'production'
+/**
+ * C1: the ephemeral dev/test key path is an ALLOWLIST of exactly two
+ * `NODE_ENV` values, not a denylist of `production` — an UNSET `NODE_ENV`
+ * (a misconfigured deploy, a staging box someone forgot to set it on) must
+ * not silently qualify for "not production" and get a key pair that
+ * evaporates on every restart. Real keys are required unless `NODE_ENV` is
+ * exactly `development` or `test`.
+ */
+function ephemeralKeysAllowed(): boolean {
+  const env = process.env['NODE_ENV']
+  return env === 'development' || env === 'test'
 }
 
 async function buildKeySet(): Promise<KeySet> {
@@ -88,16 +97,21 @@ async function buildKeySet(): Promise<KeySet> {
     return { signingKid, privateKey, verifiers, jwks: { keys: jwks } }
   }
 
-  if (isProduction()) {
+  if (!ephemeralKeysAllowed()) {
     throw new Error(
-      'AUTH_JWT_PRIVATE_KEY and AUTH_JWT_PUBLIC_KEYS are required in production. An ephemeral ' +
-        'key pair is a dev/test convenience only — it would make every token invalid across a ' +
-        'restart and across every other instance in the fleet.',
+      `AUTH_JWT_PRIVATE_KEY and AUTH_JWT_PUBLIC_KEYS are required when NODE_ENV is ` +
+        `"${process.env['NODE_ENV'] ?? '(unset)'}". An ephemeral key pair is a dev/test ` +
+        'convenience only, allowed exclusively when NODE_ENV is exactly "development" or ' +
+        '"test" — an UNSET NODE_ENV does not qualify. It would make every token invalid ' +
+        'across a restart and across every other instance in the fleet. See ' +
+        'infrastructure/staging/RUNBOOK-finsoft-refresh-role.md for the one-time step to ' +
+        'generate a real RSA key pair and set these variables.',
     )
   }
 
   // Dev/test only: one ephemeral RSA pair per process. Regenerated on every
-  // restart, which is precisely why this path must never run in production.
+  // restart, which is precisely why this path must never run outside those
+  // two environments.
   const { publicKey, privateKey } = await generateKeyPair(ALG, {
     modulusLength: 2048,
     extractable: true,
@@ -123,6 +137,20 @@ function keySet(): Promise<KeySet> {
 /** For tests that need a fresh ephemeral key set rather than the cached one. */
 export function resetKeySetForTests(): void {
   keySetPromise = undefined
+}
+
+/**
+ * C1: load (or generate) the key set eagerly, at process boot
+ * (`apps/api/src/main.ts`), before the server starts accepting connections —
+ * the same "refuse to boot rather than serve wrong" shape `main.ts` already
+ * uses for the database pool and the cookie configuration. Without this, a
+ * malformed `AUTH_JWT_PRIVATE_KEY`/`AUTH_JWT_PUBLIC_KEYS` pair, or a missing
+ * `AUTH_JWT_KID`, is only discovered on the FIRST login or token
+ * verification — a process that reports healthy and then fails every
+ * authenticated request.
+ */
+export async function preloadJwtKeys(): Promise<void> {
+  await keySet()
 }
 
 /** GET /api/auth/jwks. Public by design — this is what lets anything verify a token. */
