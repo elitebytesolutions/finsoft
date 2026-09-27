@@ -1,22 +1,31 @@
 import { sql } from 'kysely'
-import { withResolvedTenant, type TenantTx } from '../transaction.ts'
+import { TenantContext } from '../tenant-context.ts'
+import { withResolvedTenant, withTenant, type TenantTx } from '../transaction.ts'
 import { tenantByCodeResolver, type ResolvedTenantRow } from './resolvers.ts'
 
 /*
- * The login persistence boundary. ADR-0023 §1, §3, §4.
+ * The login persistence boundary. ADR-0023 §1, §3, §4. Security re-review
+ * findings B5, C2, C3 (2026-09-27) folded in.
  *
- * `packages/auth` owns the credential decision (argon2id, constant-time,
- * decoy hash) but never touches Kysely (dependency-cruiser's
- * `kysely-is-allowlisted`). This module owns the one transaction that reads
- * the candidate row and, if `decide` says so, writes the login's effects —
- * so that "the credential verification and the last_login_at write share
- * one transaction with the tenant established once" (ADR-0023 §3) is a
- * structural fact rather than a convention two packages have to honour
- * separately.
+ * TWO TRANSACTIONS, NOT ONE (C2). ADR-0023 §3 originally asked for a single
+ * transaction spanning the read, the argon2id verification and the write,
+ * "which §1's claim about RLS being in force during verification requires".
+ * That claim is satisfied by the READ alone — `password_hash` is read under
+ * RLS with the tenant established, which is the property that matters.
+ * Holding the transaction open across argon2id itself (~20ms of pure CPU,
+ * per the concurrency semaphore's own budget) means an unauthenticated
+ * endpoint under a burst of concurrent attempts holds a pooled connection
+ * for the duration of every hash in flight — a connection-pool exhaustion
+ * vector distinct from, and not covered by, the memory/CPU semaphore.
+ * Security review flagged this and it is fixed here: the resolve+read
+ * transaction commits before `decide` (argon2id) runs, and a second, short
+ * transaction does only the write. The tenant id crossing between them is
+ * NOT a request-derived value — it is the SAME resolver's own return value
+ * from transaction one, carried in a local variable, never re-derived from
+ * anything the caller supplied.
  *
- * `decide` runs *inside* the transaction. Argon2id is pure CPU work with no
- * database dependency, so awaiting it here costs a held connection for the
- * duration of one hash (~20ms) and buys the single-transaction property.
+ * `decide` still runs argon2id exactly once, still before any status is
+ * evaluated (ADR-0023 §4) — only the transaction boundary moved.
  */
 
 export interface LoginCandidateUser {
@@ -49,7 +58,6 @@ export interface LoginSessionWrite {
   readonly userAgent: string | null
   /** SHA-256 hex digest of the freshly minted refresh token. Never the raw value. */
   readonly refreshTokenHash: string
-  readonly refreshTokenExpiresAt: Date
 }
 
 export type LoginDecision =
@@ -61,67 +69,106 @@ export interface LoginSuccess {
   readonly user: { readonly id: string; readonly email: string; readonly fullName: string }
   readonly sessionId: string
   readonly permissionVersion: number
+  /** Computed by PostgreSQL (`now() + interval '14 days'`), never by the caller. See B5. */
+  readonly refreshTokenExpiresAt: Date
 }
 
 export type LoginAttemptResult = LoginSuccess | { readonly authenticated: false }
 
 /**
  * Resolves `tenantCode` against the global `tenants` table, reads the one
- * candidate user by `(tenant_id, lower(email))`, and lets `decide` — which
- * has already run its argon2id verification by the time it returns — choose
- * whether to write a session and a refresh token family in the same
- * transaction.
+ * candidate user by `(tenant_id, lower(email))` in a transaction that
+ * commits immediately, then lets `decide` — which runs argon2id with no
+ * transaction open — choose whether to write a session and a refresh token
+ * family in a second, short transaction.
  *
  * Returns `null` when the tenant code does not resolve at all: the caller
  * (`packages/auth`) must still perform its one decoy verification in that
- * case, outside any transaction, so that exactly one argon2id call happens
- * on every path (ADR-0023 §4).
+ * case, so that exactly one argon2id call happens on every path (ADR-0023
+ * §4).
  */
 export async function withLoginAttempt(
   tenantCode: string,
   normalisedEmail: string,
   decide: (candidate: LoginCandidate) => Promise<LoginDecision>,
 ): Promise<LoginAttemptResult | null> {
-  return withResolvedTenant(tenantByCodeResolver(tenantCode), async (tx, { tenant }) => {
-    const userRow = await tx
-      .selectFrom('users')
-      .select(['id', 'email', 'full_name', 'password_hash', 'status', 'version', 'created_by'])
-      .where(sql<boolean>`lower(email) = ${normalisedEmail}`)
-      .executeTakeFirst()
+  const resolved = await withResolvedTenant(
+    tenantByCodeResolver(tenantCode),
+    async (tx, { tenant }) => {
+      const userRow = await tx
+        .selectFrom('users')
+        .select(['id', 'email', 'full_name', 'password_hash', 'status', 'version', 'created_by'])
+        .where(sql<boolean>`lower(email) = ${normalisedEmail}`)
+        .executeTakeFirst()
 
-    const candidate: LoginCandidate = {
-      tenant,
-      user: userRow
-        ? {
-            id: userRow.id,
-            email: userRow.email,
-            fullName: userRow.full_name,
-            passwordHash: userRow.password_hash,
-            status: userRow.status,
-            version: userRow.version,
-            createdBy: userRow.created_by,
-          }
-        : null,
-    }
+      const candidate: LoginCandidate = {
+        tenant,
+        user: userRow
+          ? {
+              id: userRow.id,
+              email: userRow.email,
+              fullName: userRow.full_name,
+              passwordHash: userRow.password_hash,
+              status: userRow.status,
+              version: userRow.version,
+              createdBy: userRow.created_by,
+            }
+          : null,
+      }
+      return candidate
+    },
+  )
 
-    const decision = await decide(candidate)
-    if (!decision.authenticate) {
-      return { authenticated: false }
-    }
+  if (!resolved) return null
 
-    // `decide` returning `authenticate: true` is only reachable with a real
-    // user row — packages/auth's decision function is the one place that
-    // enforces `user !== null && status === 'ACTIVE'` before returning it.
-    // This defends the invariant a second time rather than trusting the
-    // caller: a bug in the decision function must not be able to write a
-    // session for a candidate with no user.
-    if (!candidate.user) {
-      throw new Error('withLoginAttempt: decide() authenticated a candidate with no user row')
-    }
-    const user = candidate.user
+  const decision = await decide(resolved)
+  if (!decision.authenticate) {
+    return { authenticated: false }
+  }
 
-    return writeLoginSuccess(tx, tenant, user, decision)
-  })
+  // `decide` returning `authenticate: true` is only reachable with a real
+  // user row — packages/auth's decision function is the one place that
+  // enforces `user !== null && status === 'ACTIVE'` before returning it.
+  // This defends the invariant a second time rather than trusting the
+  // caller: a bug in the decision function must not be able to write a
+  // session for a candidate with no user.
+  if (!resolved.user) {
+    throw new Error('withLoginAttempt: decide() authenticated a candidate with no user row')
+  }
+  const user = resolved.user
+  const tenant = resolved.tenant
+
+  // The second, short transaction. `tenant.id` here is transaction one's
+  // resolver output, not request input — TenantContext.run is the
+  // sanctioned way to re-enter tenant scope for a value already obtained
+  // this way (the same pattern packages/auth's own logout() and
+  // session-cache.ts use for the already-authenticated path).
+  return TenantContext.run({ tenantId: tenant.id, userId: user.id }, () =>
+    withTenant((tx) => writeLoginSuccess(tx, tenant, user, decision)),
+  )
+}
+
+async function attemptVersionedUpdate(
+  tx: TenantTx,
+  tenant: ResolvedTenantRow,
+  user: LoginCandidateUser,
+  version: number,
+): Promise<boolean> {
+  const updated = await tx
+    .updateTable('users')
+    .set({
+      last_login_at: sql`now()`,
+      // See LoginCandidateUser.createdBy's comment: the provisioned owner's
+      // updated_by must stay NULL, or users_authorship_pair_or_neither fails.
+      updated_by: user.createdBy === null ? null : user.id,
+      version: version + 1,
+    })
+    .where('tenant_id', '=', tenant.id)
+    .where('id', '=', user.id)
+    .where('version', '=', version)
+    .executeTakeFirst()
+
+  return updated.numUpdatedRows > 0n
 }
 
 async function writeLoginSuccess(
@@ -129,27 +176,26 @@ async function writeLoginSuccess(
   tenant: ResolvedTenantRow,
   user: LoginCandidateUser,
   write: LoginSessionWrite,
-): Promise<LoginSuccess> {
-  const updated = await tx
-    .updateTable('users')
-    .set({
-      last_login_at: new Date(),
-      // See LoginCandidateUser.createdBy's comment: the provisioned owner's
-      // updated_by must stay NULL, or users_authorship_pair_or_neither fails.
-      updated_by: user.createdBy === null ? null : user.id,
-      version: user.version + 1,
-    })
-    .where('tenant_id', '=', tenant.id)
-    .where('id', '=', user.id)
-    .where('version', '=', user.version)
-    .executeTakeFirst()
-
-  if (updated.numUpdatedRows === 0n) {
-    // Optimistic lock lost — another concurrent login/update on this exact
-    // row. Rare and not the client's fault; the caller maps this to a 401
-    // (identical to any other failure) rather than a 500, because retrying
-    // is indistinguishable from a fresh login attempt.
-    throw new Error('withLoginAttempt: concurrent update lost the optimistic lock on users')
+): Promise<LoginAttemptResult> {
+  // C3: an optimistic-lock miss is not this caller's fault and must never
+  // surface as a 500. Retried once against the row's current version — the
+  // race window is a handful of milliseconds between transaction one's read
+  // and transaction two's write, so a second concurrent login (or a
+  // password-change happening in the same instant) is the only realistic
+  // cause, and one retry resolves it. If it is STILL lost, this is reported
+  // as a plain authentication failure (identical 401), never thrown.
+  let ok = await attemptVersionedUpdate(tx, tenant, user, user.version)
+  if (!ok) {
+    const fresh = await tx
+      .selectFrom('users')
+      .select('version')
+      .where('tenant_id', '=', tenant.id)
+      .where('id', '=', user.id)
+      .executeTakeFirst()
+    ok = fresh ? await attemptVersionedUpdate(tx, tenant, user, fresh.version) : false
+  }
+  if (!ok) {
+    return { authenticated: false }
   }
 
   const session = await tx
@@ -177,17 +223,22 @@ async function writeLoginSuccess(
     .returning('id')
     .executeTakeFirstOrThrow()
 
-  await tx
+  // B5: expiry computed by PostgreSQL (`now() + interval '14 days'`), the
+  // same clock migration 005's `rt_lifetime_ceiling` CHECK measures
+  // `issued_at` against — never a value the application computed from its
+  // own clock, which a few seconds of skew turns into an uncaught 23514.
+  const token = await tx
     .insertInto('refresh_tokens')
     .values({
       tenant_id: tenant.id,
       family_id: family.id,
       token_hash: write.refreshTokenHash,
-      expires_at: write.refreshTokenExpiresAt,
+      expires_at: sql`now() + interval '14 days'`,
       created_by: user.id,
       updated_by: user.id,
     })
-    .execute()
+    .returning('expires_at')
+    .executeTakeFirstOrThrow()
 
   return {
     authenticated: true,
@@ -195,5 +246,6 @@ async function writeLoginSuccess(
     user: { id: user.id, email: user.email, fullName: user.fullName },
     sessionId: session.id,
     permissionVersion: session.permission_version,
+    refreshTokenExpiresAt: token.expires_at,
   }
 }
