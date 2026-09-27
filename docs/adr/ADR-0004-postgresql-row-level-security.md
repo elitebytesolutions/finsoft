@@ -5,6 +5,25 @@
 **Deciders:** Product Owner, Architecture Guardian
 **Authority:** LEVEL 1 — reversing this requires a superseding ADR
 
+---
+
+> ## ⛔ Partial supersession — authentication's two claim-minting endpoints are carved out of rules 2 and 4
+>
+> **This ADR is still in force**, and this notice is permanent. It annotates status only; the decision, rationale and consequences below are untouched and stay exactly as accepted, per [the ADR README](README.md) §4. Because the supersession is partial, this record does not become `Superseded by ADR-0023` — it stays `Accepted`, minus the two carve-outs named here.
+>
+> [ADR-0023](ADR-0023-pre-tenant-authentication-reads.md) (**Accepted 2026-09-27**) carves out of **two binding rules, at two endpoints, and nothing else in this record**. The body below still states both rules without exception; this notice is the only thing that says otherwise, which is why it is not removed:
+>
+> | Provision | Carved out by ADR-0023 |
+> |---|---|
+> | Line 75 — "The value comes from the authenticated session only — the `tenant_id` claim in the verified JWT…" | **In force everywhere except `/auth/login` and `/auth/refresh`.** Those two endpoints mint the claim, so they have no session yet. There the value is the output of a resolver called only inside `withResolvedTenant` in `packages/database`: the global `tenants` read by code for login, or `auth_lookup.resolve_refresh` for refresh. The login form's `tenantCode` is an input to that resolver and never the value set, and no other request schema may declare it (ADR-0023 condition A3). Every endpoint that consumes a claim: as written |
+> | Line 77 — "Where a caller legitimately has no tenant (login, tenant provisioning), it operates only on global tables." | **In force except for one read on `/auth/refresh`.** That read is `auth_lookup.resolve_refresh`, a `SECURITY DEFINER` function owned by the `NOLOGIN`, `NOBYPASSRLS` role `finsoft_refresh`. It reads `refresh_tokens(tenant_id, id, token_hash)` by hash and returns *where*, never *whether*. Login still satisfies this line as written: before its tenant is set, it reads only `tenants` |
+>
+> Rules 1, 3 and 5 are unaffected and apply on both paths: `set_config` stays transaction-scoped, confined to `packages/database`, and set exactly once. RLS `ENABLE` + `FORCE` on every tenant-owned table, the loud failure on an unset tenant, deny-by-default and the schema test are also unaffected and in force. **The last sentence of line 75** (*"the field is rejected by the DTO schema"*) differs from ADR-0009's Compliance (*"no effect"*). That conflict predates ADR-0023 and is an open Council item on [BOARD.md](../BOARD.md); this notice does not decide it.
+>
+> **Line numbers.** Every `ADR-0004:NN` citation in the repository was written against the **as-accepted** text. This notice adds 19 lines at the head, so an as-accepted line NN is now at NN+19 — :75 → 94, :77 → 96. Citations are not rewritten: the as-accepted numbering is the stable reference, and both provisions are quoted verbatim above. The notice is permanent, so the offset is permanent and fixed at +19; any later edit here must preserve its line count.
+
+---
+
 ## Context
 
 [ADR-0003](ADR-0003-shared-database-multi-tenancy.md) puts every tenant's rows in the same tables, discriminated by `tenant_id`. The characteristic failure of that model is a single forgotten predicate: one hand-written query, one raw SQL escape hatch, one repository method that took a shortcut, and tenant A sees tenant B's ledger.
