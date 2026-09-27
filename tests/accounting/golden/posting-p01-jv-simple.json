@@ -1,0 +1,73 @@
+{
+  "id": "P01",
+  "format": "posting-scenario/v1",
+  "name": "Manual journal voucher, two lines: owner's opening capital into the bank",
+  "rules": ["JOURNAL_VOUCHER_POSTED@1", "REPORT/trial-balance@1"],
+  "source": "docs/posting-rules/journal-voucher.md",
+  "governedBy": ["ADR-0005", "ADR-0011", "ADR-0012"],
+  "executableFrom": "M2",
+  "status": "Specified, hand-computed. Not yet executed: the M2 QA lane writes the runner.",
+  "description": [
+    "The simplest posting the system can make, and the one the demo tenants use to",
+    "record opening capital (coa-standard.md §6).",
+    "",
+    "Hand computation:",
+    "  Dr 1120 Bank                 500000.0000",
+    "  Cr 3100 Owner's Capital      500000.0000",
+    "  Σ debit = Σ credit = 500000.0000, difference 0.0000.",
+    "",
+    "Trial balance as of 2026-09-27: 1120 Debit 500000.0000; 3100 Credit 500000.0000;",
+    "totals 500000.0000 = 500000.0000. No other account has activity."
+  ],
+  "fixture": {
+    "coa": "standard-v1",
+    "timezone": "Asia/Karachi",
+    "fiscalYearStartMonth": 7,
+    "today": "2026-09-27",
+    "periods": { "fiscalYear": 2027, "status": "all OPEN" },
+    "tenants": ["GOLDEN_A"]
+  },
+  "steps": [
+    {
+      "step": 1,
+      "do": "post",
+      "event": "JOURNAL_VOUCHER_POSTED",
+      "idempotencyKey": "p01-capital",
+      "occurredAt": "2026-09-01",
+      "payload": {
+        "narration": "Owner's opening capital deposited to bank",
+        "lines": [
+          { "account": "1120", "debit": "500000.0000" },
+          { "account": "3100", "credit": "500000.0000" }
+        ]
+      },
+      "expect": {
+        "outcome": "POSTED",
+        "entryNumber": "JV-2027-000001",
+        "period": "2026-09",
+        "postingRule": "JOURNAL_VOUCHER_POSTED@1",
+        "status": "POSTED",
+        "lines": [
+          { "account": "1120", "debit": "500000.0000", "credit": "0.0000" },
+          { "account": "3100", "debit": "0.0000", "credit": "500000.0000" }
+        ],
+        "totals": { "debit": "500000.0000", "credit": "500000.0000" },
+        "auditRecordsWritten": 1
+      }
+    },
+    {
+      "step": 2,
+      "do": "assert",
+      "trialBalance": {
+        "asOf": "2026-09-27",
+        "rows": [
+          { "account": "1120", "debit": "500000.0000", "credit": "0.0000" },
+          { "account": "3100", "debit": "0.0000", "credit": "500000.0000" }
+        ],
+        "totals": { "debit": "500000.0000", "credit": "500000.0000" }
+      },
+      "journalEntryCount": 1,
+      "roundingAccountBalance": "0.0000"
+    }
+  ]
+}

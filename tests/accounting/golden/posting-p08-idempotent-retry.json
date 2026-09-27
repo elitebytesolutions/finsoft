@@ -1,0 +1,306 @@
+{
+  "id": "P08",
+  "format": "posting-scenario/v1",
+  "name": "Idempotent retry: three identical requests post once; key reuse; content duplicates; source uniqueness",
+  "rules": ["JOURNAL_VOUCHER_POSTED@1", "SALE_POSTED/service@1"],
+  "source": "docs/posting-rules/README.md §4",
+  "governedBy": ["ADR-0005", "NON_NEGOTIABLES rule 14", "Invariant 8"],
+  "executableFrom": "M2",
+  "stepsExecutableFrom": { "M2": [1, 2, 3, 4, 5], "M3": [6, 7, 8, 9, 10] },
+  "status": "Specified, hand-computed. Not yet executed: the M2 QA lane writes the runner; steps 6–10 need invoices (M3).",
+  "description": [
+    "NON_NEGOTIABLES rule 14: POST, POST, POST → exactly one journal entry, one document",
+    "number, one audit record.",
+    "",
+    "Steps 1–3: the same voucher three times under one key → one entry, JV-2027-000001.",
+    "Step 4: the same key with a different amount → IDEMPOTENCY_KEY_REUSED, nothing posted.",
+    "Step 5: IDENTICAL content under a NEW key → a second, legitimate voucher,",
+    "JV-2027-000002. Idempotency is by key, never by content (journal-voucher.md §7).",
+    "Steps 6–8: the same invoice three times under one key → one entry, one invoice number.",
+    "Step 9: the same invoice under a new key → SOURCE_ALREADY_POSTED.",
+    "",
+    "Numbers issued, by hand: JV-2027-000001, JV-2027-000002, JE-2027-000001,",
+    "INV-2027-000001. Nothing else: no replay or rejection consumed a number.",
+    "",
+    "Trial balance as of 2026-09-27:",
+    "  1120  Cr 1500.0000 × 2 = 3000.0000",
+    "  1200  Dr 10000.0000",
+    "  4200  Cr 10000.0000",
+    "  6300  Dr 1500.0000 × 2 = 3000.0000",
+    "  Σ Dr 13000.0000 = Σ Cr 13000.0000"
+  ],
+  "fixture": {
+    "coa": "standard-v1",
+    "timezone": "Asia/Karachi",
+    "fiscalYearStartMonth": 7,
+    "today": "2026-09-27",
+    "periods": { "fiscalYear": 2027, "status": "all OPEN" },
+    "tenants": ["GOLDEN_A"],
+    "customers": [{ "ref": "CUST-A", "tenant": "GOLDEN_A", "status": "ACTIVE" }],
+    "draftInvoices": ["INV-A1"]
+  },
+  "steps": [
+    {
+      "step": 1,
+      "do": "post",
+      "event": "JOURNAL_VOUCHER_POSTED",
+      "idempotencyKey": "p08-jv-1",
+      "occurredAt": "2026-09-10",
+      "payload": {
+        "narration": "Printer toner",
+        "lines": [
+          { "account": "6300", "debit": "1500.0000" },
+          { "account": "1120", "credit": "1500.0000" }
+        ]
+      },
+      "expect": {
+        "outcome": "POSTED",
+        "entryNumber": "JV-2027-000001",
+        "entriesAfter": 1,
+        "postingAuditRecordsAfter": 1
+      }
+    },
+    {
+      "step": 2,
+      "do": "post",
+      "event": "JOURNAL_VOUCHER_POSTED",
+      "idempotencyKey": "p08-jv-1",
+      "occurredAt": "2026-09-10",
+      "payload": {
+        "narration": "Printer toner",
+        "lines": [
+          { "account": "6300", "debit": "1500.0000" },
+          { "account": "1120", "credit": "1500.0000" }
+        ]
+      },
+      "expect": {
+        "outcome": "REPLAYED",
+        "entryNumber": "JV-2027-000001",
+        "entriesAfter": 1,
+        "postingAuditRecordsAfter": 1
+      }
+    },
+    {
+      "step": 3,
+      "do": "post",
+      "event": "JOURNAL_VOUCHER_POSTED",
+      "idempotencyKey": "p08-jv-1",
+      "occurredAt": "2026-09-10",
+      "payload": {
+        "narration": "Printer toner",
+        "lines": [
+          { "account": "6300", "debit": "1500.0000" },
+          { "account": "1120", "credit": "1500.0000" }
+        ]
+      },
+      "expect": {
+        "outcome": "REPLAYED",
+        "entryNumber": "JV-2027-000001",
+        "entriesAfter": 1,
+        "postingAuditRecordsAfter": 1
+      }
+    },
+    {
+      "step": 4,
+      "do": "post",
+      "event": "JOURNAL_VOUCHER_POSTED",
+      "idempotencyKey": "p08-jv-1",
+      "occurredAt": "2026-09-10",
+      "payload": {
+        "narration": "Printer toner",
+        "lines": [
+          { "account": "6300", "debit": "1600.0000" },
+          { "account": "1120", "credit": "1600.0000" }
+        ]
+      },
+      "expect": { "outcome": "REJECTED", "error": "IDEMPOTENCY_KEY_REUSED", "entriesAfter": 1 }
+    },
+    {
+      "step": 5,
+      "do": "post",
+      "event": "JOURNAL_VOUCHER_POSTED",
+      "idempotencyKey": "p08-jv-2",
+      "occurredAt": "2026-09-10",
+      "$comment": "Same content as step 1, new key: a second toner purchase. Must post.",
+      "payload": {
+        "narration": "Printer toner",
+        "lines": [
+          { "account": "6300", "debit": "1500.0000" },
+          { "account": "1120", "credit": "1500.0000" }
+        ]
+      },
+      "expect": {
+        "outcome": "POSTED",
+        "entryNumber": "JV-2027-000002",
+        "entriesAfter": 2,
+        "postingAuditRecordsAfter": 2
+      }
+    },
+    {
+      "step": 6,
+      "do": "post",
+      "event": "SALE_POSTED",
+      "referenceType": "sales_invoice",
+      "referenceId": "INV-A1",
+      "idempotencyKey": "p08-inv-1",
+      "occurredAt": "2026-09-15",
+      "payload": {
+        "settlement": "CREDIT",
+        "customer": "CUST-A",
+        "lines": [
+          {
+            "kind": "SERVICE",
+            "description": "Monthly maintenance",
+            "quantity": "1.000000",
+            "unitPrice": "7500.000000",
+            "lineNet": "7500.0000"
+          },
+          {
+            "kind": "SERVICE",
+            "description": "Site visit",
+            "quantity": "3.000000",
+            "unitPrice": "833.333333",
+            "lineNet": "2500.0000"
+          }
+        ],
+        "netAmount": "10000.0000"
+      },
+      "expect": {
+        "outcome": "POSTED",
+        "entryNumber": "JE-2027-000001",
+        "documentNumber": "INV-2027-000001",
+        "entriesAfter": 3
+      }
+    },
+    {
+      "step": 7,
+      "do": "post",
+      "event": "SALE_POSTED",
+      "referenceType": "sales_invoice",
+      "referenceId": "INV-A1",
+      "idempotencyKey": "p08-inv-1",
+      "occurredAt": "2026-09-15",
+      "payload": {
+        "settlement": "CREDIT",
+        "customer": "CUST-A",
+        "lines": [
+          {
+            "kind": "SERVICE",
+            "description": "Monthly maintenance",
+            "quantity": "1.000000",
+            "unitPrice": "7500.000000",
+            "lineNet": "7500.0000"
+          },
+          {
+            "kind": "SERVICE",
+            "description": "Site visit",
+            "quantity": "3.000000",
+            "unitPrice": "833.333333",
+            "lineNet": "2500.0000"
+          }
+        ],
+        "netAmount": "10000.0000"
+      },
+      "expect": {
+        "outcome": "REPLAYED",
+        "entryNumber": "JE-2027-000001",
+        "documentNumber": "INV-2027-000001",
+        "entriesAfter": 3
+      }
+    },
+    {
+      "step": 8,
+      "do": "post",
+      "event": "SALE_POSTED",
+      "referenceType": "sales_invoice",
+      "referenceId": "INV-A1",
+      "idempotencyKey": "p08-inv-1",
+      "occurredAt": "2026-09-15",
+      "payload": {
+        "settlement": "CREDIT",
+        "customer": "CUST-A",
+        "lines": [
+          {
+            "kind": "SERVICE",
+            "description": "Monthly maintenance",
+            "quantity": "1.000000",
+            "unitPrice": "7500.000000",
+            "lineNet": "7500.0000"
+          },
+          {
+            "kind": "SERVICE",
+            "description": "Site visit",
+            "quantity": "3.000000",
+            "unitPrice": "833.333333",
+            "lineNet": "2500.0000"
+          }
+        ],
+        "netAmount": "10000.0000"
+      },
+      "expect": {
+        "outcome": "REPLAYED",
+        "entryNumber": "JE-2027-000001",
+        "documentNumber": "INV-2027-000001",
+        "entriesAfter": 3
+      }
+    },
+    {
+      "step": 9,
+      "do": "post",
+      "event": "SALE_POSTED",
+      "referenceType": "sales_invoice",
+      "referenceId": "INV-A1",
+      "idempotencyKey": "p08-inv-2",
+      "occurredAt": "2026-09-15",
+      "payload": {
+        "settlement": "CREDIT",
+        "customer": "CUST-A",
+        "lines": [
+          {
+            "kind": "SERVICE",
+            "description": "Monthly maintenance",
+            "quantity": "1.000000",
+            "unitPrice": "7500.000000",
+            "lineNet": "7500.0000"
+          },
+          {
+            "kind": "SERVICE",
+            "description": "Site visit",
+            "quantity": "3.000000",
+            "unitPrice": "833.333333",
+            "lineNet": "2500.0000"
+          }
+        ],
+        "netAmount": "10000.0000"
+      },
+      "expect": {
+        "outcome": "REJECTED",
+        "error": "SOURCE_ALREADY_POSTED",
+        "errorDetail": { "existingEntry": "JE-2027-000001" },
+        "entriesAfter": 3
+      }
+    },
+    {
+      "step": 10,
+      "do": "assert",
+      "trialBalance": {
+        "asOf": "2026-09-27",
+        "rows": [
+          { "account": "1120", "debit": "0.0000", "credit": "3000.0000" },
+          { "account": "1200", "debit": "10000.0000", "credit": "0.0000" },
+          { "account": "4200", "debit": "0.0000", "credit": "10000.0000" },
+          { "account": "6300", "debit": "3000.0000", "credit": "0.0000" }
+        ],
+        "totals": { "debit": "13000.0000", "credit": "13000.0000" }
+      },
+      "numbersIssued": {
+        "JV": ["JV-2027-000001", "JV-2027-000002"],
+        "JE": ["JE-2027-000001"],
+        "INV": ["INV-2027-000001"]
+      },
+      "journalEntryCount": 3,
+      "postingAuditRecordCount": 3,
+      "roundingAccountBalance": "0.0000"
+    }
+  ]
+}
