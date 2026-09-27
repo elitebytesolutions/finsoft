@@ -37,7 +37,16 @@ export async function insertSeededRoles(
 ): Promise<void> {
   assertIssuedTenantTx(tx)
 
-  const actor = TenantContext.require().userId
+  const context = TenantContext.require()
+  if (context.tenantId !== tenantId) {
+    throw new Error(
+      `insertSeededRoles: tenantId argument (${tenantId}) does not match the transaction's ` +
+        `tenant (${context.tenantId}). withTenant scopes every write to the context tenant; a ` +
+        'caller passing a different id here is a bug, not a request to seed a different tenant.',
+    )
+  }
+
+  const actor = context.userId
   if (actor === null) {
     throw new Error(
       'insertSeededRoles: no acting user in context. System roles are seeded under the ' +

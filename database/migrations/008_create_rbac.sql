@@ -51,7 +51,19 @@
 -- compares a session's minted snapshot against this counter (or a value
 -- derived from it) to force a refresh. Recorded as a decision in
 -- docs/briefs/M1-R-rbac.md rather than assumed silently.
+--
+-- DB-C3: this comment documents the column's SECOND use without touching
+-- migration 002, which created it and is immutable (ADR-0013). COMMENT ON
+-- COLUMN is metadata, not a schema change to the column itself, and is the
+-- sanctioned way a later migration annotates an earlier one's object.
 -- ---------------------------------------------------------------------------
+COMMENT ON COLUMN users.version IS
+  'Optimistic lock, incremented by the application in the UPDATE predicate (migration 002). '
+  'ALSO bumped by 008_create_rbac.sql''s permission_version cascade whenever this user''s '
+  'effective permissions change — a role grant/revocation, a change to a role''s permission '
+  'set, or a change to a held role''s status. Both uses share one counter deliberately: any '
+  'change to what this row means is a legitimate reason for a concurrent writer to re-read '
+  'before it writes again. See 008''s header for why this is not a dedicated column.';
 
 -- ---------------------------------------------------------------------------
 -- roles
@@ -152,13 +164,15 @@ CREATE TABLE role_permissions (
 
 -- At most one LIVE grant of a given code to a given role. A revoked grant
 -- does not block re-granting the same code later — that is a new row.
+--
+-- ALSO the index "what does this role currently grant" (resolvePermissions)
+-- and the role_permissions_bump_permission_version cascade need: both filter
+-- on (tenant_id, role_id) WHERE revoked_at IS NULL, which is a strict PREFIX
+-- of this index's columns and predicate. A separate role_permissions_role_idx
+-- would therefore be redundant — Database Guardian review, DB-C5 — and is not
+-- created.
 CREATE UNIQUE INDEX role_permissions_active_unique
   ON role_permissions (tenant_id, role_id, permission_code) WHERE revoked_at IS NULL;
-
--- The hot path: "what does this role currently grant" (resolvePermissions)
--- and the role_permissions_bump_permission_version cascade below.
-CREATE INDEX role_permissions_role_idx
-  ON role_permissions (tenant_id, role_id) WHERE revoked_at IS NULL;
 
 COMMENT ON TABLE role_permissions IS
   'ARCHITECTURE §8. Which atomic permission codes a role currently grants. Revocation is revoked_at/revoked_by, never a delete (rule 4).';
@@ -209,15 +223,18 @@ CREATE TABLE user_roles (
 );
 
 -- At most one LIVE assignment of a given role to a given user.
+--
+-- ALSO the index resolvePermissions(tx, userId) needs — "which roles does
+-- this user currently hold" filters on (tenant_id, user_id) WHERE revoked_at
+-- IS NULL, a strict PREFIX of this index. A separate user_roles_user_idx
+-- would be redundant (Database Guardian review, DB-C5) and is not created.
 CREATE UNIQUE INDEX user_roles_active_unique
   ON user_roles (tenant_id, user_id, role_id) WHERE revoked_at IS NULL;
 
--- The hot path: resolvePermissions(tx, userId) — "which roles does this user
--- currently hold".
-CREATE INDEX user_roles_user_idx
-  ON user_roles (tenant_id, user_id) WHERE revoked_at IS NULL;
--- The other direction: role_permissions_bump_permission_version's cascade —
--- "which users currently hold this role".
+-- The OTHER direction, which the unique index above cannot serve because
+-- role_id is not its leading column: role_permissions_bump_permission_version
+-- and roles_bump_permission_version both ask "which users currently hold
+-- this role".
 CREATE INDEX user_roles_role_idx
   ON user_roles (tenant_id, role_id) WHERE revoked_at IS NULL;
 
@@ -353,11 +370,61 @@ CREATE TRIGGER user_roles_enforce_transition
 -- (created_by/updated_by there), not as an edit to the user's own profile,
 -- and users.updated_at/updated_by must keep meaning "who last touched this
 -- user's own fields", which this cascade does not do.
+--
+-- ---------------------------------------------------------------------------
+-- DB-C2: LOCK ORDER, declared rather than left to the plan (migration 005's
+-- own words for the same discipline). docs/LOCK_REGISTRY.md records this
+-- globally; it is restated here because a reader of this file should not
+-- have to go elsewhere to see why a trigger body takes the locks it does.
+--
+--   roles  ->  users (by id, ascending)
+--
+-- THE RACE THIS CLOSES. An earlier form of these two functions took no lock
+-- on `roles` and updated the matching `users` rows via a single
+-- `UPDATE ... WHERE EXISTS (...)`, leaving PostgreSQL to choose the row-lock
+-- order. Two cascades that can affect an OVERLAPPING set of `users` rows —
+-- concretely, revoking a permission from role R (role_permissions path,
+-- which updates every CURRENT holder of R) running concurrently with
+-- granting or revoking role R itself for one of those same holders
+-- (user_roles path, which updates exactly that one user) — could each hold
+-- one contested row and wait for the other, which PostgreSQL reports as
+-- 40P01. tests/integration/rbac-lock-order.spec.ts reproduces it against the
+-- pre-fix form with two real connections.
+--
+-- THE FIX HAS TWO PARTS, and either alone is insufficient:
+--
+--   1. Lock the ROLE FIRST. The role_permissions path takes FOR UPDATE
+--      (this cascade is a consequence of a WRITE to the role's permission
+--      set); the user_roles path takes FOR SHARE (this cascade only READS
+--      which role was assigned/revoked). Two cascades over the SAME role_id
+--      now serialise through one lock acquired before either touches
+--      `users`, which is what stops them interleaving their `users` locks
+--      in the first place. `roles_bump_permission_version` below needs no
+--      such step: it fires on an UPDATE of `roles` itself, so the row is
+--      already locked by the statement that fired the trigger.
+--
+--   2. Lock the AFFECTED USERS in a FIXED, GLOBAL ORDER — ascending `id` —
+--      one row at a time via an explicit loop, before the bulk UPDATE.
+--      `SELECT ... ORDER BY id FOR UPDATE` does NOT guarantee PostgreSQL
+--      ACQUIRES the locks in that order (only that matching rows are
+--      RETURNED in that order); the loop's single-row `PERFORM ... FOR
+--      UPDATE` per iteration is what actually fixes the acquisition order.
+--      This is what stops two cascades over roles R1 and R2 that happen to
+--      share members from deadlocking on EACH OTHER even after (1) — (1)
+--      only rules out a cycle through the same role_id.
 -- ---------------------------------------------------------------------------
 
 CREATE FUNCTION user_roles_bump_permission_version() RETURNS trigger
 LANGUAGE plpgsql AS $fn$
 BEGIN
+  -- FOR SHARE: this cascade only reads which role was assigned or revoked.
+  -- Still serialises against a concurrent role_permissions/roles cascade for
+  -- the SAME role, which is what DB-C2 relies on for the specific race named
+  -- above.
+  PERFORM 1 FROM roles WHERE tenant_id = NEW.tenant_id AND id = NEW.role_id FOR SHARE;
+
+  PERFORM 1 FROM users WHERE tenant_id = NEW.tenant_id AND id = NEW.user_id FOR UPDATE;
+
   UPDATE users
      SET version = version + 1
    WHERE tenant_id = NEW.tenant_id
@@ -367,7 +434,7 @@ END;
 $fn$;
 
 COMMENT ON FUNCTION user_roles_bump_permission_version() IS
-  'ARCHITECTURE §8 / ADR-0009. A role grant or revocation changes what its user may do; bumping users.version tells a concurrent optimistic-lock writer (and, once wired, the auth guard) that this user''s row is stale.';
+  'ARCHITECTURE §8 / ADR-0009. A role grant or revocation changes what its user may do; bumping users.version tells a concurrent optimistic-lock writer (and, once wired, the auth guard) that this user''s row is stale. Lock order: roles (FOR SHARE) then users — docs/LOCK_REGISTRY.md, DB-C2.';
 
 CREATE TRIGGER user_roles_bump_permission_version_ins
   AFTER INSERT ON user_roles
@@ -381,28 +448,41 @@ CREATE TRIGGER user_roles_bump_permission_version_rev
 
 CREATE FUNCTION role_permissions_bump_permission_version() RETURNS trigger
 LANGUAGE plpgsql AS $fn$
+DECLARE
+  affected_user_id uuid;
 BEGIN
+  -- FOR UPDATE: this cascade is a consequence of a WRITE to the role's
+  -- permission set. See the header above for the race this closes.
+  PERFORM 1 FROM roles WHERE tenant_id = NEW.tenant_id AND id = NEW.role_id FOR UPDATE;
+
   -- Every user who currently, actively holds the affected role: adding or
   -- removing a permission from a role changes what all of them may do.
-  -- version only — see user_roles_bump_permission_version() above for why
-  -- updated_by is not touched.
-  UPDATE users u
-     SET version = u.version + 1
-   WHERE u.tenant_id = NEW.tenant_id
-     AND EXISTS (
-       SELECT 1
-         FROM user_roles ur
-        WHERE ur.tenant_id   = NEW.tenant_id
-          AND ur.role_id     = NEW.role_id
-          AND ur.user_id     = u.id
-          AND ur.revoked_at IS NULL
-     );
+  -- Locked ONE ROW PER STATEMENT, in ascending id order — see the header for
+  -- why ORDER BY on the SELECT alone would not guarantee this.
+  FOR affected_user_id IN
+    SELECT u.id
+      FROM users u
+     WHERE u.tenant_id = NEW.tenant_id
+       AND EXISTS (
+         SELECT 1
+           FROM user_roles ur
+          WHERE ur.tenant_id   = NEW.tenant_id
+            AND ur.role_id     = NEW.role_id
+            AND ur.user_id     = u.id
+            AND ur.revoked_at IS NULL
+       )
+     ORDER BY u.id
+  LOOP
+    PERFORM 1 FROM users WHERE tenant_id = NEW.tenant_id AND id = affected_user_id FOR UPDATE;
+    UPDATE users SET version = version + 1 WHERE tenant_id = NEW.tenant_id AND id = affected_user_id;
+  END LOOP;
+
   RETURN NULL;
 END;
 $fn$;
 
 COMMENT ON FUNCTION role_permissions_bump_permission_version() IS
-  'ARCHITECTURE §8 / ADR-0009. Adding or revoking a role''s permission changes every current holder''s effective permissions; bumps users.version for each of them.';
+  'ARCHITECTURE §8 / ADR-0009. Adding or revoking a role''s permission changes every current holder''s effective permissions; bumps users.version for each of them. Lock order: roles (FOR UPDATE) then users, one row at a time, ascending id — docs/LOCK_REGISTRY.md, DB-C2.';
 
 CREATE TRIGGER role_permissions_bump_permission_version_ins
   AFTER INSERT ON role_permissions
@@ -413,6 +493,52 @@ CREATE TRIGGER role_permissions_bump_permission_version_rev
   FOR EACH ROW
   WHEN (OLD.revoked_at IS NULL AND NEW.revoked_at IS NOT NULL)
   EXECUTE FUNCTION role_permissions_bump_permission_version();
+
+-- ---------------------------------------------------------------------------
+-- DB-C1: a role's STATUS is part of its effective meaning too.
+-- resolvePermissions filters role_permissions to roles with status = ACTIVE
+-- (packages/permissions), so deactivating a role changes what every current
+-- holder may do exactly as revoking one of its permissions does — and must
+-- bump the same way. The role row is already locked by the UPDATE that fired
+-- this trigger, so unlike the two functions above there is no separate
+-- `roles` lock to take here.
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION roles_bump_permission_version() RETURNS trigger
+LANGUAGE plpgsql AS $fn$
+DECLARE
+  affected_user_id uuid;
+BEGIN
+  FOR affected_user_id IN
+    SELECT u.id
+      FROM users u
+     WHERE u.tenant_id = NEW.tenant_id
+       AND EXISTS (
+         SELECT 1
+           FROM user_roles ur
+          WHERE ur.tenant_id   = NEW.tenant_id
+            AND ur.role_id     = NEW.id
+            AND ur.user_id     = u.id
+            AND ur.revoked_at IS NULL
+       )
+     ORDER BY u.id
+  LOOP
+    PERFORM 1 FROM users WHERE tenant_id = NEW.tenant_id AND id = affected_user_id FOR UPDATE;
+    UPDATE users SET version = version + 1 WHERE tenant_id = NEW.tenant_id AND id = affected_user_id;
+  END LOOP;
+
+  RETURN NULL;
+END;
+$fn$;
+
+COMMENT ON FUNCTION roles_bump_permission_version() IS
+  'ARCHITECTURE §8 / ADR-0009, DB-C1. Deactivating or reactivating a role changes every current holder''s effective permissions exactly as a role_permissions change does; bumps users.version for each of them. No roles lock to take here: the row is already locked by the UPDATE that fired this trigger.';
+
+CREATE TRIGGER roles_bump_permission_version
+  AFTER UPDATE ON roles
+  FOR EACH ROW
+  WHEN (OLD.status IS DISTINCT FROM NEW.status)
+  EXECUTE FUNCTION roles_bump_permission_version();
 
 -- ---------------------------------------------------------------------------
 -- Row level security — ADR-0004

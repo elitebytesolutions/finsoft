@@ -263,7 +263,7 @@ export interface Users {
   updated_at: Generated<Timestamp>;
   updated_by: string | null;
   /**
-   * Optimistic lock. Incremented by the application in the UPDATE predicate, never by a trigger.
+   * Optimistic lock, incremented by the application in the UPDATE predicate (migration 002). ALSO bumped by 008_create_rbac.sql's permission_version cascade whenever this user's effective permissions change — a role grant/revocation, a change to a role's permission set, or a change to a held role's status. Both uses share one counter deliberately: any change to what this row means is a legitimate reason for a concurrent writer to re-read before it writes again. See 008's header for why this is not a dedicated column.
    */
   version: Generated<number>;
 }
