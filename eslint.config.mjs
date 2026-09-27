@@ -262,6 +262,31 @@ const connectionOwnershipSyntax = [
   },
 ]
 
+/*
+ * `auth_lookup` is migration 006's schema, owned by `finsoft_refresh` and
+ * read only through `packages/database/src/auth/resolvers.ts`'s raw call to
+ * `auth_lookup.resolve_refresh`. Restricting the identifier to
+ * `packages/database` (and, for the SQL side, `database/migrations`, which
+ * ESLint cannot see) is the Architecture seat's A1 condition: nothing
+ * outside the one package that owns query construction for auth should even
+ * be ABLE to reference the schema by name, whether in a raw SQL string or a
+ * comment that later gets copy-pasted into real code.
+ */
+const authLookupIdentifierSyntax = [
+  {
+    selector: 'Literal[value=/auth_lookup/]',
+    message:
+      "ADR-0023 §2 / Architecture seat A1: auth_lookup is migration 006's schema, read only " +
+      'through packages/database/src/auth/resolvers.ts. No other package or app may name it.',
+  },
+  {
+    selector: 'TemplateElement[value.raw=/auth_lookup/]',
+    message:
+      "ADR-0023 §2 / Architecture seat A1: auth_lookup is migration 006's schema, read only " +
+      'through packages/database/src/auth/resolvers.ts. No other package or app may name it.',
+  },
+]
+
 export default tseslint.config(
   {
     ignores: [
@@ -363,7 +388,12 @@ export default tseslint.config(
       'database/tests/**',
     ],
     rules: {
-      'no-restricted-syntax': ['error', ...invariantSyntax, ...connectionOwnershipSyntax],
+      'no-restricted-syntax': [
+        'error',
+        ...invariantSyntax,
+        ...connectionOwnershipSyntax,
+        ...authLookupIdentifierSyntax,
+      ],
     },
   },
 
@@ -407,6 +437,7 @@ export default tseslint.config(
         'error',
         ...invariantSyntax,
         ...connectionOwnershipSyntax,
+        ...authLookupIdentifierSyntax,
         ...stripOnlySyntax,
       ],
     },
@@ -429,6 +460,7 @@ export default tseslint.config(
         'error',
         ...invariantSyntax,
         ...connectionOwnershipSyntax,
+        ...authLookupIdentifierSyntax,
         ...stripOnlySyntax,
         ...packagesAuthQuerySyntax,
       ],
@@ -456,6 +488,7 @@ export default tseslint.config(
         'error',
         ...invariantSyntax,
         ...connectionOwnershipSyntax,
+        ...authLookupIdentifierSyntax,
         ...appsQuerySyntax,
       ],
     },
@@ -487,6 +520,7 @@ export default tseslint.config(
         'error',
         ...invariantSyntax,
         ...connectionOwnershipSyntax,
+        ...authLookupIdentifierSyntax,
         ...appsQuerySyntax,
         ...stripOnlySyntax,
       ],

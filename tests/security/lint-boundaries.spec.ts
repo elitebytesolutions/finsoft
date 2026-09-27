@@ -128,6 +128,33 @@ describe('packages/auth may not construct queries either (ADR-0023, M1-A)', () =
   })
 })
 
+describe('auth_lookup is restricted to packages/database (Architecture seat A1)', () => {
+  it('catches the identifier in a string literal outside packages/database', async () => {
+    const messages = await messagesFor(
+      'apps/api/src/thing.ts',
+      `export const q = "select * from auth_lookup.resolve_refresh($1)"`,
+    )
+    expect(matching(messages, 'auth_lookup is migration 006')).toHaveLength(1)
+  })
+
+  it('catches the identifier in a template literal (the sql tag form)', async () => {
+    const messages = await messagesFor(
+      'packages/auth/src/thing.ts',
+      "import { sql } from 'kysely'\n" +
+        'export const q = sql`select * from auth_lookup.resolve_refresh(${1})`',
+    )
+    expect(matching(messages, 'auth_lookup is migration 006')).not.toHaveLength(0)
+  })
+
+  it('leaves packages/database alone, which is the one place it belongs', async () => {
+    const messages = await messagesFor(
+      'packages/database/src/auth/resolvers.ts',
+      `export const q = 'select tenant_id, token_id from auth_lookup.resolve_refresh($1)'`,
+    )
+    expect(matching(messages, 'auth_lookup is migration 006')).toEqual([])
+  })
+})
+
 describe('connection ownership (ADR-0013, ADR-0004)', () => {
   it('catches a transaction opened outside packages/database', async () => {
     const messages = await messagesFor(
