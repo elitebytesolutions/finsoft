@@ -1,4 +1,4 @@
-import { sql, type Transaction } from 'kysely'
+import { CompiledQuery, sql, type Transaction } from 'kysely'
 import { fullDb, globalDb } from './kysely.ts'
 import type { Database, GlobalDatabase } from './schema.ts'
 import { TenantContext } from './tenant-context.ts'
@@ -146,5 +146,133 @@ export async function withGlobal<T>(fn: (tx: GlobalTx) => Promise<T>): Promise<T
     .execute(async (trx) => {
       issuedGlobal.add(trx)
       return fn(trx as GlobalTx)
+    })
+}
+
+/* ------------------------------------------------------------------ *
+ * withResolvedTenant — ADR-0023 §3
+ *
+ * Login and refresh both need a tenant-owned read *before* any tenant is
+ * known — establishing the tenant is what the read is for. Neither
+ * `withTenant` (needs `TenantContext` already set) nor `withGlobal` (cannot
+ * name a tenant-owned table) fits, so this is the third helper ADR-0023 §3
+ * calls for, in the one file that already owns the brand pattern and the
+ * `set_config` call site.
+ *
+ * Every requirement in ADR-0023 §3 is structural here, not a convention:
+ *
+ *   1. This is the ONLY function that may call a resolver. The two resolvers
+ *      that exist (`auth/resolvers.ts`, both internal to this package) are
+ *      never called from anywhere else, and nothing outside this module can
+ *      construct the `PreTenantTx` a resolver requires.
+ *   2. `fn` receives a `TenantTx` only after `set_config('app.tenant_id', …)`
+ *      has been awaited — no tenant-table statement can run before it.
+ *   3. The value passed to `set_config` is `resolved.tenantId`, and nothing
+ *      else is in scope in this function that could be substituted for it —
+ *      no request body, no header, no argument threaded through from a
+ *      caller.
+ *   4. `set_config` is called exactly once, at this one call site.
+ * ------------------------------------------------------------------ */
+
+declare const RESOLVED_TENANT: unique symbol
+
+/**
+ * A tenant id that came from a resolver run inside `withResolvedTenant`.
+ *
+ * Wrapped in an object and tracked in a `WeakSet`, exactly like `TenantTx`
+ * above — a bare branded `string` can always be produced with `as` by
+ * anyone who can name the type, which defeats the point of branding a
+ * primitive. Wrapping it in an object this module itself allocates means a
+ * forged value fails `assertIssuedResolvedTenantId` even though it
+ * typechecks.
+ */
+export type ResolvedTenantId = { readonly value: string } & {
+  readonly [RESOLVED_TENANT]: 'resolved-tenant'
+}
+
+const issuedResolvedTenantId = new WeakSet<object>()
+
+/**
+ * Not exported from the package. The only callers are the two resolvers in
+ * `auth/resolvers.ts`, which run *inside* the `PreTenantTx` this module
+ * hands them and nowhere else — so a `ResolvedTenantId` can only ever
+ * originate from the global `tenants`-by-code read (login) or migration
+ * 006's `auth_lookup.resolve_refresh` (refresh).
+ */
+export function brandResolvedTenantId(value: string): ResolvedTenantId {
+  const branded = { value } as ResolvedTenantId
+  issuedResolvedTenantId.add(branded)
+  return branded
+}
+
+function assertIssuedResolvedTenantId(id: ResolvedTenantId): void {
+  if (!issuedResolvedTenantId.has(id)) {
+    throw new TransactionScopeError(
+      'This is not a ResolvedTenantId issued by a resolver running inside withResolvedTenant. ' +
+        'A cast does not make one (ADR-0023 §3).',
+    )
+  }
+}
+
+declare const PRE_TENANT_TX: unique symbol
+
+/**
+ * What a resolver may do: read the global `tenants` table with the ordinary
+ * typed builder, or run a parameterised raw statement — the shape
+ * `auth_lookup.resolve_refresh` needs, since it is a function call rather
+ * than a table. Nothing else is reachable: a tenant-owned table is not on
+ * `GlobalDatabase`, so `tx.selectFrom('users')` does not compile here, and
+ * the raw escape hatch is what migration 006's function call requires.
+ */
+export type PreTenantTx = Transaction<GlobalDatabase> & {
+  readonly [PRE_TENANT_TX]: 'pre-tenant'
+  raw<R>(text: string, parameters?: readonly unknown[]): Promise<R[]>
+}
+
+export interface Resolved<Extra> {
+  readonly tenantId: ResolvedTenantId
+  readonly extra: Extra
+}
+
+/**
+ * Run `fn` in a transaction whose tenant is established by `resolve`,
+ * rather than read from `TenantContext` (which does not exist yet on this
+ * path). Returns `null` when `resolve` finds nothing — an unknown tenant
+ * code, or an unknown/expired refresh token hash — without ever setting a
+ * tenant.
+ */
+export async function withResolvedTenant<Extra, T>(
+  resolve: (tx: PreTenantTx) => Promise<Resolved<Extra> | null>,
+  /**
+   * `tenantId` is the resolver's own return value, handed back as a plain
+   * string for convenience once it has already done its one job — proving,
+   * via the brand check above, that it came from a resolver and not from
+   * request input. Callers use it only to re-state the resolved tenant as an
+   * explicit predicate alongside the row the resolver named (ADR-0023 §2:
+   * "the spend statement additionally carries tenant_id = $resolved AND
+   * id = $resolved_token_id"), never to choose a different one.
+   */
+  fn: (tx: TenantTx, extra: Extra, tenantId: string) => Promise<T>,
+): Promise<T | null> {
+  return fullDb()
+    .transaction()
+    .execute(async (trx) => {
+      const preTenantTx = Object.assign(trx, {
+        raw<R>(text: string, parameters: readonly unknown[] = []): Promise<R[]> {
+          return trx
+            .executeQuery<R>(CompiledQuery.raw(text, [...parameters]))
+            .then((result) => [...result.rows])
+        },
+      }) as unknown as PreTenantTx
+
+      const resolved = await resolve(preTenantTx)
+      if (!resolved) return null
+
+      assertIssuedResolvedTenantId(resolved.tenantId)
+
+      await sql`select set_config('app.tenant_id', ${resolved.tenantId.value}, true)`.execute(trx)
+
+      issuedTenant.add(trx)
+      return fn(trx as TenantTx, resolved.extra, resolved.tenantId.value)
     })
 }
