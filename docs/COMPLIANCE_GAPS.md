@@ -137,6 +137,52 @@ Product Owner for the policy; Security Guardian for the triage.
 
 ---
 
+## GAP-003 — MFA deferred to pre-production
+
+| | |
+|---|---|
+| **Rule** | [ADR-0009](adr/ADR-0009-jwt-access-and-rotating-refresh-tokens.md) §"MFA for privileged roles" (LEVEL 1), hardening the authentication behind rules 7 & 8 (tenancy) and 18 (server-side authorization) of [NON_NEGOTIABLES.md](NON_NEGOTIABLES.md). Production break-glass MFA (rule 21) is **not** deferred |
+| **Requirement** | *"MFA (TOTP, with hashed single-use recovery codes) is **mandatory** for any role holding a privileged permission"* — enrolment before the role is effective, step-up for the highest-privilege actions, audited recovery-code use |
+| **Status** | **Not enforced. Deferred by decision** |
+| **Raised** | 2026-09-27, by the Product Owner's MVP decision ([ADR-0024](adr/ADR-0024-operating-model.md)) |
+
+### Product Owner disposition, 2026-09-27
+
+> **MFA is deferred to pre-production.** The MVP slice ships to staging without it; **production is blocked** until TOTP, recovery codes and step-up re-authentication ship and are tested.
+
+This is a scoped acceptance, not a closure, in the same shape as GAP-001. ADR-0009 considered and **rejected** *"MFA optional for privileged roles"*; nothing here reverses that. The decision is about *when* MFA ships, and production is where it matters.
+
+### What is enforced
+
+- Password authentication, short-lived access tokens, rotating refresh tokens with reuse detection and family revocation (ADR-0009, ADR-0022) — unchanged.
+- Server-side permission checks on every endpoint, and RLS beneath them. MFA hardens *who holds* a permission; it is not what enforces it.
+
+### What is not enforced, and why
+
+The MVP journey exercises privileged permissions — `voucher.reverse` and `audit.view` at least — and the demo users hold them **without enrolment or step-up**. A stolen staging password is a stolen privileged session.
+
+### Compensating controls
+
+1. **Staging holds demo data only.** Two demo tenants, seeded; no real business data, no Bhatti Traders records, no production credentials.
+2. Production is blocked by this entry. There is no production deployment path in the MVP.
+3. `sessions.mfa_at` already exists (migration 005), so recording MFA completion needs no change to a released migration.
+
+None of these is the required control.
+
+### What would close it
+
+All of these, tested against ADR-0009's Compliance MFA test:
+
+1. TOTP enrolment, with the privileged-role grant pending until enrolment.
+2. Hashed, single-use recovery codes, with consumption audited.
+3. Step-up re-authentication for `period.reopen`, `admin.role_manage` and break-glass.
+
+### Owner
+
+Product Owner for the production gate; Database/Security seat (`security-guardian`) for the implementation, scheduled before the first production release.
+
+---
+
 ## Adding an entry
 
 State the rule and quote the requirement. Say precisely what *is* enforced and what is not — a gap described vaguely reads as smaller than it is. List compensating controls without dressing them up as equivalents. Name what would close it, and who owns that. Date it.

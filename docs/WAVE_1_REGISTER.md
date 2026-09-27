@@ -2,6 +2,10 @@
 
 **Authority:** LEVEL 2, alongside [IMPLEMENTATION.md](IMPLEMENTATION.md). Scope changes need Product Owner approval.
 
+> **Frozen as history, 2026-09-27, under [ADR-0024](adr/ADR-0024-operating-model.md).** Nothing below is rewritten. W1-002…W1-006
+> continue as the **M1 — minimum platform** increment of the MVP slice, tracked on [BOARD.md](BOARD.md) with delivery briefs rather
+> than contracts. Open technical signatures recorded here now belong to the Technical Council.
+
 **Exit criterion:** *a user in tenant A provably cannot read tenant B's data, by test, at both API and SQL levels.*
 
 The SQL half was met in Wave 0 — [FND-007/008](WAVE_0_REGISTER.md) proves isolation serially, with interleaved requests on one connection, and with transactions genuinely open on separate backends. **The API half could not be tested at all**, because `TenantGuard` was a fail-closed stub with no authenticated request to admit. Wave 1 builds that request.

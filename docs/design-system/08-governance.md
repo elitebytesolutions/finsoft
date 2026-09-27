@@ -6,9 +6,14 @@
 |---|---|---|
 | Tokens (`01-foundations`) | `design-system` agent | PR + design-system review |
 | Component contracts (`02-components`) | `design-system` agent | PR + design-system review |
-| Page archetypes (`03-patterns`) | `design-system` agent + Product Owner | PR + both approvals |
+| Page archetypes (`03-patterns`) | `design-system` agent | PR + design-system review; the Product Owner sees it in the demo |
 | A page document (`pages/<slug>/`) | The module owner for that page | PR + design-system review |
 | Display of accounting facts (Dr/Cr, immutability, period lock, tenant) | `accounting-guardian` | **Not changeable here** — Level 0 |
+
+The `design-system` agent is the **design-system seat** — a delegated owner under
+[ADR-0024](../adr/ADR-0024-operating-model.md). It decides tokens, components and archetypes; a
+dispute goes to the Technical Council. The Product Owner accepts workflows in the demo, not design
+mechanisms.
 
 `.claude/agents/design-system.md` is the agent that holds this system. Feature agents **request**
 components from it; they do not add shared components themselves.
