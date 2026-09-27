@@ -33,7 +33,7 @@ the module graph. What is left in ESLint is mostly **invariants**:
 **A hit on any of these is a finding, not a chore.** Do not refactor around it, do not
 narrow the rule, do not add a disable. Stop, and report it — these are exactly the
 "financial invariant violation" and "outside your boundary" cases in `CLAUDE.md` and
-AGENTS.md rule 20. If the violating code is inside your `ALLOWED` paths and the correct fix
+AGENTS.md rule 20. If the violating code is inside your brief's `ALLOWED` paths and the correct fix
 is genuinely local, fix it properly; if the fix would need a kernel, the permission model,
 tenancy or a released migration to change, report instead.
 

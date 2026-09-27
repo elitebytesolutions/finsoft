@@ -202,11 +202,36 @@ Organization → User → Chart of Accounts → Customer
 
 If the factory can build that pipeline correctly and repeatably, scaling to the other modules is a matter of volume. If it cannot, nothing else should be started.
 
+### 6.1 MVP slice — the first demo
+
+**Approved by the Product Owner, 2026-09-27** ([ADR-0024](adr/ADR-0024-operating-model.md)). The thinnest cut of the path above that a user can actually run:
+
+```
+Login → tenant membership → permission check → customer → service invoice
+      → payment → journal entry → customer ledger → trial balance → reversal → audit trail
+```
+
+| | |
+|---|---|
+| **Tenants** | Two demo tenants on staging; the journey is shown working in both, and neither sees the other's data |
+| **Sale** | A **service invoice** — non-stock. Stock, COGS and the inventory kernel come later |
+| **Tax** | **No sales tax in the MVP.** Tax arrives with Wave 9; no tax rule is guessed meanwhile |
+| **Chart of accounts** | A minimal standard COA of about 20 accounts |
+| **MFA** | **Deferred to pre-production.** The MVP runs on staging without it; production is blocked until MFA ships ([GAP-003](COMPLIANCE_GAPS.md)) |
+| **Hosting** | Staging over HTTPS on the temporary hostname `31-220-74-159.sslip.io`; the real domain later |
+| **Out** | P&L, stock, tax, banking, vendors — they follow the slice, in the wave order below. The slice meets §6's acceptance statement in everything except the P&L, which follows it |
+
+Delivered as four demoable increments, M1–M4 ([IMPLEMENTATION.md](IMPLEMENTATION.md) §13). The Product Owner accepts **workflows, not database details**: each increment is shown working, and M4 is the acceptance demo.
+
+The financial protections are not reduced for the demo. The journey posts through the kernel, balances, reverses by reversal entry, respects period locks, is idempotent, is audited, and is tenant-isolated by RLS.
+
+**Existing mock screens are prototypes, not delivered functionality.** A screen counts as delivered only when it runs against the real API on staging. No new mock-only business screens are built until the slice works.
+
 ---
 
 ## 7. Release scope by wave
 
-Delivery is incremental. We do not wait for all 100+ screens.
+Delivery is incremental. We do not wait for all 100+ screens. The MVP slice (§6.1) cuts through Waves 1 and 2 first; Waves 3–10 resume after its acceptance.
 
 | Wave | Outcome |
 |------|---------|

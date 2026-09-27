@@ -14,6 +14,8 @@ An ADR records a decision that the codebase is built on: what was decided, why, 
 
 3. **Superseding an ADR requires a new ADR, approved by the Architecture Guardian** — and by the Accounting Guardian as well where the decision touches accounting, costing, periods or money representation. The new ADR states what it supersedes and why the original trade-off no longer holds.
 
+   **Deciders are the Technical Council seats** ([ADR-0024](ADR-0024-operating-model.md)): Architecture, Accounting, Database/Security — the seats whose domains the decision touches. The **Product Owner** is a Decider only when the decision is escalated under ADR-0024 — it materially changes business scope, cost, compliance exposure or delivery date — and is then asked for two options with impact, not a mechanism. **Unchanged:** an ADR that amends [NON_NEGOTIABLES.md](../NON_NEGOTIABLES.md) needs the Product Owner, the Architecture Guardian and the Accounting Guardian. `Deciders:` lines on records accepted before ADR-0024 are historical and stay as written.
+
 4. **ADRs are immutable once Accepted.** They are superseded, never edited. A decision that is wrong in hindsight stays on the record with `Status: Superseded by ADR-00NN` so the reasoning trail survives. Correcting typos or adding links is permitted; changing the decision, the rationale or the consequences is not.
 
    **Whether an edit is a permitted correction is a CATEGORICAL test, not a question of who owns the file.** Ownership does not appear in this rule, and asking "is this mine or the other guardian's?" produces different answers for identical edits on the same day. Ask instead:
@@ -23,10 +25,25 @@ An ADR records a decision that the codebase is built on: what was decided, why, 
    | Did any normative text change — a decision, a condition, a rationale, a consequence? | If yes, **not permitted**. Supersede it. |
    | Did the sentence state something **false about the document's own contents**? | If yes, **permitted**. The record mis-described itself. |
    | Is the text merely redundant, or would you be tidying? | **Not permitted.** Correct is correct. Record the redundancy as debt instead. |
+   | Did the sentence describe a **shortfall in the implementation that this record itself booked as debt**, and has that debt since been delivered? | **Permitted**, in the narrow form below, and only in it. |
 
    A prose count that must agree with a numbered list — "four mechanical conditions accompany it" — is the commonest instance, and the fix is to **delete the count**, not correct it: the list is numbered, the reader can see how many there are, and each correction is a fresh chance to get it wrong. ADR-0021 failed that consistency obligation three times in one day before the count was removed.
 
    *This test was written on 2026-09-25 at the Database Guardian's direction, after the same categorical question was answered twice by ownership and once by category. Like the partial-supersession rule below, it is a record-keeping convention rather than an architecture decision.*
+
+   **The fourth arm: debt this record booked, since delivered.** An ADR that reports its own implementation as weaker than the decision requires — and books the shortfall in its own Compliance section — opens a loop that something later has to close. When the work lands, the record's description of the gap goes false about the **code** while every normative word in it stays true. None of the first three arms fits: nothing normative changed, the document did not mis-describe *itself*, and leaving it is not tidying — it is a LEVEL 1 record advertising a weakness that no longer exists, which the next implementer will design around. [ADR-0016](ADR-0016-structured-logging-and-observability-package.md) control 2, its debt D8 and the `scid_` format are the first instance. It will recur every time debt recorded in an ADR is paid.
+
+   The correction is permitted under **five** conditions, all of them:
+
+   1. **This record booked it as debt itself.** The trigger is not "the code changed". An ADR's Context and Consequences are full of dated statements about the world as it was, and those are the *evidence for the decision* — `ADR-0016:189`'s "both kernels are currently `export {}`" must never be updated when a kernel gains code, because the acceptance of the transitive observability edge rests on it being true then. What qualifies is only the closed loop the record opened about itself: the honest claim, its own debt entry, and the delivery of that entry.
+   2. **The delivery is named, with its mechanism.** Test, constraint, migration, by name — the same bar the Compliance section is held to. A bare "now closed" recreates the unenforced claim the debt entry existed to prevent.
+   3. **The gap is put in the past tense, not erased.** The corrected passage says what was weak, until when, and what closed it. A record that says where it was unreliable is more trustworthy than one that reads as having been right all along, and passages written to be honest about a weakness are the last place to introduce a flattering silence. This is the treatment ADR-0020's Alternatives entry got: the retracted reason was kept and named as retracted, not deleted.
+   4. **The debt entry is marked delivered and keeps its identifier — it is not deleted.** A list of not-built work containing built work is a false gate, the same defect as a stale "blocked meanwhile" notice, so the entry cannot simply stay as written. But the identifier is cited elsewhere (migrations, tests, wave registers name "D8"), and a register that shows a debt being paid is the evidence that it is maintained. So: dated `CLOSED`, under a heading that carries status. Deletion is correct only where the item was never debt in the first place.
+   5. **Line numbering is preserved.** Same reason as the supersession scope notice: `ADR-00NN:LL` citations are written against the as-accepted numbering. Correct **in place**; do not insert or delete lines above a cited one. If the correction will not fit in the lines it replaces, that is a signal the edit has grown past a correction.
+
+   The delivering agent proposes the correction and does not self-authorise it; the Architecture Guardian writes it. That is a matter of who holds the pen on a LEVEL 1 record, not of who owns the file — ownership still decides nothing about the **category**, which is what the table above rules on.
+
+   *The fourth arm was added on 2026-09-25 by the Architecture Guardian, hours after §4's first three arms, on the second gap found in the test in one day: it was written for a document mis-describing itself, and the repository kept producing other shapes. Like §4 and the partial-supersession rule it is a record-keeping convention rather than an architecture decision, and takes the same path — written here, not given an ADR number. The Product Owner may direct otherwise.*
 
    **One further edit is permitted: a conflict notice.** When a defect is found in an Accepted ADR and its replacement is drafted but not yet Accepted, a notice may be added **at the head** of the Accepted record naming the defective provisions, the ADR that would replace it, and what is blocked meanwhile. This is permitted because the alternative is worse in both directions: marking it `Superseded` by a `Proposed` record would leave the decision with no ADR in force, and recording the defect only in the replacement leaves it invisible to the implementer, who opens the Accepted file. The notice annotates status only — it must not touch the decision, the rationale or the consequences, and the body below it stays exactly as accepted. Where the replacement supersedes the record **entirely**, the notice is removed when the supersession lands and the `Status:` line becomes `Superseded by ADR-00NN`. Where it supersedes **only named provisions**, the notice is replaced rather than removed — the partial case below.
 
@@ -78,16 +95,17 @@ Proposed → Accepted → Superseded by ADR-00NN
 | [0010](ADR-0010-transactional-outbox.md) | Transactional outbox for all external side effects | Superseded by [0019](ADR-0019-transactional-outbox.md) | Emails, PDFs, FBR pushes, webhooks and cache invalidation are rows written in the posting transaction and dispatched afterwards. |
 | [0011](ADR-0011-money-representation.md) | Money as `numeric` with decimal arithmetic | Accepted | `numeric(19,4)` and `numeric(19,6)`, strings in JSON, a decimal library in TypeScript, half-up rounding once, PKR base. |
 | [0012](ADR-0012-fiscal-period-locking.md) | Fiscal period locking with no system bypass | Accepted | `OPEN → CLOSED → LOCKED`, enforced at the posting engine and the database, with no exemption for jobs, imports or scripts. |
-| [0013](ADR-0013-kysely-and-sql-migrations.md) | Kysely as the query builder, with hand-written SQL migrations | Proposed | A typed query builder with no schema opinion; migrations stay reviewable SQL, so the database keeps ownership of the compliance surface. |
-| [0014](ADR-0014-decimal-js.md) | decimal.js as the single decimal implementation | Proposed | Closes the library choice ADR-0011 deferred; a frozen cloned constructor, half-up away from zero, matching PostgreSQL. |
+| [0013](ADR-0013-kysely-and-sql-migrations.md) | Kysely as the query builder, with hand-written SQL migrations | Accepted | A typed query builder with no schema opinion; migrations stay reviewable SQL, so the database keeps ownership of the compliance surface. |
+| [0014](ADR-0014-decimal-js.md) | decimal.js as the single decimal implementation | Accepted | Closes the library choice ADR-0011 deferred; a frozen cloned constructor, half-up away from zero, matching PostgreSQL. |
 | [0015](ADR-0015-inventory-valuation-is-carried-value.md) | Inventory valuation is the carried value, not a recomputation | Proposed | WOULD supersede ADR-0007 once accepted; the two statuses change together. The subledger valuation is the sum of stored movement amounts, never quantity x average; the one residual case posts to the rounding account. |
-| [0016](ADR-0016-structured-logging-and-observability-package.md) | Structured logging in a dedicated observability package | Proposed | A tenth package beneath everything that logs; pino to stdout as JSON; redaction at one choke point; `sessionCorrelationId` instead of the session id; operational logs are not the audit trail. |
+| [0016](ADR-0016-structured-logging-and-observability-package.md) | Structured logging in a dedicated observability package | Accepted | A tenth package beneath everything that logs; pino to stdout as JSON; redaction at one choke point; `sessionCorrelationId` instead of the session id; operational logs are not the audit trail. |
 | [0018](ADR-0018-stock-state-scopes-and-locking.md) | Stock state scopes, lock targets and lock ordering | Proposed | Supersedes ADR-0008 on the balance row shape, the lock protocol and the negative-stock policy. Quantity per tenant/product/location/batch, value per costing scope; coarse-before-fine. **Wave 5 entry gate.** |
+| [0019](ADR-0019-transactional-outbox.md) | Transactional outbox for all external side effects | Accepted | Supersedes [0010](ADR-0010-transactional-outbox.md). Same decision, four corrected claims: `correlation_id` is `uuid`; the dispatch index leads with `tenant_id`; **replay is a new row, not a reset**; and consumer deduplication keys on `(tenant_id, topic, effect_key)`, never `outbox.id`. Signed; `004_create_outbox.sql` is released. |
 | [0020](ADR-0020-audit-hash-chain-canonicalisation.md) | Audit hash chain canonicalisation | Accepted | Defines the exact bytes hashed for rule 9's tamper-evident chain: RFC 8785, every value a string, a versioned format, and the ordering and locking that stop the chain forking under concurrency. Amends `ARCHITECTURE.md:302` on advisory-lock keys. **Migration 007 carries three conditions from the Database Guardian's signature.** |
-| [0019](ADR-0019-transactional-outbox.md) | Transactional outbox for all external side effects | Accepted | Supersedes [0010](ADR-0010-transactional-outbox.md). Same decision, four corrected claims: `correlation_id` is `uuid`; the dispatch index leads with `tenant_id`; **replay is a new row, not a reset**; and consumer deduplication keys on `(tenant_id, topic, effect_key)`, never `outbox.id`. **Blocks `004_create_outbox.sql`; unsigned.** |
 | [0017](ADR-0017-stock-availability-enforced-at-posting.md) | Stock availability enforced at posting; negative stock prevented, not costed | Proposed | Availability is checked inside the posting transaction under the ADR-0018 locks, not before saving. Negative balances are an exception state with a monitored report, not a costing mode. |
 | [0021](ADR-0021-globally-unique-indexes-on-tenant-owned-tables.md) | When a unique index on a tenant-owned table may omit `tenant_id` | Accepted | Supersedes [0003](ADR-0003-shared-database-multi-tenancy.md) bullets 28 and 110 only. Surrogate primary keys exempt at LEVEL 1; every other global unique index needs a pre-tenant lookup plus the six conditions in §2, one of them a review gate. Unique index enforcement is not subject to RLS. **Unblocks `005_create_sessions.sql`**; signed by the Database Guardian and the Product Owner, 2026-09-25. |
 | [0022](ADR-0022-no-grace-window-on-refresh-rotation.md) | Refresh rotation has no grace window | Accepted | Supersedes [0009](ADR-0009-jwt-access-and-rotating-refresh-tokens.md) lines 83, 138 and 162 only. The window is un-implementable under hash-at-rest and accepts a thief's replay; the client coordinates one in-flight refresh and the loser retries explicitly. **Unblocks `005_create_sessions.sql` and the refresh endpoint**; signed by the Product Owner, 2026-09-25, Database Guardian no objection. |
+| [0024](ADR-0024-operating-model.md) | Operating model — risk tiers, a Technical Council, demo-first MVP | Accepted | The Product Owner owns scope, priority, budget, compliance risk and release; a Technical Council of guardian seats owns every implementation decision, closing within two working days. Risk tiers T0–T3 replace the single gate; a one-page delivery brief replaces the task contract; the MVP slice M1–M4 comes before Waves 3–10. Supersedes IMPLEMENTATION.md §5–§10's process and earlier `Deciders:` lines by reference; no protection changes. Accepted 2026-09-27 (Product Owner, Architecture seat). |
 
 ---
 
@@ -99,25 +117,24 @@ Proposed → Accepted → Superseded by ADR-00NN
 
 ## Writing a new ADR
 
-Copy the shape used by the records here:
+Use the **short format** — about two pages. [ADR-0024](ADR-0024-operating-model.md) is the first example.
 
 ```
 # ADR-000N: Title
 
 **Status:** Proposed | Accepted | Superseded by ADR-00NN
 **Date:** YYYY-MM-DD
-**Deciders:** Product Owner, Architecture Guardian[, Accounting Guardian]
+**Deciders:** the Council seats whose domains it touches (Product Owner only if escalated under ADR-0024)
 **Authority:** LEVEL 1 — reversing this requires a superseding ADR
 
-## Context
-## Decision
-## Consequences
-### Positive
-### Negative / accepted costs
-## Alternatives considered
-## Compliance
-## Related
+## Context        what forces the decision, in a few paragraphs
+## Decision       numbered, normative statements
+## Consequences   positive; negative / accepted costs
+## Compliance     the mechanism that makes each statement true
+## Signatures     one row per Council seat named in Deciders, with verdict and date
 ```
+
+Alternatives considered go in Context when they matter; a long record is not a more careful one. The status flips to `Accepted` when every seat in `Deciders` has signed.
 
 The **Compliance** section is not optional and is not prose. It names the test, constraint, trigger, CI check or lint rule that makes the decision mechanically true. A decision nothing enforces is a preference, and preferences do not get ADR numbers.
 
@@ -128,4 +145,5 @@ The **Compliance** section is not optional and is not prose. It names the test, 
 - [../NON_NEGOTIABLES.md](../NON_NEGOTIABLES.md) — LEVEL 0 invariants
 - [../ARCHITECTURE.md](../ARCHITECTURE.md) — system structure, module boundaries, dependency rules
 - [../PRD.md](../PRD.md) — product scope
-- [../IMPLEMENTATION.md](../IMPLEMENTATION.md) — waves, task contracts, CI gates
+- [../IMPLEMENTATION.md](../IMPLEMENTATION.md) — waves, delivery briefs, CI gates by tier
+- [../OPERATING_MODEL.md](../OPERATING_MODEL.md) — roles, the Technical Council, risk tiers

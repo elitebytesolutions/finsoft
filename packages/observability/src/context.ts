@@ -48,22 +48,38 @@ export type SessionCorrelationId = string & { readonly [sessionCorrelationBrand]
  * credential rather than an independent label.
  */
 export function newSessionCorrelationId(): SessionCorrelationId {
-  return randomUUID() as SessionCorrelationId
+  return `scid_${randomUUID().replaceAll('-', '')}` as SessionCorrelationId
 }
+
+/** The one format this module mints and the only one it will accept. */
+const SESSION_CORRELATION_ID = /^scid_[0-9a-f]{32}$/
 
 /**
  * Asserts that a stored value is a correlation id.
  *
  * The only sanctioned way to get a `SessionCorrelationId` from persistence.
- * It is a UUID by construction, so anything else is a sign that a session id
- * has been routed here by mistake — which throws rather than logs.
+ *
+ * THE `scid_` PREFIX IS WHAT MAKES THIS GUARD MEAN ANYTHING, and closing
+ * ADR-0016 debt D8 is what it is for. An earlier version validated UUID
+ * *shape* — but a raw session id is also a UUID, so the guard could not tell
+ * a correlation id from the credential it exists to replace, and would have
+ * accepted the session id routed here by mistake. That is the one error it
+ * was written to catch. A prefix this module never mints for anything else is
+ * a value it can refuse.
+ *
+ * Migration 005 already ships the storage half:
+ * `sessions.session_correlation_id` carries
+ * `DEFAULT ('scid_' || replace(gen_random_uuid()::text, '-', ''))`, a
+ * `sessions_scid_shape` CHECK, and no INSERT grant on the column — so
+ * `finsoft_app` cannot name it and the DEFAULT is the only path to a value.
+ * This function is the read half of that same change.
  */
 export function asSessionCorrelationId(value: string): SessionCorrelationId {
-  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  if (!UUID.test(value)) {
+  if (!SESSION_CORRELATION_ID.test(value)) {
     throw new Error(
-      'sessionCorrelationId must be a UUID minted by newSessionCorrelationId(). ' +
-        'A raw session id must never be used here.',
+      'sessionCorrelationId must match scid_<32 hex> and be minted by ' +
+        'newSessionCorrelationId(). A raw session id must never be used here — ' +
+        'a bare UUID is exactly what this guard exists to refuse.',
     )
   }
   return value as SessionCorrelationId
@@ -87,8 +103,37 @@ export function newRequestId(): string {
   return randomUUID()
 }
 
+/*
+ * A `sessionCorrelationId` may be set ONLY alongside a `tenantId`. ADR-0021.
+ *
+ * `sessions.session_correlation_id` is unique per TENANT, not globally —
+ * `UNIQUE (tenant_id, session_correlation_id)`. An earlier draft of migration
+ * 005 made it globally unique, arguing that cross-tenant log aggregation could
+ * otherwise join two unrelated traces. Both guardians refused it: the join key
+ * in the aggregated store is already the PAIR, because this context carries
+ * both. The global index bought the difference between a 2^-128 collision and
+ * a failed login, and cost a cross-tenant existence oracle — unique index
+ * enforcement is not subject to RLS.
+ *
+ * That argument is only true if the pairing actually holds. `tenantId` is
+ * optional on this interface, so nothing but this check stops a correlation id
+ * being emitted alone — at which point the aggregated store has a key that is
+ * unique per tenant and no tenant to qualify it with, and the refused design
+ * becomes retroactively necessary.
+ */
+function assertPaired(context: CorrelationContext): void {
+  if (context.sessionCorrelationId !== undefined && context.tenantId === undefined) {
+    throw new Error(
+      'sessionCorrelationId may only be set alongside tenantId: it is unique ' +
+        'PER TENANT (sessions.session_correlation_id), so the log join key is ' +
+        'the pair. Emitting it alone makes the key ambiguous across tenants.',
+    )
+  }
+}
+
 /** Runs `fn` with `context` attached to every log line inside it. */
 export function withCorrelation<T>(context: CorrelationContext, fn: () => T): T {
+  assertPaired(context)
   return storage.run(context, fn)
 }
 
@@ -109,5 +154,10 @@ export function extendCorrelation<T>(fields: Partial<CorrelationContext>, fn: ()
   if (!current) {
     throw new Error('extendCorrelation called outside a correlation scope')
   }
-  return storage.run({ ...current, ...fields }, fn)
+  const next = { ...current, ...fields }
+  // Checked on the MERGED context, not on `fields`: authentication completes by
+  // adding both at once, and a later call may add a correlation id to a context
+  // that already carries a tenant.
+  assertPaired(next)
+  return storage.run(next, fn)
 }

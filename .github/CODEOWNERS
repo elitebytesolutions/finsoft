@@ -1,6 +1,13 @@
 # CODEOWNERS — FinSoft
 #
-# Encodes the required-reviewers table at docs/IMPLEMENTATION.md:273-285.
+# Encodes the reviewers-by-tier table in docs/IMPLEMENTATION.md §10 and
+# docs/OPERATING_MODEL.md §4 (ADR-0024). The tier is the highest one a PR
+# touches; the comment above each block names its tier and Council seat.
+#
+#   T0  docs, copy, prototype UI        one peer agent
+#   T1  normal UI/API behaviour         one peer agent (packages/ui: design-system)
+#   T2  auth, tenancy, migrations, CI   Database/Security seat or Architecture seat
+#   T3  posting, money, stock, tax      Accounting seat (+ Architecture for kernels)
 #
 # ---------------------------------------------------------------------------
 # READ THIS BEFORE TRUSTING IT AS A CONTROL
@@ -9,9 +16,9 @@
 # not a shortcut — it is an honest statement of what this file can currently
 # enforce, which is *routing and visibility*, not independent approval.
 #
-# The reviewer names in IMPLEMENTATION.md — Architecture Guardian, Accounting
-# Guardian, Database Guardian and the rest — are agent roles, not GitHub
-# accounts. An agent has no GitHub identity, so it cannot be a code owner, and
+# The reviewer names in IMPLEMENTATION.md — the Architecture, Accounting and
+# Database/Security seats of the Technical Council, and the rest — are agent
+# roles, not GitHub accounts. An agent has no GitHub identity, so it cannot be a code owner, and
 # a guardian review is performed in-session and recorded in the PR rather than
 # as a GitHub approval.
 #
@@ -50,46 +57,49 @@
 # Default owner for everything not matched below.
 *                                   @elitebytesolutions
 
-# --- The financial kernels: Architecture + Accounting + QA -------------------
+# --- T3 · The financial kernels: Accounting + Architecture seats ------------
 /packages/accounting-kernel/        @elitebytesolutions
 /packages/inventory-kernel/         @elitebytesolutions
 
-# --- Schema: Database Guardian (+ Accounting if financial tables) -----------
+# --- T2 · Schema: Database/Security seat (+ Accounting if financial tables) -
 # ADR-0013: applied migrations are immutable. A diff that touches an existing
 # file here is a defect, not a change, and CI fails it independently.
 /database/migrations/               @elitebytesolutions
 /database/tests/                    @elitebytesolutions
 
-# --- Identity and authorisation: Security + Architecture --------------------
+# --- T2 · Identity and authorisation: Database/Security + Architecture seats
 /packages/auth/                     @elitebytesolutions
 /packages/permissions/              @elitebytesolutions
 
-# --- Money: Accounting ------------------------------------------------------
+# --- T3 · Money: Accounting seat -------------------------------------------
 # ADR-0011 and ADR-0014 live here. A change to rounding, precision or the
 # decimal configuration changes every figure the system will ever produce.
 /packages/validation/               @elitebytesolutions
 
-# --- Connection ownership and tenancy: Database + Architecture --------------
+# --- T2 · Connection ownership and tenancy: Database/Security + Architecture
 /packages/database/                 @elitebytesolutions
 
-# --- Design system: Design System Agent -------------------------------------
+# --- T1 · Design system: design-system (delegated owner) -------------------
 /packages/ui/                       @elitebytesolutions
 
-# --- Infrastructure and CI: DevOps + Security -------------------------------
+# --- T2 · Infrastructure and CI: devops-guardian + Database/Security seat --
 /infrastructure/                    @elitebytesolutions
 /.github/                           @elitebytesolutions
 /tools/                             @elitebytesolutions
 
-# --- The constitution -------------------------------------------------------
-# LEVEL 0 and LEVEL 1. NON_NEGOTIABLES cannot be changed by any agent, ADR,
-# ticket or deadline; an accepted ADR is superseded, never edited.
+# --- The constitution (T0 by path; the Architecture seat reviews any change) -
+# LEVEL 0 and LEVEL 1. NON_NEGOTIABLES changes only by an ADR signed by the
+# Product Owner, Architecture and Accounting; an accepted ADR is superseded,
+# never edited.
 /docs/NON_NEGOTIABLES.md            @elitebytesolutions
 /docs/adr/                          @elitebytesolutions
 /docs/ARCHITECTURE.md               @elitebytesolutions
+/docs/OPERATING_MODEL.md            @elitebytesolutions
 /AGENTS.md                          @elitebytesolutions
 /CLAUDE.md                          @elitebytesolutions
 
-# --- Invariants and golden scenarios ---------------------------------------
+# --- T3 · Invariants and golden scenarios: Accounting seat -----------------
 # "Implementations may change; the expected numbers may not."
 /tests/accounting/                  @elitebytesolutions
+# T2 · Security suites: Database/Security seat
 /tests/security/                    @elitebytesolutions

@@ -92,6 +92,6 @@ npm run parity      # if you touched anything a prototype screen also renders
 
 Plus: keyboard reachable, focus visible, labels on inputs, `aria-label` on any icon that
 carries meaning alone, works at the responsive breakpoints in `07-responsive.md`, and you
-stayed inside your task contract's ALLOWED paths.
+stayed inside your delivery brief's ALLOWED paths.
 
 Report as `DONE · FILES · TESTS · DECISIONS · BLOCKED · OBSERVED`.

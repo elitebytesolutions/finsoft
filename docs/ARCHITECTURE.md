@@ -276,7 +276,7 @@ CREATE POLICY tenant_isolation ON journal_entries
   WITH CHECK (tenant_id = current_setting('app.tenant_id')::uuid);
 ```
 
-`app.tenant_id` is set per transaction by the connection wrapper from the tenant context — never from user-supplied input. RLS defaults to deny when enabled with no applicable policy, which is the behaviour we want if someone forgets a policy on a new table. A schema test asserts that *every* table carrying `tenant_id` has RLS enabled and forced.
+`app.tenant_id` is set per transaction by the connection wrapper from the tenant context — never from user-supplied input. **One carve-out, for authentication only: [ADR-0023](adr/ADR-0023-pre-tenant-authentication-reads.md) §1.** `/auth/login` has no tenant context yet — establishing one is what it is for — so it resolves a tenant code from the request against the *global* `tenants` table and sets `app.tenant_id` from the result. That is permitted **only** at the two unauthenticated endpoints that MINT a claim, never at one that consumes it, and only through the single branded resolver ADR-0023 §3 confines to `packages/database`. A wrong code cannot open a tenant the credential does not open: it yields a miss, and a miss is the same 401 as a wrong password. RLS defaults to deny when enabled with no applicable policy, which is the behaviour we want if someone forgets a policy on a new table. A schema test asserts that *every* table carrying `tenant_id` has RLS enabled and forced.
 
 Tenant customisation (custom fields, document layouts, posting-rule variants, numbering formats) is **configuration**, stored per tenant. It is never a forked code path.
 

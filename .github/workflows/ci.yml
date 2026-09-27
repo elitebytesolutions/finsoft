@@ -1,6 +1,6 @@
 name: CI
 
-# Every push to every branch, plus the pull request.
+# Every push to every branch, plus the pull request, plus a nightly full run.
 #
 # An earlier version ran only on `pull_request` and on pushes to main and
 # develop, to avoid duplicate runs. That left the case this project actually
@@ -10,6 +10,14 @@ name: CI
 #
 # The pull_request trigger stays because it tests the MERGE result, which a
 # branch push cannot — a merge can break what neither side broke alone.
+#
+# OPS-002 adds risk-tiered execution (see docs/workflows/ci-tiers.md): every
+# push still runs `static`, `secrets`, `unit`, `audit-gate` and the
+# FinancialInvariantSuite (NON_NEGOTIABLES.md §3, LEVEL 0 — no tier waives
+# it), but the expensive jobs — the full database gate, the financial gate,
+# end-to-end, CodeQL, and publishing images — run only when the changed paths
+# warrant them, or unconditionally on develop, a release branch, a manual
+# dispatch, or the nightly schedule below ("full").
 on:
   push:
     branches: ['**']
@@ -19,23 +27,83 @@ on:
   # and never merge, so the automatic develop path alone could never be tested
   # by the people who build it.
   workflow_dispatch:
+  # A full run every night, regardless of what did or did not change that
+  # day — the safety net under the tiering. 21:00 UTC = 02:00 PKT.
+  schedule:
+    - cron: '0 21 * * *'
 
 # Least privilege. No job here writes to the repository, publishes a package
-# or comments on a PR, so nothing needs more than read.
+# or comments on a PR, so nothing needs more than read. `images`, `codeql`
+# and `deploy-staging` override this for exactly what they need.
 permissions:
   contents: read
 
 # A superseded run is wasted minutes and a confusing status. The last push
-# to a ref is the one whose result matters.
+# to a ref is the one whose result matters — EXCEPT on develop and a release
+# branch, where a run in flight may be a deploy: cancelling it mid-deploy is
+# worse than letting two finish in order, so those refs never cancel.
+#
 # Keyed on the HEAD BRANCH, not the ref, so the push run and the pull-request
 # run for the same branch share a group and the newer cancels the older.
 # Keying on github.ref would put them in different groups (refs/heads/x versus
 # refs/pull/N/merge) and run both.
 concurrency:
   group: ci-${{ github.event.pull_request.head.ref || github.ref_name }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/develop' && !startsWith(github.ref, 'refs/heads/release/') }}
 
 jobs:
+  # ------------------------------------------------------------------ #
+  # Decides what the rest of this run needs to do. tools/ci/classify.mjs
+  # is the single source of truth — the same tool `npm run check` and
+  # .githooks/pre-push use locally, so "what CI will require" is never a
+  # surprise. See docs/workflows/ci-tiers.md.
+  # ------------------------------------------------------------------ #
+  classify:
+    name: classify (risk tier)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tier: ${{ steps.classify.outputs.tier }}
+      full: ${{ steps.classify.outputs.full }}
+      web_changed: ${{ steps.classify.outputs.web_changed }}
+      api_changed: ${{ steps.classify.outputs.api_changed }}
+      worker_changed: ${{ steps.classify.outputs.worker_changed }}
+      run_invariants: ${{ steps.classify.outputs.run_invariants }}
+      run_db_suites: ${{ steps.classify.outputs.run_db_suites }}
+      run_financial: ${{ steps.classify.outputs.run_financial }}
+      run_e2e: ${{ steps.classify.outputs.run_e2e }}
+      run_web_preview: ${{ steps.classify.outputs.run_web_preview }}
+      run_codeql: ${{ steps.classify.outputs.run_codeql }}
+      images_json: ${{ steps.classify.outputs.images_json }}
+      suites_json: ${{ steps.classify.outputs.suites_json }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # classify.mjs diffs against the merge-base with origin/develop, so
+          # it needs history — and, on a feature-branch push, a branch that
+          # is not the one checked out. actions/checkout's own fetch only
+          # guarantees the checked-out ref; the explicit fetch below is what
+          # makes `origin/develop` resolvable regardless of event type.
+          fetch-depth: 0
+
+      - name: fetch develop for merge-base comparison
+        run: git fetch origin develop --quiet
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: classify
+        id: classify
+        env:
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+        run: node tools/ci/classify.mjs --github-output
+
   # ------------------------------------------------------------------ #
   # Everything that needs no database. Runs first and fails fast: a lint
   # error should not wait on a PostgreSQL container starting.
@@ -85,6 +153,12 @@ jobs:
       - name: git hooks
         run: npm run hooks:verify
 
+      # OPS-002's own tooling. The classifier decides what the rest of this
+      # workflow runs — if IT is wrong, every gate downstream is wrong too,
+      # silently. Cheap (no Docker) and belongs with the rest of static.
+      - name: ci tooling tests (tools/ci)
+        run: npm run test:ci-tools
+
   # ------------------------------------------------------------------ #
   # Secret scanning. NON_NEGOTIABLES rule 20.
   #
@@ -95,7 +169,8 @@ jobs:
   #
   # NO continue-on-error, and none may be added. A finding fails the run,
   # and so does a scanner that cannot complete — a broken scanner must
-  # never be indistinguishable from a clean repository.
+  # never be indistinguishable from a clean repository. Runs on every tier;
+  # nothing here is scheduled by risk.
   # ------------------------------------------------------------------ #
   secrets:
     name: secret scan
@@ -158,12 +233,91 @@ jobs:
           git checkout -- packages/observability/src/redact.test.ts
 
   # ------------------------------------------------------------------ #
-  # The real stack. Not a mocked database: the RLS and role tests assert
-  # properties only PostgreSQL can demonstrate, and a mock would agree
-  # with whatever it was told.
+  # Every workspace unit test, with NO database. OPS-002 item 3 moved the
+  # one test that needed Postgres (apps/api's app.spec.ts) to
+  # tests/integration/api-app.spec.ts, so this is now genuinely Docker-free
+  # — the same property `npm run check` / .githooks/pre-push depend on
+  # locally. Always runs, on every tier.
   # ------------------------------------------------------------------ #
-  test:
-    name: tests
+  unit:
+    name: unit tests (no database)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: workspace unit tests
+        run: npm run test --workspaces --if-present
+
+  # ------------------------------------------------------------------ #
+  # NON_NEGOTIABLES.md §3 — LEVEL 0:
+  #   "A dedicated test suite that runs on every PR, not nightly. If it
+  #   fails, nothing merges — no exceptions, no --skip, no 'flaky, re-run'."
+  #
+  # A risk tier is a scheduling decision; this is not scheduled by risk. It
+  # runs on a one-line docs fix exactly as it runs on a posting-engine
+  # rewrite, and it is not gated by `classify`. The REST of the financial
+  # gate (full test:accounting, reconciliation, golden scenarios) is scoped
+  # by tier in the `financial` job below — that scoping is legitimate
+  # because those suites are not the invariant suite this rule names.
+  # ------------------------------------------------------------------ #
+  invariants:
+    name: FinancialInvariantSuite (every PR — LEVEL 0)
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: environment
+        run: cp .env.example .env
+
+      - name: data plane
+        run: docker compose up -d --wait
+
+      - name: migrate
+        run: npm run db:migrate
+
+      - name: migrate test cluster
+        run: npm run db:migrate:test
+
+      - name: FinancialInvariantSuite
+        run: npm run test:financial-invariant-suite
+
+      - name: compose logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail 200
+
+      - name: tear down
+        if: always()
+        run: docker compose down -v
+
+  # ------------------------------------------------------------------ #
+  # The full database gate: schema, security (tenant isolation),
+  # integration (includes the moved apps/api app.spec.ts and the worker's
+  # outbox/Redis suite), performance, and the schema-drift check. T2/T3 or
+  # a full run — auth, permissions, tenancy, migrations and infra changes
+  # are exactly the changes these suites exist to catch.
+  # ------------------------------------------------------------------ #
+  db-suites:
+    name: database suites
+    needs: [classify]
+    if: needs.classify.outputs.run_db_suites == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -177,33 +331,17 @@ jobs:
 
       - run: npm ci
 
-      # `.env.example` verbatim, which is deliberate twice over.
-      #
-      # Its passwords are named `local-dev-only-*` and this cluster is
-      # ephemeral, bound to the runner and destroyed with it — it is never
-      # network-reachable, so there is no secret here to rotate.
-      #
-      # And using the example unmodified means CI exercises the exact path a
-      # developer follows. If `.env.example` drifts and no longer produces a
-      # working system, this job is where that is discovered, rather than by
-      # the next person who clones the repository.
       - name: environment
         run: cp .env.example .env
 
       # INFRASTRUCTURE.md:257 — "docker compose down -v && docker compose up
-      # must produce a working system from scratch; if it does not, that is a
-      # Wave 0 bug." A CI runner is always from scratch, so this step IS that
-      # criterion, run on every pull request.
-      #
-      # --wait blocks until every healthcheck passes, so a test never races a
-      # database that is still starting.
+      # must produce a working system from scratch." --wait blocks until
+      # every healthcheck passes, so a test never races a starting database.
       - name: data plane
         run: docker compose up -d --wait
 
-      # Roles, privileges, encoding, locale provider and isolation level,
-      # asserted against the running cluster. This is what proves RLS is a
-      # control rather than decoration — finsoft_app must have neither
-      # BYPASSRLS nor SUPERUSER.
+      # Roles, privileges, encoding, locale provider and isolation level.
+      # finsoft_app must have neither BYPASSRLS nor SUPERUSER.
       - name: data plane assertions
         run: npm run db:verify
 
@@ -213,16 +351,8 @@ jobs:
       - name: migrate test cluster
         run: npm run db:migrate:test
 
-      # ADR-0013 deferral D3, closed after it produced a live instance.
-      #
-      # Repointing a migration's citations changed two COMMENT ON strings;
-      # the committed generated/schema.d.ts kept the old text and typecheck,
-      # lint, depcruise, the migration ledger and 617 tests all stayed green.
-      # It was caught by a reviewer reading the file.
-      #
-      # assertGeneratedTypesAreExact catches a MALFORMED committed schema. It
-      # cannot catch a STALE one, because staleness is a fact about the
-      # database, not about the file. So the file is regenerated against the
+      # assertGeneratedTypesAreExact catches a MALFORMED committed schema; it
+      # cannot catch a STALE one, so the file is regenerated against the
       # freshly-migrated database and any diff fails the run.
       - name: schema types match the migrated database
         run: |
@@ -233,18 +363,112 @@ jobs:
             exit 1
           fi
 
-      # Per-workspace suites, then the gate: smoke, schema, security,
-      # accounting. `npm test` is the whole thing — running vitest directly
-      # at the root is NOT equivalent, because it globs build output and the
-      # prototype directory that the workspace configs exclude.
-      - name: test
-        run: npm test
+      - name: schema suite
+        run: npm run test:schema
 
-      # A browser against the real API, started from dist — the same artefact
-      # shape the container runs. Kept in this job rather than its own so it
-      # reuses the data plane already up: the readiness route it exercises
-      # reaches PostgreSQL, so a separate job would have to stand the whole
-      # stack up again to assert the same thing.
+      - name: security suite (tenant isolation)
+        run: npm run test:security
+
+      - name: integration suite
+        run: npm run test:integration
+
+      - name: performance suite
+        run: npm run test:performance
+
+      - name: compose logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail 200
+
+      - name: tear down
+        if: always()
+        run: docker compose down -v
+
+  # ------------------------------------------------------------------ #
+  # The rest of the financial gate, beyond the always-on invariant suite:
+  # full test:accounting (golden scenarios + cross-engine rounding, which
+  # re-runs the invariant suite alongside them — harmless duplication on a
+  # tier that specifically touches posting/money/inventory/tax/periods) and
+  # test:reconciliation. T3 or a full run.
+  # ------------------------------------------------------------------ #
+  financial:
+    name: financial gate
+    needs: [classify]
+    if: needs.classify.outputs.run_financial == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: environment
+        run: cp .env.example .env
+
+      - name: data plane
+        run: docker compose up -d --wait
+
+      - name: migrate
+        run: npm run db:migrate
+
+      - name: migrate test cluster
+        run: npm run db:migrate:test
+
+      - name: accounting suite
+        run: npm run test:accounting
+
+      - name: reconciliation suite
+        run: npm run test:reconciliation
+
+      - name: compose logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail 200
+
+      - name: tear down
+        if: always()
+        run: docker compose down -v
+
+  # ------------------------------------------------------------------ #
+  # Browser-to-API journeys. T1+ (web, api or worker actually changed) or
+  # a full run — not every T2 change touches app code (a migration alone
+  # does not), so this stays keyed on app-code change rather than tier.
+  # ------------------------------------------------------------------ #
+  e2e:
+    name: e2e
+    needs: [classify]
+    if: needs.classify.outputs.run_e2e == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: environment
+        run: cp .env.example .env
+
+      - name: data plane
+        run: docker compose up -d --wait
+
+      - name: data plane assertions
+        run: npm run db:verify
+
+      - name: migrate
+        run: npm run db:migrate
+
+      # A browser against the real API, started from dist — the same
+      # artefact shape the container runs.
       - name: install browser
         run: npx playwright install --with-deps chromium
 
@@ -271,20 +495,83 @@ jobs:
         run: docker compose down -v
 
   # ------------------------------------------------------------------ #
-  # The deployable artifacts.
+  # A fast, no-Docker preview build of apps/web, for a change classified
+  # T0 (docs/mocks/prototype) that also touches apps/web/src/mocks/** —
+  # or, more generally, any apps/web change on a run that is not already
+  # getting the heavier e2e treatment or a full run. Artifact only.
+  # ------------------------------------------------------------------ #
+  web-preview:
+    name: web preview build
+    needs: [classify]
+    if: needs.classify.outputs.run_web_preview == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: build
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: npm run build --workspace @finsoft/web
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-preview-build
+          path: apps/web/.next
+          retention-days: 3
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------ #
+  # CodeQL. IMPLEMENTATION.md §10 lists SAST as required; nothing
+  # implemented it until now. T2/T3 or a full run — auth, permissions,
+  # tenancy, migrations, infra and the financial kernels are exactly the
+  # surface a static analyser earns its runtime on.
+  # ------------------------------------------------------------------ #
+  codeql:
+    name: CodeQL
+    needs: [classify]
+    if: needs.classify.outputs.run_codeql == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+
+      - uses: github/codeql-action/analyze@v3
+
+  # ------------------------------------------------------------------ #
+  # The deployable artefacts. "One artefact" (INFRASTRUCTURE.md): the image
+  # digest that passed staging is what runs in production — never rebuilt.
   #
-  # Added because nothing was building them. `npm test` and `npm run
-  # typecheck` both passed while `next build` failed on six pages for a
-  # real defect (useSearchParams outside a Suspense boundary) — a broken
-  # production build that no gate looked at, because no gate built.
-  #
-  # Builds all three images and does NOT push. Pushing needs a registry
-  # decision and somewhere to deploy to, neither of which exists yet; this
-  # proves the images can be produced, which is the part that can be true
-  # today.
+  # On a PR or feature push: build only the images whose paths changed, and
+  # never push. On develop, a release branch, workflow_dispatch or the
+  # nightly schedule (classify's "full"): every image ends up tagged
+  # :${{ github.sha }} — a changed image is built and pushed fresh; an
+  # UNCHANGED one has its existing :develop digest retagged to :${{ sha }}
+  # with `docker buildx imagetools create` (no rebuild, so it stays the
+  # exact bytes that already passed staging), falling back to a full
+  # build+push only if :develop does not exist yet (first run). This is
+  # what keeps infrastructure/staging/deploy.sh — which pulls :$SHA for all
+  # three images unconditionally — working without changes.
   # ------------------------------------------------------------------ #
   images:
-    name: container images
+    name: container images (${{ matrix.image }})
+    needs: [classify]
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
@@ -294,8 +581,6 @@ jobs:
       packages: write
 
     strategy:
-      # One broken image must not hide the state of the other two. web
-      # currently fails (FND-017); api and worker still publish.
       fail-fast: false
       matrix:
         image: [api, worker, web]
@@ -314,52 +599,97 @@ jobs:
           # anywhere, and this one expires when the job ends.
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: build and push ${{ matrix.image }}
+      - name: does this image need building?
+        id: decide
+        run: |
+          echo "changed=${{ contains(fromJSON(needs.classify.outputs.images_json), matrix.image) }}" >> "$GITHUB_OUTPUT"
+          echo "full=${{ needs.classify.outputs.full }}" >> "$GITHUB_OUTPUT"
+
+      - name: compute tags
+        id: tags
+        if: steps.decide.outputs.changed == 'true'
+        run: |
+          BASE="ghcr.io/${{ github.repository }}-${{ matrix.image }}"
+          SHA="${{ github.sha }}"
+          {
+            echo 'tags<<TAGS_EOF'
+            echo "$BASE:$SHA"
+            if [ "${{ steps.decide.outputs.full }}" = "true" ]; then
+              echo "$BASE:develop"
+            fi
+            echo 'TAGS_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      # Runs whenever this image's own paths changed — on a PR that means
+      # "prove it still builds" (push: false); on a full run it also
+      # publishes both the immutable :sha tag and the moving :develop tag.
+      - name: build ${{ matrix.image }}
+        if: steps.decide.outputs.changed == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
           file: infrastructure/docker/Dockerfile.${{ matrix.image }}
-          push: true
-          tags: ghcr.io/${{ github.repository }}-${{ matrix.image }}:${{ github.sha }}
+          push: ${{ steps.decide.outputs.full == 'true' }}
+          tags: ${{ steps.tags.outputs.tags }}
           # `org.opencontainers.image.source` is what LINKS the package to
           # this repository, and the link is what makes a workflow's
-          # GITHUB_TOKEN able to read it.
-          #
-          # Without it the deploy failed with "denied" after a successful
-          # login, which is a confusing pair. The package names here are
-          # finsoft-api / finsoft-worker / finsoft-web and the repository is
-          # finsoft; because the names do not match, GitHub does not infer the
-          # link, and an unlinked package in a user namespace inherits no
-          # repository permissions at all.
+          # GITHUB_TOKEN able to read/write it — the package names here
+          # (finsoft-api / finsoft-worker / finsoft-web) do not match the
+          # repository name, so GitHub cannot infer the link on its own.
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.created=${{ github.event.repository.updated_at }}
-          # GitHub Actions cache, so an unchanged image is not rebuilt from
-          # scratch on every run.
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+      # Runs only on a full run, and only when this image did NOT change —
+      # the case deploy.sh needs covered: it pulls :$SHA for all three
+      # images unconditionally, so an unchanged image still needs that tag.
+      - name: retag unchanged image's :develop digest as :${{ github.sha }}
+        if: steps.decide.outputs.full == 'true' && steps.decide.outputs.changed != 'true'
+        run: |
+          IMAGE="ghcr.io/${{ github.repository }}-${{ matrix.image }}"
+          SRC="$IMAGE:develop"
+          DST="$IMAGE:${{ github.sha }}"
+          if docker buildx imagetools inspect "$SRC" >/dev/null 2>&1; then
+            echo "retagging $SRC -> $DST — no rebuild, this image did not change"
+            docker buildx imagetools create -t "$DST" "$SRC"
+          else
+            echo "::warning::$SRC does not exist yet (first full run on this repository?) — building instead of retagging"
+            docker buildx build \
+              --push \
+              -t "$DST" -t "$SRC" \
+              -f "infrastructure/docker/Dockerfile.${{ matrix.image }}" \
+              --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
+              --label "org.opencontainers.image.revision=${{ github.sha }}" \
+              --cache-from "type=gha,scope=${{ matrix.image }}" \
+              --cache-to "type=gha,mode=max,scope=${{ matrix.image }}" \
+              .
+          fi
 
   # ------------------------------------------------------------------ #
   # Staging deploy. INFRASTRUCTURE §3: develop deploys to Contabo
   # automatically. Production is a different provider, needs a human, and
   # has no path from here.
   #
-  # `needs` IS the security property. This job cannot start unless static
-  # analysis, the full suite and the image build all passed in THIS run —
-  # which is to say, on this exact commit. A separate workflow keyed on a
-  # branch name could deploy a commit that was never tested.
+  # `needs` IS the security property. This job cannot start unless every
+  # gate below passed in THIS run — which is to say, on this exact commit.
+  # Every job listed here always RUNS (never merely "is skipped as
+  # passing") whenever this job's own `if` is true, because this job's own
+  # condition (develop / workflow_dispatch) is exactly the condition under
+  # which classify's "full" is also true — so db-suites, financial, e2e,
+  # images and codeql are never silently bypassed here. web-preview is
+  # deliberately NOT in this list: it is mutually exclusive with a full run
+  # by design (see classify.mjs) and would otherwise make this job wait on
+  # a job that is always skipped whenever this job can run.
   # ------------------------------------------------------------------ #
   deploy-staging:
     name: deploy to staging
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # `secrets` is in this list deliberately. On this repository branch
-    # protection is unavailable, so a failing scan cannot literally block a
-    # merge the way rule 20 describes — but it CAN stop the leak reaching a
-    # running system, and that is enforcement worth having rather than a
-    # status nobody is required to read.
-    needs: [static, secrets, test, images]
+    needs:
+      [static, secrets, unit, invariants, db-suites, financial, e2e, images, codeql, audit-gate]
     if: github.ref == 'refs/heads/develop' || github.event_name == 'workflow_dispatch'
 
     # The workflow default is `contents: read`, and only the images job
@@ -459,19 +789,42 @@ jobs:
         run: npx playwright test --config tests/e2e/playwright.deployed.config.ts
 
   # ------------------------------------------------------------------ #
-  # Advisory, and deliberately not a gate — see the note below.
+  # GAP-002 (docs/COMPLIANCE_GAPS.md) — the blocking half. Fails the run on
+  # any HIGH or CRITICAL finding in a PRODUCTION dependency that is not
+  # named in tools/ci/audit-allowlist.json with an owner, a rationale and a
+  # live review-by date. Runs on every tier; this is a security gate, not a
+  # scheduled-by-risk one.
   # ------------------------------------------------------------------ #
-  audit:
-    name: dependency audit (advisory)
+  audit-gate:
+    name: dependency audit (blocking — production deps)
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # There is one known high advisory (postcss, reached through next) with
-    # no accept-or-upgrade ruling yet. Making this block merges today would
-    # mean every pull request is red for a reason unrelated to its change,
-    # and a permanently-red check is one nobody reads.
-    #
-    # This is a temporary posture, not a decision. Once that advisory is
-    # ruled on, remove continue-on-error so the check has teeth.
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: audit gate
+        run: npm run audit:gate
+
+  # ------------------------------------------------------------------ #
+  # GAP-002 — the advisory half. Reports everything, including dev
+  # dependencies and moderate/low findings, and blocks nothing:
+  # `continue-on-error` cannot express "block on high/critical in
+  # production deps, report the rest" — audit-gate above is what does that.
+  # This stays advisory so the full picture is still visible without a
+  # permanently-red, ignored check.
+  # ------------------------------------------------------------------ #
+  audit:
+    name: dependency audit (advisory — full report)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     continue-on-error: true
 
     steps:

@@ -71,60 +71,21 @@ fi
 # Deliberately not the full CI gate. A pre-push hook that takes minutes gets
 # bypassed, and a bypassed hook protects nothing. CI runs everything; this
 # catches the things that are fast and embarrassing.
-# ---------------------------------------------------------------------------
-printf '\n  pre-push checks\n'
-
-printf '    typecheck ... '
-if npm run --silent typecheck >/dev/null 2>&1; then
-  printf 'ok\n'
-else
-  printf 'FAILED\n\n'
-  echo "  npm run typecheck"
-  exit 1
-fi
-
-# Lint only what this push changes.
 #
-# A full `npm run lint` is CI's job. Scoping it here keeps the hook fast, and
-# means pre-existing debt in a directory you did not touch cannot block an
-# unrelated push — while code you DID touch is still held to the rules.
-BASE=$(git merge-base HEAD origin/develop 2>/dev/null || git merge-base HEAD origin/main 2>/dev/null || echo "")
-if [ -n "$BASE" ]; then
-  CHANGED=$(git diff --name-only --diff-filter=ACMR "$BASE" HEAD -- '*.ts' '*.tsx' '*.mjs' '*.cjs' 2>/dev/null || true)
-  if [ -n "$CHANGED" ]; then
-    COUNT=$(printf '%s\n' "$CHANGED" | wc -l | tr -d ' ')
-    printf '    lint (%s changed files) ... ' "$COUNT"
+# OPS-002: this used to inline typecheck / scoped lint / unit tests here.
+# That logic now lives in tools/ci/check.mjs (`npm run check`), shared with
+# CI's own fast path, so the two cannot drift apart. check.mjs also prints a
+# risk-tier classification and, on a T2/T3-looking push, a NOTICE — not a
+# block — to run `npm run check:full` (data plane up, the full gate) before
+# opening the pull request.
+# ---------------------------------------------------------------------------
+printf '\n  pre-push checks (npm run check)\n\n'
 
-    # Batched through xargs rather than expanded onto one command line.
-    #
-    # On Windows npx runs through cmd.exe, which caps a command line at about
-    # 8191 characters. A branch that had diverged by 229 files blew past that,
-    # and the hook printed FAILED for a command that had never run — a tool
-    # that cannot start being indistinguishable from a tool that found a
-    # problem. xargs splits the list and returns non-zero if ANY batch fails,
-    # so a real finding still stops the push.
-    LINT_LOG=$(mktemp)
-    if printf '%s\n' "$CHANGED" | xargs -d '\n' -n 40 npx eslint >"$LINT_LOG" 2>&1; then
-      printf 'ok\n'
-      rm -f "$LINT_LOG"
-    else
-      printf 'FAILED\n\n'
-      # The findings themselves, not a command to re-run by hand — the whole
-      # point of the batching is that the by-hand command may not fit.
-      sed 's/^/  /' "$LINT_LOG" | head -60
-      rm -f "$LINT_LOG"
-      exit 1
-    fi
-  fi
-fi
-
-printf '    unit tests ... '
-if npm run --silent test --workspaces --if-present >/dev/null 2>&1; then
-  printf 'ok\n\n'
+if npm run check; then
+  printf '\n'
 else
-  printf 'FAILED\n\n'
-  echo "  npm test"
-  echo "  (the data plane must be up: npm run db:up)"
+  printf '\n  FAILED — see above\n\n'
+  echo "  npm run check"
   exit 1
 fi
 
