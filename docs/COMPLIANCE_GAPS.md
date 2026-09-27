@@ -183,6 +183,58 @@ Product Owner for the production gate; Database/Security seat (`security-guardia
 
 ---
 
+## GAP-004 — Audit chain head has no external witness
+
+| | |
+|---|---|
+| **Rule** | 9 — Audit. [NON_NEGOTIABLES.md](NON_NEGOTIABLES.md) §9, as specified by [ADR-0020](adr/ADR-0020-audit-hash-chain-canonicalisation.md) (LEVEL 1) |
+| **Requirement** | *"`hash = H(previous_hash \|\| canonical(record))` — a tamper-evident chain per tenant."* |
+| **Status** | **Partially enforced.** Alteration within the chain is detected. Tail deletion or a full rewrite by the table owner, a superuser or break-glass is **undetectable** |
+| **Raised** | 2026-09-27, Security seat finding F1, in review of migration 009 |
+
+### Scope of the finding, 2026-09-27
+
+> **Acceptable for staging. Production is blocked** until either (a) an ADR-0020 amendment stores periodic `(tenant, seq, head_hash)` checkpoints **outside the database** — in WORM object storage, or signed with a key no database role holds — and the verifier asserts that the head is at or beyond the last checkpoint, or (b) the Product Owner accepts the gap in writing.
+
+Neither has happened. The boxes at the top of this file stay unticked.
+
+### What is enforced
+
+- `finsoft_app` cannot alter or delete audit rows. Table-level `UPDATE` is revoked and `DELETE` was never granted. The `audit_log_no_update`, `audit_log_no_delete` and `audit_log_no_truncate` triggers reject every row write, including one through the `UPDATE (ip)` column grant, which exists only to permit a row lock (ADR-0020 correction notice 3).
+- Chain linkage, fork, orphan, self-link and duplicate-hash forgeries are rejected by the constraints and the linkage trigger in ADR-0020 §5.
+- `audit:verify`, running as `readonly_support`, names the first break when a row is altered **without** its successors being recomputed, and when a row is removed or renumbered from the middle of the chain.
+
+### What is not enforced, and why
+
+`hash` is unkeyed SHA-256 over a byte format that ADR-0020 publishes, and it has to publish it so the chain can be independently recomputed. **Anyone who can read the chain and write the table can therefore produce valid hashes.** The table owner (`finsoft_migration`) can disable the append-only triggers. A superuser and a break-glass session can do more.
+
+- **Tail deletion.** Disable the triggers, delete the last rows, and re-enable the triggers. `audit_log_prev_fkey` does not stop this, because nothing references the deleted rows. What remains is a valid chain, and `audit:verify` reports **OK**. Measured by the Security seat.
+- **Full rewrite.** Rewrite any row, recompute every successor, and the result verifies.
+
+The verifier knows what the chain contains but has no record of **where its head was**. Nothing outside the database holds that fact. ADR-0020:330 claimed the reverse ("still cannot make the hashes link"), and its correction notice 5 withdraws that claim.
+
+### Compensating controls
+
+1. `finsoft_app`, the role every request runs as, has no path to either attack.
+2. The owning role is used by migrations only, and break-glass is MFA-protected, time-limited, reason-required, logged and reviewed ([NON_NEGOTIABLES](NON_NEGOTIABLES.md) rule 21).
+3. Staging holds demo data only (GAP-003 control 1).
+4. Backups taken before an attack still hold the earlier head. **Nothing compares them today**, so this is recovery evidence, not detection.
+
+None of these is the required control.
+
+### What would close it
+
+One of these:
+
+1. **An ADR amending ADR-0020** that takes periodic `(tenant_id, seq, head_hash)` checkpoints and stores them outside the database, either in WORM object storage or signed with a key that no database role holds. `audit:verify` would fail when the current head is behind the last checkpoint, or when the row at a checkpointed `seq` no longer carries the checkpointed hash. Tampering would still be possible within the last checkpoint interval. The ADR must state that interval.
+2. **The Product Owner accepts the gap in writing** for production, naming the residual exposure above.
+
+### Owner
+
+Product Owner for acceptance and the production gate. Security seat (`security-guardian`) for the checkpoint design. Architecture Guardian for the ADR-0020 amendment.
+
+---
+
 ## Adding an entry
 
 State the rule and quote the requirement. Say precisely what *is* enforced and what is not — a gap described vaguely reads as smaller than it is. List compensating controls without dressing them up as equivalents. Name what would close it, and who owns that. Date it.

@@ -7,7 +7,7 @@
 - **Decisions needed** name the decider and the date asked; each closes within 2 working days.
 - **Demo ready** holds only workflows running against the real API on staging. Mock screens never go here.
 
-*Last updated: 2026-09-27 (M2-000: posting-rules spec in review; Council decision on the service sale; two Product Owner questions).*
+*Last updated: 2026-09-27 (M1-000e: ADR-0020 correction notices for migration 009; GAP-004 recorded; ADR-0025 pending for the auth login split).*
 
 ---
 
@@ -44,6 +44,9 @@ Then **M2** accounting core · **M3** customers, service invoice, receipts · **
 | ~~M1-A / M1-R — query construction in `packages/auth` / `packages/permissions`~~ | ~~ADR-0013 allowlist (ADR-0023 A4)~~ — **withdrawn 2026-09-27**: A1 keeps all query construction in `packages/database`, which ADR-0013 already permits. No ADR-0025 | — |
 | ~~M1-A — `packages/auth` merge~~ | ~~Head notices on ADR-0009 and ADR-0004 (ADR-0023 A5)~~ — **delivered 2026-09-27** (ADR-0009 kept at +24; ADR-0004 now +19) | — |
 | ~~M1-A — `/auth/login` emitting `Set-Cookie`~~ | ~~Cookie-prefix decision (ADR-0023 *Open*, a stated gate)~~ — **resolved 2026-09-27**: decided, see Decided | — |
+| ~~M1-D — migration 009 merge~~ | ~~README §4 notices on ADR-0020, required by the Database seat's review of 009~~. **Delivered 2026-09-27** (M1-000e): five correction notices at the end of the file, with a pointer on head-notice line 14. The offset stays +12 | — |
+| M1-D — **production** use of the audit chain | [GAP-004](COMPLIANCE_GAPS.md#gap-004--audit-chain-head-has-no-external-witness): the chain head has no external witness, so tail deletion or a full rewrite by the owner, a superuser or break-glass is undetectable (Security seat F1). Staging is not blocked | Before the first production release |
+| M1-A — auth login split | **ADR-0025 pending.** It will be drafted when M1-A resubmits. This is a different ADR-0025 from the one withdrawn with A4 above | M1-A resubmission |
 
 ## Decisions needed
 
@@ -51,6 +54,7 @@ Then **M2** accounting core · **M3** customers, service invoice, receipts · **
 |---|---|---|---|
 | **Council — Architecture + Database/Security** | A request that supplies a tenant: ADR-0004 rule 2 (:75) says *"the field is rejected by the DTO schema"*. ADR-0009's Compliance says it *"has no effect on the tenant used"*. ADR-0023's test demands a *"byte-identical response"* on login and refresh. The three do not agree on body and query fields | 2026-09-27 | **Architecture seat: reject by schema.** Every request schema is strict: an unknown body or query key, `tenantId` included, is a 400. A header, cookie or path value is never read as a tenant, so it has no effect. That satisfies ADR-0004 as written and ADR-0009's "no effect on the tenant used", since a 400 uses no tenant. On login it falls outside ADR-0023 §4's envelope (schema validation, 400: no database, no counter). ADR-0023's byte-identical test is then read as "identical to any other unknown key" for body and query, and byte-identical for header and cookie. **Option B**, strip and ignore everywhere, hides client bugs and lets probes pass silently. Needs Database/Security to agree; recorded in ADR-0023's signatures when closed |
 | **Council — Database/Security + Architecture** | Journal-line party dimension: `journal_lines` (migration 012, kernel) must carry a customer on every AR-control line, but `customers` arrives in M3 (migration 014+, a module table). Nullable party columns in 012 with the composite FK added in M3, or the columns added in M3 — and whether a kernel table may reference a module table at all ([posting-rules README](posting-rules/README.md) §4.1, §5) | 2026-09-27 | — |
+| **Product Owner** (acceptance) · **Security seat** (design) | **GAP-004** — before production, either an ADR-0020 amendment adds external `(tenant, seq, head_hash)` checkpoints (WORM, or signed with a key no database role holds), with the verifier asserting head ≥ last checkpoint, or the Product Owner accepts the gap in writing | 2026-09-27 | **Architecture seat: amend.** Unkeyed hashing cannot detect its own truncation. Written acceptance would leave rule 9's "tamper-evident" false against the roles most able to tamper |
 | **Council — Architecture (+ Accounting for D4, D6)** | The D1–D9 deferrals and the reconciliation-scope deferral ([RECONCILIATION-2026-09](adr/RECONCILIATION-2026-09.md), [WAVE_0_REGISTER](WAVE_0_REGISTER.md)) — moved from the Product Owner by ADR-0024 | 2026-09-27 | — |
 
 ## Decided
