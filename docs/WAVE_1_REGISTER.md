@@ -382,7 +382,211 @@ same shape and will grow faster.
 
 ## W1-002 · `packages/auth`
 
-**Status: not started.**
+**Status: in progress — blocked on ADR-0023 (the pre-tenant lookup).**
+
+### Task contract — written BEFORE the work, unlike W1-001's
+
+```
+ALLOWED     docs/adr/ADR-0023-*.md              (the pre-tenant lookup)
+            packages/auth/**
+            packages/observability/src/context.ts   DONE — the ADR-0021 pairing
+                                                     guard and the scid_ format
+            docs/adr/ADR-0016-*.md              DONE — corrected by the
+                                                 architecture-guardian, D8 CLOSED
+            database/migrations/006_*.sql, 007_*.sql   (resolver; users regrant)
+            infrastructure/docker/postgres/init/00-bootstrap.sh  (the role)
+            docs/ARCHITECTURE.md                      (the §6 carve-out only)
+            packages/database/src/**                  (withResolvedTenant, ResolvedTenantId)
+            tests/integration/**, tests/security/**
+            docs/WAVE_1_REGISTER.md, docs/TECH_DEBT.md
+READ ONLY   docs/adr/** (others), docs/NON_NEGOTIABLES.md
+            docs/ARCHITECTURE.md — EVERYTHING BUT the §6 carve-out named above
+FORBIDDEN   database/migrations/005_*.sql  (RELEASED — forward migration only)
+            apps/**, modules/**
+            packages/database/src/** — EVERYTHING BUT withResolvedTenant and
+            ResolvedTenantId named above, and the generated schema
+```
+
+**The two carve-outs are spelled on the restrictive entries, not listed twice.**
+An earlier version of this contract put `docs/ARCHITECTURE.md` in both ALLOWED
+and READ ONLY, and `packages/database/src/**` in both ALLOWED and FORBIDDEN —
+introduced when the Product Owner extended the scope and I appended to ALLOWED
+without narrowing the other two columns. CLAUDE.md says *"write only inside
+ALLOWED"*; a path in two columns decides nothing, and the ARCHITECTURE edit was
+already committed under it. Caught by the Database Guardian.
+```
+
+**Why the contract exists before the first line of code.** W1-001 started
+without one; the Architecture Guardian could not rule on scope because there was
+nothing to rule against, and two files (`health.service.ts`,
+`generated/schema.d.ts`) turned out to be outside a boundary nobody had drawn.
+CLAUDE.md is explicit: *"No task contract? Ask for one before starting."*
+
+### The blocker, and it is not negotiable
+
+**D-W1-004: no code may read `refresh_tokens` without a tenant until ADR-0023 is
+Accepted.** `refresh_tokens` is tenant-owned with RLS `ENABLE`+`FORCE` and
+`current_setting('app.tenant_id')` with no `missing_ok`, so an unauthenticated
+read **raises** rather than returning zero rows. ADR-0004:77 is unambiguous that
+a caller with no tenant operates only on global tables, and `withGlobal`
+structurally cannot name this table.
+
+Both guardians confirmed at W1-001 that deferring was correct: the table's shape
+is invariant under every candidate mechanism, because all of them look up by
+hash alone.
+
+### The security review killed the login half, and the Product Owner ruled
+
+**Decision, Product Owner 2026-09-25: a tenant code field on the login form.**
+The login resolver is **not built**. Login resolves the tenant against the
+**global `tenants` table** — which ADR-0004:77 already sanctions, and whose own
+header says it is "read by login … before a tenant context exists" — then sets
+`app.tenant_id` and reads `users` under ordinary RLS with all four layers
+intact.
+
+**What killed the email-only resolver.** `users_tenant_email_key` is
+`UNIQUE (tenant_id, lower(email))` — **email is unique per TENANT, not
+globally** — so `lookup_login(email)` returns N rows for a user in N tenants,
+and every disposal of N>1 is a distinct vulnerability: verifying against each
+hash is an N× argon2id CPU amplification an attacker can seed by provisioning
+the same address across tenants; returning the tenant list is cross-tenant
+disclosure to an unauthenticated caller who knows only an email address;
+picking the first row is tenant assignment by physical row order. The obvious
+escape — a globally unique index on `lower(email)` — is closed at LEVEL 1:
+ADR-0021's own text says an email "fails condition 2 on sight and condition 3
+in practice".
+
+**What the decision buys.** `users` — the table holding every password hash in
+the system — never carries a `USING (true)` policy. The pre-tenant surface
+halves, and what remains (`refresh_tokens`) holds SHA-256 digests of random
+values. Exactly one candidate row means exactly one argon2id verification,
+which makes the constant-time requirement achievable rather than aspirational.
+
+**The boundary ADR-0023 must draw in these words**, because "ADR-0023 allowed a
+tenant input" is exactly how a per-request `tenantId` comes back: a tenant hint
+**at the login form** is not what ADR-0009:151 rejected. That rejected
+`tenant_id` supplied per request on *authenticated* endpoints and validated
+against memberships, because correctness then depends on every handler checking
+forever. A login-form selector cannot grant access to a tenant the credential
+does not open — a wrong code yields the same 401 as a wrong password.
+
+**A form field, not a subdomain.** A subdomain gives better UX and a natural
+cookie scope but publishes every tenant code through DNS, TLS SNI and
+Certificate Transparency logs, permanently and publicly.
+
+**LEVEL 2 consequence:** there is no login page in `docs/design-system/pages/`
+and the PRD does not scope multi-tenant users. The field is a product
+requirement and is recorded here as the Product Owner's, not decided by
+implication in an ADR.
+
+### Decision, Product Owner 2026-09-25: throttling and lockout are split
+
+ADR-0009:121 and :147 specify account lockout on failed attempts. As written it
+is **a named-user denial of service**: the key is attacker-chosen, so anyone who
+knows an employee's email address can make that employee unable to work —
+possibly the only holder of `period.close` on the last day of a month.
+
+- **Throttling** is keyed on attacker-controllable input (email, IP prefix, the
+  pair, a global endpoint rate), always time-decaying, always self-recovering,
+  **never requiring administrator action**. It escalates to proof-of-work or
+  CAPTCHA rather than to a block, so the attacker pays and the victim does not.
+- **Lockout** — a sticky state needing an unlock — may only be keyed on
+  something an attacker cannot choose on someone else's behalf: **(user,
+  device/IP)**, never (user). That stops the attacker's source and leaves the
+  victim's own device working.
+
+This supersedes ADR-0009:121 and :147 on lockout, and ADR-0023 carries the
+supersession under README §4's partial rule.
+
+**Throttle state lives in Redis, not on `users`.** On `users` it would need
+`locked_until` and `failed_attempt_count` in a pre-tenant column grant, widening
+the read and putting a mutable counter behind a permissive policy. Redis keeps
+the grant narrow and the counters out of the tenant-owned table; the cost is
+that throttle state is lost on a flush, which is acceptable because a throttle
+is not an audit record.
+
+### The measured candidate — now for the REFRESH path only
+
+A `SECURITY DEFINER` resolver owned by a dedicated role with **no BYPASSRLS**,
+crossing the tenant boundary via a **named policy in `pg_policies`** rather than
+a role attribute — now for `refresh_tokens` only, returning
+`(tenant_id, token_id)` and no state.
+
+**TWO THINGS ABOUT MY MEASUREMENT OF IT WERE WRONG, and the second is a repeat.**
+
+1. **The DDL I circulated omitted the `SET ROLE`.** `CREATE SCHEMA … AUTHORIZATION`
+   sets the SCHEMA's owner; `CREATE FUNCTION` owns to the *executing* role. Run by
+   `finsoft_migration` — which has BYPASSRLS — the function would have been the
+   very design the proposal rejected, arrived at silently. My actual measurement
+   did use `SET ROLE` and I verified `proowner = finsoft_login`; the write-up did
+   not, and a write-up is what someone implements from.
+
+2. **I measured in a scratch database that never ran `00-bootstrap.sh`.** Verified
+   afterwards:
+
+   ```
+   real cluster:       PUBLIC has USAGE on schema public -> false
+   my scratch database:                                  -> true
+   ```
+
+   So `finsoft_login` inherited `USAGE` via `PUBLIC` and the function ran. On the
+   real cluster it would have raised `permission denied for schema public`. The
+   Security Guardian inferred this from `00-bootstrap.sh` without being able to
+   see my database.
+
+   **AND THE RULE HAS A SECOND HALF I did not write, supplied by the Database
+   Guardian after finding four more instances:**
+
+   > **A privilege statement's success is not evidence that it did anything.**
+   > `GRANT`, `REVOKE` and `ALTER DEFAULT PRIVILEGES` report success on a no-op,
+   > sometimes with only a `WARNING`, and `ON_ERROR_STOP` does not see it.
+
+   So every privilege line in a migration needs an assertion after it in the
+   schema suite — `pg_proc.proacl`, `pg_attribute.attacl`, `pg_default_acl`,
+   `pg_auth_members`, `pg_namespace.nspacl` — **as an exact set, not a
+   `has_*_privilege` spot check.** Measured: `has_function_privilege` returned
+   **true** for `readonly_support` against a broken state where the role could
+   not actually reach the function, because it ignores schema `USAGE`. A spot
+   check would have misled in either direction.
+
+   **This is the second time in this wave**: the migration 005 grant check was
+   run in a scratch database that lacked `ALTER DEFAULT PRIVILEGES`, and hid a
+   defect for the same reason. **A security posture measured outside the
+   bootstrap is not measured.** Every future privilege measurement runs against
+   `finsoft_test`, or against a database provably built by the same script.
+
+The obvious alternative — a resolver owned by `finsoft_migration` — is a
+BYPASSRLS path by another name for every statement inside it, and breaks that
+assertion. A global `token_directory` table was rejected by the Architecture
+Guardian at W1-001: it puts a credential-derived value on an unprotected table
+readable before authentication.
+
+**Three conditions on whatever ADR-0023 chooses**, from the W1-001 signatures:
+reviewed by the Database Guardian **and** the Architecture Guardian; returns
+`(tenant_id, token_id)` and nothing else, never surfacing or logging a `23505`
+or its `DETAIL`; and **rate limiting that does not depend on knowing the
+tenant**, because there is no tenant to key it by before the lookup succeeds.
+
+### Also in scope, carried from W1-001
+
+- **The IDOR property must be re-proved.** `cannot spend another tenant's token
+  by presenting its hash` derives its entire guarantee from RLS being in force
+  on the by-hash lookup — and the real login path, by definition, has neither.
+  It must be re-proved through whatever ADR-0023 introduces, or it silently
+  stops being tested at the moment it starts to matter.
+- **TD-005 goes live here.** Migration 002 grants table-level `UPDATE` on
+  `users`, so `tenant_id` and `created_by` are application-writable. Login
+  writes `last_login_at`. That is the first code path to touch it, so the
+  forward migration is W1-002's, not a later wave's.
+- **ADR-0016 debt D8 — CLOSED 2026-09-25.** All three parts landed: migration
+  005's `DEFAULT`, `sessions_scid_shape` CHECK and absent INSERT grant (merged);
+  `newSessionCorrelationId`/`asSessionCorrelationId` moved to `scid_<32 hex>`
+  with a test named for the debt; and ADR-0016 corrected in place by the
+  Architecture Guardian under README §4's **fourth arm**, which they wrote for
+  this case — a record delivering debt it booked against itself. Control 2 and
+  :176 keep the gap in the past tense rather than erasing it, because for two
+  days that control rested on a naming coincidence and a reader is entitled to
+  know.
 
 **A correction carried into the design, recorded because the plan had it wrong.**
 
@@ -419,13 +623,41 @@ Headers, body, query parameters and resource ids never override the authenticate
 
 ---
 
-## W1-004 · Migration 006 and `packages/permissions` — RBAC
+### Migration numbering, Product Owner 2026-09-26
+
+**006 resolver · 007 `users` regrant + trigger · 008 RBAC · 009 `audit_log`.**
+
+006 and 007 were double- and triple-booked across three branches, two of them
+unmerged: W1-002's contract and W1-004 both claimed 006; W1-005 and ADR-0020
+both claimed 007. That resolves as a merge conflict on a **numbered immutable
+artefact** — the one place a conflict is expensive, because `CHECKSUMS` pins a
+migration's identity and renumbering after review means re-reviewing.
+**ADR-0020 is amended rather than ADR-0023 bent around it**, because ADR-0023
+blocks a task in progress.
+
+TD-005 gets its own migration rather than riding with the resolver, for three
+measured reasons: a different signatory (a privilege change on the password
+table is the Security Guardian's); different lock footprints — `CREATE POLICY`
+takes **`AccessExclusiveLock` on `refresh_tokens`**, blocking every in-flight
+`/auth/refresh`, while `GRANT`/`REVOKE` takes **no lock on the target relation
+at all**, so bundling a lock-free grant behind the auth hot path buys nothing;
+and TD-005 is **not finished by a regrant**. Migration 005's own header states
+the rule — *"a column grant is only half a control… only a trigger says which
+DIRECTION they may change in"* — and `users` has no transition trigger. A
+column-scoped regrant must still include `status`, `version` and `email` for
+Wave 1 to function, leaving `status` settable `DISABLED → ACTIVE`, `version`
+decrementable and `email` rewritable. That is a second review with a trigger in
+it.
+
+---
+
+## W1-004 · Migration 008 and `packages/permissions` — RBAC
 
 **Status: not started.**
 
 ---
 
-## W1-005 · Migration 007 and the audit chain
+## W1-005 · Migration 009 and the audit chain
 
 **Status: not started.** Blocked on ADR-0020's signatures.
 
