@@ -444,6 +444,34 @@ export default tseslint.config(
   },
 
   /* ---------------------------------------------------------------- *
+   * packages/permissions builds no queries either. Architecture seat
+   * ruling, M1-R (docs/briefs/M1-R-rbac.md): it is not on depcruise's
+   * kysely-is-allowlisted list, so a `tx.selectFrom(...)` reached through a
+   * transaction handle packages/database hands it via callback would be
+   * invisible to the module graph in exactly the way apps/**'s was — no
+   * import of kysely, no import of pg, just a parameter. The query bodies
+   * live in packages/database/src/rbac/*.ts; this package calls them.
+   *
+   * A separate block rather than folding this into the shared per-package
+   * block above: the auth lane is making the identical addition for
+   * packages/auth at the same time, and two edits adding their own block
+   * merge cleanly where two edits to the same array or object do not.
+   * ---------------------------------------------------------------- */
+  {
+    files: ['packages/permissions/src/**/*.ts'],
+    ignores: ['packages/permissions/src/**/*.spec.ts', 'packages/permissions/src/**/*.test.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        ...invariantSyntax,
+        ...connectionOwnershipSyntax,
+        ...stripOnlySyntax,
+        ...appsQuerySyntax,
+      ],
+    },
+  },
+
+  /* ---------------------------------------------------------------- *
    * packages/validation — the one place a decimal library may live
    * ADR-0011, ADR-0014
    * ---------------------------------------------------------------- */
