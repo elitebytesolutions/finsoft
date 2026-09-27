@@ -9,6 +9,7 @@ import {
   teardownTestDatabase,
 } from '@finsoft/database/testing'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { schemas, tableAcl } from './catalog.ts'
 
 /*
  * migration 006's `auth_lookup.resolve_refresh`. ADR-0023 §2, "the primary
@@ -75,6 +76,26 @@ describe('auth_lookup.resolve_refresh — the pre-tenant refresh resolver (ADR-0
     ).toBe(false)
     expect(support, 'readonly_support must not hold EXECUTE').toBe(false)
     expect(app, 'finsoft_app must hold EXECUTE — this is the one caller').toBe(true)
+  })
+
+  it('D1: proacl is EXACTLY {finsoft_refresh=X, finsoft_app=X} via aclexplode, sorted — no spot check', async () => {
+    // has_function_privilege spot checks (above) prove three things are
+    // true; they do not prove nothing ELSE is. aclexplode enumerates the
+    // grantee/privilege set exhaustively, so a future migration widening the
+    // grant to a fourth role is caught even if nobody thought to spot-check
+    // that specific role.
+    const rows = await withGlobal((tx) =>
+      rawOn<{ grantee: string; privilege: string }>(
+        tx,
+        `select (aclexplode(p.proacl)).grantee::regrole::text as grantee,
+                (aclexplode(p.proacl)).privilege_type as privilege
+           from pg_proc p
+           join pg_namespace n on n.oid = p.pronamespace
+          where n.nspname = 'auth_lookup' and p.proname = 'resolve_refresh'`,
+      ),
+    )
+    const asSet = rows.map((r) => `${r.grantee}=${r.privilege}`).sort()
+    expect(asSet).toEqual(['finsoft_app=EXECUTE', 'finsoft_refresh=EXECUTE'])
   })
 
   it('a defect-injected second SECURITY DEFINER function in auth_lookup gets no PUBLIC EXECUTE either', async () => {
@@ -302,6 +323,189 @@ describe('auth_lookup.resolve_refresh — the pre-tenant refresh resolver (ADR-0
     } finally {
       await client.query('ROLLBACK').catch(() => undefined)
       await client.end()
+    }
+  })
+
+  /* ------------------------------------------------------------------ *
+   * D2, D3 — the remaining ADR-0023 §2 Compliance catalogue assertions,
+   * security/database re-review 2026-09-27.
+   * ------------------------------------------------------------------ */
+
+  it('D2: finsoft_refresh holds NO table-level grant on refresh_tokens (relacl) — column-scoped only', async () => {
+    const acl = await tableAcl()
+    const onRefreshTokens = acl.filter(
+      (r) => r.table_name === 'refresh_tokens' && r.grantee === 'finsoft_refresh',
+    )
+    expect(
+      onRefreshTokens,
+      'a table-level grant would imply every column, silently widening the column-scoped read',
+    ).toEqual([])
+  })
+
+  it('D2: finsoft_refresh holds no relacl entry on ANY table', async () => {
+    const acl = await tableAcl()
+    expect(acl.filter((r) => r.grantee === 'finsoft_refresh')).toEqual([])
+  })
+
+  it('D3: SET ROLE finsoft_refresh; SELECT expires_at FROM refresh_tokens raises 42501', async () => {
+    const client = migrationClient()
+    await client.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query('SET ROLE finsoft_refresh')
+      let sqlstate: string | undefined
+      try {
+        await client.query('SELECT expires_at FROM refresh_tokens')
+      } catch (error) {
+        sqlstate = (error as { code?: string }).code
+      }
+      expect(
+        sqlstate,
+        'a column outside the (tenant_id, id, token_hash) grant must be denied',
+      ).toBe('42501')
+    } finally {
+      await client.query('ROLLBACK').catch(() => undefined)
+      await client.end()
+    }
+  })
+
+  it('D3: tenant_isolation on refresh_tokens applies to PUBLIC (polroles = {-})', async () => {
+    // The constant-folding argument in ADR-0023 §2 only holds if
+    // tenant_isolation's own policy reaches finsoft_refresh too — which it
+    // does only because it applies to PUBLIC, not to a named role list that
+    // happens to exclude finsoft_refresh.
+    const roles = await withGlobal((tx) =>
+      scalarOn<string[]>(
+        tx,
+        `select polroles::regrole[]::text[] from pg_policy p
+           join pg_class c on c.oid = p.polrelid
+          where c.relname = 'refresh_tokens' and p.polname = 'tenant_isolation'`,
+      ),
+    )
+    expect(roles).toEqual(['-'])
+  })
+
+  it('D3: for every prosecdef function, the owner is NOLOGIN, not BYPASSRLS, and search_path is pinned', async () => {
+    const rows = await withGlobal((tx) =>
+      rawOn<{
+        proname: string
+        owner: string
+        rolcanlogin: boolean
+        rolbypassrls: boolean
+        provolatile: string
+        proleakproof: boolean
+        proconfig: string[] | null
+      }>(
+        tx,
+        `select p.proname, p.proowner::regrole::text as owner,
+                r.rolcanlogin, r.rolbypassrls, p.provolatile, p.proleakproof, p.proconfig
+           from pg_proc p
+           join pg_roles r on r.oid = p.proowner
+          where p.prosecdef = true`,
+      ),
+    )
+    expect(rows.length, 'no SECURITY DEFINER function exists to assert over').toBeGreaterThan(0)
+    for (const row of rows) {
+      expect(row.rolcanlogin, `${row.proname}'s owner (${row.owner}) must be NOLOGIN`).toBe(false)
+      expect(row.rolbypassrls, `${row.proname}'s owner (${row.owner}) must not BYPASSRLS`).toBe(
+        false,
+      )
+      expect(row.provolatile, `${row.proname} must be STABLE`).toBe('s')
+      expect(row.proleakproof, `${row.proname} must not be LEAKPROOF`).toBe(false)
+      expect(
+        (row.proconfig ?? []).some((c) => c.startsWith('search_path=')),
+        `${row.proname} must pin search_path`,
+      ).toBe(true)
+    }
+  })
+
+  it('D3: users and refresh_tokens are ordinary tables (relkind = r), not views', async () => {
+    const rows = await withGlobal((tx) =>
+      rawOn<{ relname: string; relkind: string }>(
+        tx,
+        `select relname, relkind from pg_class
+           join pg_namespace n on n.oid = pg_class.relnamespace
+          where n.nspname = 'public' and relname in ('users', 'refresh_tokens')`,
+      ),
+    )
+    expect(rows).toHaveLength(2)
+    for (const row of rows) {
+      expect(
+        row.relkind,
+        `${row.relname} must be relkind='r' — a view would run as its owner`,
+      ).toBe('r')
+    }
+  })
+
+  it('D3: the non-system schema set is exactly {public, auth_lookup}; auth_lookup has no relations and one function', async () => {
+    const rows = await schemas()
+    expect(rows.map((r) => r.schema_name).sort()).toEqual(['auth_lookup', 'public'])
+
+    const relations = await withGlobal((tx) =>
+      rawOn<{ count: string }>(
+        tx,
+        `select count(*)::text as count from pg_class
+           join pg_namespace n on n.oid = pg_class.relnamespace
+          where n.nspname = 'auth_lookup'`,
+      ),
+    )
+    expect(relations[0]?.count).toBe('0')
+
+    const functions = await withGlobal((tx) =>
+      rawOn<{ count: string }>(
+        tx,
+        `select count(*)::text as count from pg_proc p
+           join pg_namespace n on n.oid = p.pronamespace
+          where n.nspname = 'auth_lookup'`,
+      ),
+    )
+    expect(functions[0]?.count).toBe('1')
+  })
+
+  it('D3: finsoft_app holds no TEMPORARY privilege on the database', async () => {
+    const granted = await withGlobal((tx) =>
+      scalarOn<boolean>(
+        tx,
+        `select has_database_privilege('finsoft_app', current_database(), 'TEMPORARY')`,
+      ),
+    )
+    expect(granted).toBe(false)
+  })
+
+  it('D2: finsoft_refresh holds USAGE on exactly {public, auth_lookup} and no other schema', async () => {
+    const rows = await schemas()
+    const withUsage: string[] = []
+    for (const row of rows) {
+      const has = await withGlobal((tx) =>
+        scalarOn<boolean>(tx, `select has_schema_privilege('finsoft_refresh', $1, 'USAGE')`, [
+          row.schema_name,
+        ]),
+      )
+      if (has) withUsage.push(row.schema_name)
+    }
+    expect(withUsage.sort()).toEqual(['auth_lookup', 'public'])
+  })
+
+  it('D2: finsoft_refresh holds CREATE on no schema (the transient grant was withdrawn)', async () => {
+    const rows = await schemas()
+    for (const row of rows) {
+      const has = await withGlobal((tx) =>
+        scalarOn<boolean>(tx, `select has_schema_privilege('finsoft_refresh', $1, 'CREATE')`, [
+          row.schema_name,
+        ]),
+      )
+      expect(has, `finsoft_refresh must not hold CREATE on ${row.schema_name}`).toBe(false)
+    }
+  })
+
+  it('D3: pg_has_role — finsoft_app and readonly_support are not members of finsoft_refresh in any sense', async () => {
+    for (const role of ['finsoft_app', 'readonly_support']) {
+      for (const kind of ['MEMBER', 'USAGE'] as const) {
+        const has = await withGlobal((tx) =>
+          scalarOn<boolean>(tx, `select pg_has_role($1, 'finsoft_refresh', $2)`, [role, kind]),
+        )
+        expect(has, `pg_has_role(${role}, finsoft_refresh, ${kind}) must be false`).toBe(false)
+      }
     }
   })
 })

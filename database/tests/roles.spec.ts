@@ -117,9 +117,50 @@ describe('database roles', () => {
     ).toBeUndefined()
   })
 
+  it('D3: the non-superuser role set is exactly the four ADR-0023 names', async () => {
+    const names = (await roles())
+      .filter((r) => !r.is_superuser)
+      .map((r) => r.role_name)
+      .sort()
+    expect(names).toEqual([
+      'finsoft_app',
+      'finsoft_migration',
+      'finsoft_refresh',
+      'readonly_support',
+    ])
+  })
+
+  it('D3: finsoft_refresh is a member of nothing, and nothing but finsoft_migration is a member of it', async () => {
+    const memberships = await withGlobal((tx) =>
+      rawOn<{ member: string; role: string }>(
+        tx,
+        `select m.rolname as member, r.rolname as role
+           from pg_auth_members am
+           join pg_roles r on r.oid = am.roleid
+           join pg_roles m on m.oid = am.member
+          where r.rolname = 'finsoft_refresh' or m.rolname = 'finsoft_refresh'`,
+      ),
+    )
+    // finsoft_refresh member OF anything: none.
+    expect(memberships.filter((m) => m.member === 'finsoft_refresh')).toEqual([])
+    // Anything member of finsoft_refresh: exactly finsoft_migration.
+    expect(memberships.filter((m) => m.role === 'finsoft_refresh').map((m) => m.member)).toEqual([
+      'finsoft_migration',
+    ])
+  })
+
   it('grants DELETE to nobody (rule 4)', async () => {
     const all = await tables()
-    const grantees = ['finsoft_app', 'readonly_support']
+    // Derived from pg_roles, not hardcoded (ADR-0023 §2 Compliance): every
+    // non-pg_%, non-superuser role EXCLUDING the table owner
+    // (finsoft_migration), which holds DELETE implicitly as owner —
+    // has_table_privilege('finsoft_migration', ..., 'DELETE') is true for
+    // that reason alone, and an unspecified derivation would make this
+    // assertion red on a correct cluster.
+    const grantees = (await roles())
+      .filter((r) => !r.is_superuser && r.role_name !== 'finsoft_migration')
+      .map((r) => r.role_name)
+    expect(grantees.sort()).toEqual(['finsoft_app', 'finsoft_refresh', 'readonly_support'])
 
     for (const table of all) {
       for (const grantee of grantees) {

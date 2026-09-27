@@ -204,6 +204,36 @@ export function columnPrivileges(): Promise<ColumnPrivilegeRow[]> {
   )
 }
 
+export interface TableAclRow {
+  table_name: string
+  grantee: string
+  privilege: string
+}
+
+/**
+ * D2 (security/database re-review 2026-09-27): table-LEVEL grants, from
+ * `pg_class.relacl` via `aclexplode` — the column-privilege checks in
+ * `columnPrivileges()` above see only `pg_attribute.attacl` and would miss
+ * a role that somehow acquired a TABLE-level grant instead (which implies
+ * every column, defeating an exact-column-set assertion silently).
+ */
+export function tableAcl(): Promise<TableAclRow[]> {
+  return withGlobal((tx) =>
+    rawOn<TableAclRow>(
+      tx,
+      `select c.relname as table_name,
+              (aclexplode(c.relacl)).grantee::regrole::text as grantee,
+              (aclexplode(c.relacl)).privilege_type as privilege
+         from pg_class c
+         join pg_namespace n on n.oid = c.relnamespace
+        where n.nspname = 'public'
+          and c.relkind = 'r'
+          and c.relacl is not null
+        order by c.relname, grantee, privilege`,
+    ),
+  )
+}
+
 export interface SchemaRow {
   schema_name: string
   owner: string
