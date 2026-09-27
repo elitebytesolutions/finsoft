@@ -69,7 +69,7 @@ describe('the reconciliation deferral is still valid', () => {
     const migrations = readFileSync(join(REPO_ROOT, 'database/migrations/CHECKSUMS'), 'utf8')
       .split('\n')
       .map((line) => line.trim().split(/\s+/)[1])
-      .filter((name): name is string => Boolean(name) && name.endsWith('.sql'))
+      .filter((name): name is string => typeof name === 'string' && name.endsWith('.sql'))
 
     const created = migrations
       .flatMap((name) => {

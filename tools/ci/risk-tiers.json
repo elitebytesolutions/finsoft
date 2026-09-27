@@ -1,0 +1,116 @@
+{
+  "$schema": "./risk-tiers.schema.json",
+  "description": "Risk-tiered CI classification. Highest matching tier wins; an unmatched path falls back to T1 (fail safe upward, never down). See docs/workflows/ci-tiers.md.",
+
+  "tiers": {
+    "T0": {
+      "label": "docs / copy / prototype UI",
+      "globs": ["docs/**", "**/*.md", "apps/web/src/mocks/**", "ui-prototype/**"]
+    },
+    "T1": {
+      "label": "normal UI / API",
+      "globs": [
+        "apps/web/**",
+        "apps/api/src/**",
+        "apps/worker/**",
+        "modules/*/api/**",
+        "modules/*/ui/**",
+        "packages/ui/**",
+        "packages/observability/**",
+        "packages/reporting/**",
+        "tools/**"
+      ]
+    },
+    "T2": {
+      "label": "auth / permissions / tenancy / migrations / infra",
+      "globs": [
+        "packages/auth/**",
+        "packages/permissions/**",
+        "packages/database/**",
+        "packages/shared-types/**",
+        "database/**",
+        "apps/api/src/common/*guard*",
+        "apps/api/src/**/auth/**",
+        "infrastructure/**",
+        ".github/**",
+        ".githooks/**",
+        "package.json",
+        "package-lock.json",
+        "tests/security/**",
+        "tests/integration/**"
+      ]
+    },
+    "T3": {
+      "label": "posting / money / inventory / tax / periods",
+      "globs": [
+        "packages/accounting-kernel/**",
+        "packages/inventory-kernel/**",
+        "packages/validation/**",
+        "modules/*/domain/**",
+        "modules/*/application/**",
+        "docs/posting-rules/**",
+        "tests/accounting/**",
+        "tests/reconciliation/**"
+      ]
+    }
+  },
+
+  "tierOrder": ["T0", "T1", "T2", "T3"],
+
+  "exceptions": {
+    "comment": "T2 excludes apps/api/src/**, which T1 also claims wholesale, from bumping to T2 EXCEPT for the guard/auth carve-outs above. classify.mjs resolves this by matching every tier's globs against every file and taking the highest tier that matches ANY file, per file, then taking the max across files — a guard file lands in T2 without pulling every apps/api/src/** change up with it, because ordinary apps/api files simply do not match the T2 globs."
+  },
+
+  "images": {
+    "comment": "Maps a changed path to the image(s) that must be rebuilt. A path matching none of these does not force any image rebuild by itself, but the tier's 'full' escalation (develop / release / schedule / dispatch) always builds and publishes all three.",
+    "api": [
+      "apps/api/**",
+      "packages/database/**",
+      "packages/observability/**",
+      "packages/validation/**",
+      "packages/auth/**",
+      "packages/permissions/**",
+      "packages/shared-types/**",
+      "database/migrations/**",
+      "package.json",
+      "package-lock.json",
+      "tsconfig*.json",
+      "infrastructure/docker/Dockerfile.api",
+      ".dockerignore"
+    ],
+    "worker": [
+      "apps/worker/**",
+      "packages/database/**",
+      "packages/observability/**",
+      "package.json",
+      "package-lock.json",
+      "tsconfig*.json",
+      "infrastructure/docker/Dockerfile.worker",
+      ".dockerignore"
+    ],
+    "web": [
+      "apps/web/**",
+      "packages/ui/**",
+      "packages/shared-types/**",
+      "packages/validation/**",
+      "package.json",
+      "package-lock.json",
+      "tsconfig*.json",
+      "infrastructure/docker/Dockerfile.web",
+      ".dockerignore"
+    ]
+  },
+
+  "appPaths": {
+    "comment": "Narrower than 'images': just the app's own directory, used to decide whether e2e is worth running and whether apps/web itself changed (for web-preview). A shared package can force the T2/T3 tier and force an image rebuild without making this true.",
+    "web": ["apps/web/**"],
+    "api": ["apps/api/**"],
+    "worker": ["apps/worker/**"]
+  },
+
+  "fullRefs": {
+    "branches": ["develop"],
+    "branchPrefixes": ["release/"],
+    "comment": "workflow_dispatch and the nightly schedule also force full and are handled in classify.mjs / ci.yml directly, not here, because they are event types rather than ref names."
+  }
+}

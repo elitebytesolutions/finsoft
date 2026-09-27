@@ -8,11 +8,11 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { REPO_ROOT, prepareTestDatabase, teardownTestDatabase } from '@finsoft/database/testing'
 import { initLogger, resetLoggerForTests } from '@finsoft/observability'
-import { AllExceptionsFilter } from './common/all-exceptions.filter'
-import { Public, TenantGuard } from './common/tenant.guard'
-import { ZodValidationPipe } from './common/zod-validation.pipe'
-import { REQUIRED_SCHEMA_VERSION } from './health/health.service'
-import { HealthModule } from './health/health.module'
+import { AllExceptionsFilter } from '../../apps/api/src/common/all-exceptions.filter.ts'
+import { Public, TenantGuard } from '../../apps/api/src/common/tenant.guard.ts'
+import { ZodValidationPipe } from '../../apps/api/src/common/zod-validation.pipe.ts'
+import { REQUIRED_SCHEMA_VERSION } from '../../apps/api/src/health/health.service.ts'
+import { HealthModule } from '../../apps/api/src/health/health.module.ts'
 
 /*
  * The API skeleton, exercised through real HTTP rather than by calling

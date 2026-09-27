@@ -1,0 +1,11 @@
+[
+  {
+    "id": "GHSA-r28c-9q8g-f849",
+    "url": "https://github.com/advisories/GHSA-r28c-9q8g-f849",
+    "alsoCovers": ["https://github.com/advisories/GHSA-6g55-p6wh-862q"],
+    "package": "postcss",
+    "owner": "Security Guardian",
+    "rationale": "Reached transitively through next (a production dependency of apps/web), so npm audit --omit=dev still reports it — it is not purely dev-only by that test. But COMPLIANCE_GAPS.md GAP-002's own criterion is reachability from code that RUNS in the deployed container: postcss's vulnerable surface here is source-map / CSS-comment parsing invoked by Next.js's build-time CSS pipeline, not by any code path that executes while apps/web is serving a request. Recorded here per the Product Owner's 2026-09-24 GAP-002 disposition rather than left as a silent pass, pending the Security Guardian's own triage and a next/postcss upgrade.",
+    "reviewBy": "2026-10-27"
+  }
+]
