@@ -7,7 +7,7 @@
 - **Decisions needed** name the decider and the date asked; each closes within 2 working days.
 - **Demo ready** holds only workflows running against the real API on staging. Mock screens never go here.
 
-*Last updated: 2026-09-27 (M1-000, Council unblock; follow-ups closed the same day).*
+*Last updated: 2026-09-27 (M1-000b: ADR-0020 renumbering notice; M1-D Audit started).*
 
 ---
 
@@ -18,7 +18,7 @@
 | **M1-A Auth** | `m1-auth` | Migration **006** refresh resolver ([ADR-0023](adr/ADR-0023-pre-tenant-authentication-reads.md) §2) · migration **007** `users` regrant + transition trigger (TD-005) **and** the `tenants` column-grant narrowing excluding `code` and `status` (ADR-0023 §1 — `/auth/login` does not ship before 007) · `packages/auth` · `/api/auth/*` endpoints · real `TenantGuard` | T2 | Database/Security + Architecture (ADR-0023 conditions A1–A3, A1 as widened by the addendum) |
 | **M1-R RBAC** | `m1-rbac` | Migration **008** · `packages/permissions` (MVP catalogue) · `PermissionGuard` | T2 | Database/Security + Architecture |
 | **M1-W Web + infra** | `m1-web` | Login page (tenant code · email · password) · API client · prototype banner on mock screens · staging HTTPS on `31-220-74-159.sslip.io` | T1 / T2 | Architecture · `devops-guardian` · `design-system` |
-| **M1-D Audit** | — | Migration **009** `audit_log` + chain verifier per ADR-0020. **Starts after** the PR for `feature/W1-000-adr-0020-audit-canonicalisation` is merged | T2 (T3 for the financial-mutation hook) | Database/Security + Accounting |
+| **M1-D Audit** | `m1-audit` | Migration **009** `audit_log` + chain verifier per ADR-0020 (its body says 007; the head notice renumbers it). **Started 2026-09-27** | T2 (T3 for the financial-mutation hook) | Database/Security + Accounting |
 
 **Query placement, M1-A and M1-R (ADR-0023 A1, widened 2026-09-27).** Every query body lives in `packages/database` as a named export with no business rule in it. For auth: the `tenants`-by-code resolver, the `users` read, the refresh spend, the `sessions` insert and `last_login_at`. For RBAC: permission resolution, plus system-role seeding with the catalogue passed in. `packages/auth` and `packages/permissions` call those exports and build no query. **Merge condition on the first code PR in each lane:** extend ESLint's `appsQuerySyntax` rule (`tx.selectFrom(…)` and friends) from `apps/**` to that lane's package, with a case in `tests/security/lint-boundaries.spec.ts`. Today nothing stops a `TenantTx` received by `packages/auth` from building a query.
 
@@ -37,8 +37,7 @@ Then **M2** accounting core · **M3** customers, service invoice, receipts · **
 | Item | Blocked on | Deadline |
 |---|---|---|
 | ~~W1-002 / W1-003 merge~~ | ~~ADR-0023 Architecture seat signature~~ — **resolved 2026-09-27**: approved with conditions, ADR-0023 Accepted | — |
-| M1-D (W1-005) | `feature/W1-000-adr-0020-audit-canonicalisation` — **awaiting Product Owner merge of its PR.** Merges cleanly into `develop` at `afd4a6d` (checked 2026-09-27) | 2026-09-29 |
-| M1-D — writing migration 009 | ADR-0020 on that branch still says **"migration 007"** for `audit_log` (its `Blocks:` line, §5, and "Three conditions carried to migration 007") — stale against the 2026-09-26 numbering, which makes it **009**. The register says ADR-0020 is amended rather than ADR-0023 bent around it; that amendment has not landed. Architecture seat corrects the references after the branch merges, before 009 is written | 2026-09-29 |
+| ~~M1-D (W1-005)~~ | ~~`feature/W1-000-adr-0020-audit-canonicalisation` awaiting merge~~ — **resolved 2026-09-27**: PR #11 merged | — |
 | ~~M1-A / M1-R — query construction in `packages/auth` / `packages/permissions`~~ | ~~ADR-0013 allowlist (ADR-0023 A4)~~ — **withdrawn 2026-09-27**: A1 keeps all query construction in `packages/database`, which ADR-0013 already permits. No ADR-0025 | — |
 | ~~M1-A — `packages/auth` merge~~ | ~~Head notices on ADR-0009 and ADR-0004 (ADR-0023 A5)~~ — **delivered 2026-09-27** (ADR-0009 kept at +24; ADR-0004 now +19) | — |
 | M1-A — `/auth/login` emitting `Set-Cookie` | Cookie-prefix decision (ADR-0023 *Open*, a stated gate) — see Decisions needed | 2026-09-29 |
