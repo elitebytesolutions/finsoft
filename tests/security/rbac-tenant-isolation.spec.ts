@@ -173,7 +173,8 @@ describe('Viewer cannot pass a voucher.post check', () => {
             tenant_id: alpha.tenantId,
             email: `viewer.security@example.test`,
             full_name: 'Security Viewer',
-            status: 'INVITED',
+            status: 'ACTIVE',
+            password_hash: 'test-hash-not-real',
             created_by: alpha.ownerId,
             updated_by: alpha.ownerId,
           })

@@ -130,6 +130,62 @@ OWNER         backend-engineer · Database/Security Council seat (database-guard
   found 008_create_rbac.sql" once the throwaway placeholders are removed, as anticipated by
   this brief. This is expected to clear once the branch is rebased onto `develop` after the
   m1-auth lane's 006/007 land — not fixed here.
+## Council review conditions (Database + Security seats, approved with conditions)
+
+All applied on this branch before merge, 008 rebuilt-in-place (not yet released, so this is
+revision, not an ADR-0013 violation):
+
+- **DB-C1** — `roles_bump_permission_version` (`AFTER UPDATE ... WHEN status changed`) bumps
+  every current holder, exactly as a `role_permissions` change does. Tested (grant/revoke
+  parity) in `database/tests/rbac.spec.ts`.
+- **DB-C2** — both cascades now lock `roles` first (`role_permissions` path `FOR UPDATE`,
+  `user_roles` path `FOR SHARE`), then lock affected `users` rows one at a time in ascending
+  `id` order via an explicit loop, never a bare `UPDATE ... WHERE EXISTS`. Two real, independent
+  `pg.Client` connections in `tests/security/rbac-lock-order.spec.ts` prove connection B
+  genuinely blocks on PostgreSQL's lock manager (not the shared harness pool) while A holds the
+  role, then completes cleanly. `docs/LOCK_REGISTRY.md` created (this brief's ALLOWED extended
+  for it, per the Database seat). **Scope note:** the ordered-loop half of the fix (which
+  prevents a deadlock between two cascades over *different* roles that share members) is
+  covered by code review and the migration's own header reasoning, not by a second dedicated
+  multi-row two-connection test — the single-role case is the one explicitly named and is what
+  is proven experimentally.
+- **DB-C3** — `COMMENT ON COLUMN users.version` added in 008, documenting both uses; 002 is
+  untouched.
+- **DB-C4** — `database/tests/rbac.spec.ts`'s ACL section rewritten to exact-set assertions:
+  every column of every table, `has_column_privilege` for finsoft_app/readonly_support,
+  `pg_attribute.attacl` for PUBLIC (which `has_column_privilege` cannot query — it does not
+  accept the literal `'PUBLIC'`), and exploded `relacl` for the table-level grant. Negative
+  transition-trigger tests added: revocation cannot be cleared (role_permissions) or re-dated
+  (user_roles), version must increase, cross-tenant `revoked_by` is refused (23503). The two
+  "identity columns are immutable" cases assert `42501` (grant absence), not the trigger's own
+  message — `role_id`/`permission_code`/`user_id` have no UPDATE grant to `finsoft_app` at all,
+  so the trigger's identical check is unreachable that way and the grant is the stronger,
+  actually-observed defence; documented in the test.
+- **DB-C5** — `role_permissions_role_idx` and `user_roles_user_idx` dropped; both were strict
+  prefixes of a partial unique index already covering their query shape.
+- **DB minor** — `insertSeededRoles` throws if the `tenantId` argument disagrees with
+  `TenantContext`'s tenant. Tested.
+- **SEC-C3** — the guard now checks handler/class metadata *presence* with `reflector.get`
+  before merging with `getAllAndMerge`, so a route with no decorator at all (skip) and
+  `@RequirePermission()` with zero codes (throw) are told apart; the empty case throws rather
+  than passing every request. Class- and handler-level requirements combine. Tested with a
+  two-controller fixture (empty decorator → 500; class + handler requirements both enforced).
+- **SEC-C4** — `selectEffectivePermissionCodes` now joins `users` and requires
+  `u.status = 'ACTIVE'`. Every fixture across the three RBAC test files that needs a positive
+  permission-resolution result now creates an ACTIVE user with a `password_hash` (required by
+  `users_active_requires_password`); the shared tenant fixture's provisioned owner (INVITED by
+  default, in `packages/database/src/testing/harness.ts`, outside ALLOWED) is activated
+  in-place within each test rather than by changing the shared harness. SUSPENDED/DISABLED/
+  INVITED are tested to resolve to no permissions (`database/tests/rbac.spec.ts`) and to 403
+  through the guard (`tests/integration/permission-guard.spec.ts`).
+- **SEC-C6** — the guard compares `TenantContext.current()` against `req.auth` and returns 401
+  on a mismatch or on a missing context, before ever calling `withTenant` (which would
+  otherwise throw `TenantContextError` and surface as an uncaught 500). Tested with test-only
+  headers that desynchronise `req.auth` from `TenantContext` in both directions, and with
+  `TenantContext` never established at all.
+
+---
+
 - **OBSERVED, not fixed:** `tests/integration/api-app.spec.ts`'s
   "keeps REQUIRED_SCHEMA_VERSION in step with the migrations on disk" fails locally because
   `apps/api/src/health/health.service.ts`'s `REQUIRED_SCHEMA_VERSION` (5) is now behind the
