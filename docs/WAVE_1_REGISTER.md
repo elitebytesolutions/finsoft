@@ -27,7 +27,33 @@ The SQL half was met in Wave 0 — [FND-007/008](WAVE_0_REGISTER.md) proves isol
 
 **Acceptance criteria.** ADR-0020 written and signed by three parties · both dependencies security-reviewed, pinned exactly, `npm audit` unchanged · argon2id verified in a **musl** environment, not merely locally · parameters benchmarked on the staging host.
 
-**Status: in progress.** ADR-0020 is written and unsigned; the reviews are done.
+**Status: complete. ADR-0020 Accepted by the Product Owner 2026-09-25, on both guardian signatures.**
+
+Three review rounds. **Both guardians approved the canonicalisation on
+independent reproduction** — each regenerated both golden vectors and the
+rejected 13-column reading from the specification alone, one with the input
+record's keys deliberately shuffled. §1–§4 needed no change across any round.
+
+**Every blocking finding was in §5's mechanism, and the last one was a lesson
+W1-001 had already taught**: the linkage trigger read its parent row unlocked,
+so a concurrent `seq` rewrite slipped past a trigger that had already passed,
+leaving `0, 1, 3, 99` — a false gap, which §6 defines as evidence of a deleted
+row. Neither the advisory lock (it serialises *appenders*; the mutator is not
+one) nor the foreign key (`seq` is not in the referenced key, so `FOR KEY
+SHARE` does not conflict) covered it.
+
+The durable outcome is doctrine rather than a fix: **any row a trigger reads
+other than its own must be read `FOR SHARE`**, recorded at
+`database/migrations/005_create_sessions.sql:114-131` and now cited from
+ADR-0020 so the next trigger author inherits it instead of rediscovering it on
+a financial table.
+
+**Two facts were wrong while stated as measured**, and both are named in
+ADR-0020's Signatures block so a reader knows where to distrust it: `objsubid`
+had the one- and two-argument advisory forms inverted — and that sentence had
+already been copied into `LOCK_REGISTRY.md`, the file whose job is to be the
+authority on it — and `audit_log_ip_bounded` checked length only while citing a
+15-character value as its justification.
 
 ### ADR-0020 — audit hash chain canonicalisation
 
@@ -123,7 +149,35 @@ Date.prototype.toISOString()                      →  ...383Z                  
 
 **Decisions taken in the revision**, each with its rejected alternative recorded: the linkage trigger over a self-FK plus anchor row (the anchor needs an authorship 002 deliberately does not provide); a one-argument advisory lock keyed on the tenant's own bits over `(4919, hashtext(…))` (which couples unrelated tenants and rests on an undocumented function); `audit_log` exempt from the §11 mandatory column set, named in `schema.spec.ts` rather than left to the migration author.
 
-**Outstanding.** Re-review, then three signatures. Migration 007 does not merge before them.
+### Contract, extended by the Product Owner 2026-09-25
+
+```
+ALLOWED     docs/adr/ADR-0020-audit-hash-chain-canonicalisation.md
+            docs/ARCHITECTURE.md         (the :302 advisory-lock line only)
+            docs/LOCK_REGISTRY.md        (new)
+            docs/TECH_DEBT.md            (new)
+            docs/WAVE_1_REGISTER.md
+READ ONLY   docs/adr/** (others), docs/NON_NEGOTIABLES.md
+FORBIDDEN   docs/adr/ADR-0018-*.md, database/**, packages/**, apps/**
+```
+
+`docs/ARCHITECTURE.md` and `docs/LOCK_REGISTRY.md` were added on the
+Architecture Guardian's ruling, which refused to widen the contract itself:
+*"that is a one-line Product Owner action, and it is the correct route — not a
+quiet widening by whoever is holding the branch."*
+
+**`ADR-0018` is explicitly FORBIDDEN here**, and that is the same ruling. Its §6
+(*"No lock is acquired after the first write"*) is the record that must change,
+not ADR-0020 — but ADR-0018's deciders include the Accounting Guardian, and a
+third party amending a `Proposed` document between drafts stops it being
+reviewable by its own deciders. Replacement text is supplied in the guardian's
+ruling and recorded against ADR-0018's acceptance pass. **ADR-0018 must not be
+signed carrying :123 as written.**
+
+**Outstanding.** Database Guardian round 3 on §1–§4, the five §5 changes, then
+three signatures. Migration 007 does not merge before them, and ADR-0020 does
+not merge before the `ARCHITECTURE.md:302` amendment — two LEVEL 1 documents
+contradicting each other in `docs/` is escalated, not tolerated.
 
 ---
 

@@ -299,7 +299,7 @@ COMMIT
 
 Anything that can fail independently of the books — email, PDF, FBR push, webhook, cache invalidation — goes into `outbox` inside the transaction and is dispatched by the worker afterwards. Nothing that touches an external system happens inside the posting transaction.
 
-Isolation level: `READ COMMITTED` with explicit row locks (`SELECT ... FOR UPDATE`) on the contended rows — stock balances, numbering counters, account balance caches. Where a whole-entity serialisation is needed, use an advisory lock keyed by `(tenant_id, entity)`.
+Isolation level: `READ COMMITTED` with explicit row locks (`SELECT ... FOR UPDATE`) on the contended rows — stock balances, numbering counters, account balance caches. Where a whole-entity serialisation is needed, use an advisory lock. **Every advisory lock key is constructed as [ADR-0020](adr/ADR-0020-audit-hash-chain-canonicalisation.md) §5 specifies and registered in [docs/LOCK_REGISTRY.md](LOCK_REGISTRY.md) with its position in the global acquisition order. `hashtext` is not used for a tenant-derived key: it is undocumented, carries no stability contract, and its `int4` output collides often enough to couple unrelated tenants in the posting path — measured at 199 997 distinct in 200 000 random uuids.**
 
 ---
 
