@@ -232,12 +232,12 @@ ADR-0009:121 and :123 describe a sticky per-user lockout triggered by an attacke
 | 2 | IP prefix — **/32 v4, /64 v6** | higher volume, faster window |
 | 3 | (IP prefix, email) | tightest and cheapest |
 | 4 | global failed-logins per minute for the endpoint | **alert and global slowdown, never a hard block** — a global block is self-DoS and is the attacker's actual goal |
-| 5 | escalation on layer 1 | proof-of-work or CAPTCHA after N failures: **the attacker pays, the victim does not** |
+| 5 | escalation on layers **0 and 1** | proof-of-work or CAPTCHA after N failures: **the attacker pays, the victim does not** |
 
 - **`X-Forwarded-For`: take the Nth-from-the-right entry for a configured N.** Never the leftmost, never a framework's `req.ip` default. Leftmost parsing gives an attacker an unbounded key space *and* the ability to spend a victim's budget by spoofing their address — a worse primitive than the bypass.
 - **The limiter fails closed.** If Redis is unreachable, `/auth/login` and `/auth/refresh` return 503. A limiter that fails open is one an attacker removes by attacking Redis first.
 - **Normalise the email exactly as the lookup does**, or `Victim@x.com` and `victim@x.com` are two budgets for one account. **And normalise the tenant code the same way** — `tenants.code` is uppercase-only by CHECK, so upper-casing the input is both normalisation and validation. Without it, `acme`/`Acme`/`aCme` are 2ⁿ distinct budgets for one `(email, tenant)` pair: a 16× amplification on a four-character code, 65 536× on a sixteen-character one, defeating layers 0, 1 and 3 at once. This is the `Victim@x.com` bug on the field the narrowing added.
-- **`/auth/refresh` has no email, so it gets its own keys: the IP prefix and the presented token's hash.** Keying on the **resolved** tenant is forbidden — it is available only *after* the resolver has run, so the cross-tenant read would be reachable at whatever rate layer 2 permits, and it would let one valid token for a tenant exhaust that tenant's whole refresh budget. **The limiter is evaluated before `withResolvedTenant` invokes the resolver**, so a Redis outage means the resolver is never called. That discharges D-W1-004's third condition, which an earlier draft left to a login-shaped table that has no email to key on.
+- **`/auth/refresh` has no email, so it gets its own keys: the IP prefix and the presented token's hash. That key is never logged** — it is a bare 64-hex digest, and §6 establishes that redaction denies by key *name* and so cannot catch one inside a value like `{ limiterKey: 'rt:ab12…' }`. Covered by the same `log-leak` assertion §6 requires. Keying on the **resolved** tenant is forbidden — it is available only *after* the resolver has run, so the cross-tenant read would be reachable at whatever rate layer 2 permits, and it would let one valid token for a tenant exhaust that tenant's whole refresh budget. **The limiter is evaluated before `withResolvedTenant` invokes the resolver**, so a Redis outage means the resolver is never called. That discharges D-W1-004's third condition, which an earlier draft left to a login-shaped table that has no email to key on.
 
 **Lockout** — a sticky state needing an unlock — may only be keyed on something an attacker cannot choose *on someone else's behalf*. The defensible key is **(user, device/IP)**, never (user): it stops the attacker's source and leaves the victim's own device working.
 
@@ -264,8 +264,9 @@ ADR-0009:121 and :123 describe a sticky per-user lockout triggered by an attacke
 ### Negative, and accepted
 
 - **`refresh_tokens` is readable across tenants by one role.** ADR-0004's backstop does not apply on that path; isolation rests on the column grant, the function body and role-membership containment. This is the same shape of admission ADR-0021 made for one index, and it is recorded with the same candour.
+- **The role's `NOLOGIN` and `NOBYPASSRLS` are protected by NOTHING but a catalogue assertion.** They live in `00-bootstrap.sh`, an un-checksummed shell script outside the migration chain — so the immutability argument below covers the function body and not the attributes that make the owner safe to be a definer. Stated in the residual register rather than only in §2, because this list should be readable on its own.
 - **The function body is protected by migration immutability, not by a mechanism.** Nothing outside a migration can `SET ROLE finsoft_refresh`, but a future *numbered* migration can widen the body or the grant, and only review catches it. A review gate, honestly labelled — the same class as ADR-0021 condition 5.
-- **Tenant enumeration through the code field**, mitigated by §4's identical-response rule and by including the code in the rate-limit key.
+- **Tenant enumeration through the code field**, bounded by §4's identical response and by layers 2 and 4 — **not** by the code's presence in the rate-limit key, which partitions the budget by code and therefore *helps* enumeration. An earlier version of this bullet said the opposite, and it survived the revision that corrected the same claim in §1: the record contradicted itself in its **residual-risk register**, which is the section a reviewer reads to learn what was accepted and an auditor reads first.
 - **A resolver miss cannot be audited**, only logged.
 - **`LOGIN_FAILED` log lines carry the normalised email AND the normalised tenant code**, and nothing else from the request body, because those are §5's layer-1 key. Email alone is an address; email plus tenant code **names an identified person at an identified company** and makes per-company failed-login volume readable in a store shared across tenants. That is materially larger than "email appears in logs", and *"decided here rather than discovered in the aggregator"* is only true if this record describes what actually arrives there. Authentication log lines inherit the platform retention policy. A keyed digest was rejected: it preserves the operational use — correlating one account's failures — at the cost of the operator computing it, and on-call legibility during an incident wins.
 
@@ -312,12 +313,12 @@ Keep the BYPASSRLS-owned control arm inside the rolled-back transaction, or the 
 - **Assert the resulting ACLs, never the presence of a statement.** `proacl` exactly `{finsoft_refresh=X/finsoft_refresh,finsoft_app=X/finsoft_refresh}`; `has_function_privilege('public', …, 'EXECUTE')` and `('readonly_support', …)` false for **every** `prosecdef` function. This is the lesson of the two no-op statements above: the statement ran and did nothing. **And `has_function_privilege` alone would have misled in both directions here** — it returned true for `readonly_support` against the broken state while the role could not actually reach the function, because it ignores schema `USAGE`. Assert the catalogue, as an exact set.
 - **A defect-injected belt test:** create a throwaway second `SECURITY DEFINER` function in `auth_lookup` and assert PUBLIC holds no `EXECUTE`. If it passes, the default-privileges line works; if it fails, that line is prose. This is how the `IN SCHEMA` form was caught.
 - `SET ROLE finsoft_refresh; SELECT expires_at FROM refresh_tokens;` raises `42501`.
-- `SET ROLE finsoft_refresh; SELECT expires_at FROM refresh_tokens;` raises `42501`. Proves the column grant bounds the read, not the role's identity.
 
 **Catalogue assertions, written over the class and not over this one function:**
 
 - For **every** `prosecdef = true` function: the owner is in an explicit allowlist, that owner's `rolbypassrls` is `false`, **the owner is `NOLOGIN`**, `provolatile = 's'`, `proleakproof = false`, and `proconfig` carries a `search_path`. Over the class, so the next one added inherits it — and `NOLOGIN` over the class, because otherwise the next definer owner may be a login role.
 - **`pg_auth_members` exact match, INCLUDING THE OPTIONS**: `finsoft_refresh` has exactly one member, `finsoft_migration`, with `inherit_option = false`, `set_option = true`, `admin_option = false`. Asserting only the member list leaves §2's security claim about `INHERIT FALSE` untested — and a re-grant with `INHERIT TRUE` would keep the member set identical while handing `finsoft_migration` passive cross-tenant reach **and silently changing what the migration's own `GRANT`s do.**
+- **That assertion is evidence only on a cluster initialised by `00-bootstrap.sh` in the same run.** CI initialises a fresh volume; a role's presence in a long-lived developer cluster is **not** evidence that the bootstrap creates it, and once the bootstrap is amended the two causes become indistinguishable forever on any persisted volume. It also runs against `finsoft_test` only, so **dev-cluster drift stays invisible** — accepted explicitly rather than assumed away.
 - **The role SET itself is an exact match**: the non-superuser, non-`pg_%` roles are exactly `{finsoft_app, finsoft_migration, readonly_support, finsoft_refresh}`, **so a hand-created role fails CI.** During this review `finsoft_refresh` was found already present in the local test cluster, created by hand during a measurement session and absent from `00-bootstrap.sh` — so every role assertion here would have gone green because someone typed it, not because anything provisioned it. Third instance of the same hygiene failure in this wave.
 - **Superusers are excluded from every `pg_has_role` assertion.** `pg_has_role('finsoft_bootstrap','finsoft_refresh','USAGE')` is **true** — superusers hold every role — so the naive form fails on a correct cluster. `roles.spec.ts` documents this trap in its own header. `pg_has_role('finsoft_app','finsoft_refresh','USAGE')` and `('MEMBER')` are false; likewise `readonly_support`. **A list that can grow is not a control** — one `GRANT finsoft_refresh TO finsoft_app` would otherwise let the API role `SET ROLE` and read every tenant's tokens.
 - For every non-superuser role, memberships asserted against an exact allowlist. Role membership is a privilege-escalation surface this repository does not currently test at all.
@@ -333,7 +334,7 @@ So: an exact-match allowlist modelled on `GLOBALLY_UNIQUE_INDEX_ALLOWLIST`, carr
 **Behavioural tests:**
 
 - **D-W1-004's re-proof obligation.** `cannot spend another tenant's token by presenting its hash` currently derives its entire guarantee from RLS being in force on the by-hash lookup — which is exactly what this ADR removes. It must be re-proved **through this mechanism**, or it silently stops testing anything at the moment it starts to matter.
-- Identical response bytes across: unknown tenant code, unknown email, wrong password, `INVITED`, `SUSPENDED`, `DISABLED`, suspended tenant, throttled.
+- Identical response bytes across: unknown tenant code, unknown email, wrong password, `INVITED`, `SUSPENDED`, `DISABLED`, **every non-`ACTIVE` tenant status including `CLOSED`**, throttled.
 - Exactly one argon2id invocation per login request on each of those paths — asserted by counting invocations, not by timing.
 - A login or refresh request carrying `tenantId` / `tenant_id` / `X-Tenant-Id` in body, query, header or a second cookie produces a byte-identical response and an identical `tenant_id` claim. **ADR-0009:160's existing version of this test runs against *guarded* endpoints; these two have no guard, and they are where the claim is minted.**
 - The JWT payload's `tenant_id` is assigned from the resolver's or the global-`tenants` read's return value at exactly one site.
@@ -376,9 +377,25 @@ So: an exact-match allowlist modelled on `GLOBALLY_UNIQUE_INDEX_ALLOWLIST`, carr
 
 | | |
 |---|---|
-| **Security Guardian** | ☐ not recorded — threat-modelled the draft design; findings incorporated above |
-| **Database Guardian** | ☐ not recorded |
+| **Security Guardian** | ✅ **SIGNED, 2026-09-27** — approved with conditions; all six landed |
+| **Database Guardian** | ✅ **SIGNED, 2026-09-27** — §2 re-run verbatim from the record's bytes |
 | **Architecture Guardian** | ☐ not recorded |
 | **Product Owner** | ☐ not recorded — decided §1's tenant field and §5's throttle/lockout split, 2026-09-25 |
 
-Migration 006 and `packages/auth` do not merge before all four.
+> **Security Guardian — 2026-09-27.** Design and controls verified by measurement on a bootstrapped cluster: §2's block runs, `proacl` exact, PUBLIC and `readonly_support` excluded, the default-privileges belt works **under defect injection**, and the primary gate discriminates even when run from the `BYPASSRLS` connection — the caller's bypass does not propagate into the definer's context, so the arm that would have silently passed does not exist.
+
+> **Database Guardian — 2026-09-27.** §2's two SQL blocks extracted with `awk` rather than retyped, so what ran was the record's bytes. Guard aborts before any DDL when the role is absent; 006 then runs 15 statements at `ON_ERROR_STOP=1` with **exit 0 and zero `WARNING` lines** — which is the whole difference from the draft, where two statements reported success and did nothing. Nine end-state properties verified, and the gate discriminates on all three arms against the `BYPASSRLS` twin.
+
+**What the Database Guardian explicitly did NOT sign**, recorded because the distinction is the point: `catalog.ts`'s two additions, `PRE_TENANT_POLICY_ALLOWLIST`, and every catalogue assertion in Compliance — **none of which exists yet.** This commit changes no schema and no test, *"which is why 102/102 is unsurprising rather than reassuring."* Migrations 006 and 007 are reviewed as code, **with their assertions in the same PR as the DDL they guard, not behind it** — the `proacl` assertion is the one that would have caught the draft's silent no-op.
+
+### The measurement rule, in its operational form
+
+Both guardians and this author produced instances of the same failure in one wave: a privilege or role measured outside the bootstrap, or a statement trusted because it reported success. The Database Guardian supplied the form that prevents both, and owned their own instance of it — the hand-created role found in the test cluster was theirs, from round one, and `CREATE ROLE` is **cluster**-scoped, so it was visible from every database regardless of which clone it was used in:
+
+> **Measure inside a transaction that rolls back.** Role DDL is transactional — measured: `BEGIN; CREATE ROLE probe …; ROLLBACK;` leaves nothing. **Where a rollback is impossible, assert the cluster inventory before AND after.** Asserting only afterwards is how a transient becomes observable to someone else's review.
+
+Together with the two rules in the Wave 1 register — a privilege measured outside the bootstrap is not measured, and a privilege statement's success is not evidence it did anything — that is the whole of what this wave learned about measuring privileges.
+
+---
+
+Migrations 006 **and 007** and `packages/auth` do not merge before all four — and **`/auth/login` does not ship before 007.** An earlier version named only 006, which permitted login to ship reading `tenants.code` and `tenants.status` while `finsoft_app` still held table-level `UPDATE` on both: H-9's exploitation path, live, in a state this record allowed.

@@ -395,9 +395,21 @@ ALLOWED     docs/adr/ADR-0023-*.md              (the pre-tenant lookup)
             packages/database/src/**                  (withResolvedTenant, ResolvedTenantId)
             tests/integration/**, tests/security/**
             docs/WAVE_1_REGISTER.md, docs/TECH_DEBT.md
-READ ONLY   docs/adr/** (others), docs/NON_NEGOTIABLES.md, docs/ARCHITECTURE.md
+READ ONLY   docs/adr/** (others), docs/NON_NEGOTIABLES.md
+            docs/ARCHITECTURE.md — EVERYTHING BUT the §6 carve-out named above
 FORBIDDEN   database/migrations/005_*.sql  (RELEASED — forward migration only)
-            apps/**, modules/**, packages/database/src/** (except generated)
+            apps/**, modules/**
+            packages/database/src/** — EVERYTHING BUT withResolvedTenant and
+            ResolvedTenantId named above, and the generated schema
+```
+
+**The two carve-outs are spelled on the restrictive entries, not listed twice.**
+An earlier version of this contract put `docs/ARCHITECTURE.md` in both ALLOWED
+and READ ONLY, and `packages/database/src/**` in both ALLOWED and FORBIDDEN —
+introduced when the Product Owner extended the scope and I appended to ALLOWED
+without narrowing the other two columns. CLAUDE.md says *"write only inside
+ALLOWED"*; a path in two columns decides nothing, and the ARCHITECTURE edit was
+already committed under it. Caught by the Database Guardian.
 ```
 
 **Why the contract exists before the first line of code.** W1-001 started
