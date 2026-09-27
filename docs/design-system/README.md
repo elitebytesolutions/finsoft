@@ -1,8 +1,9 @@
 # FinSoft Financial UI Kit — Design System
 
 **Authority: Level 2** (see [CLAUDE.md](../../CLAUDE.md) — *Authority levels*).
-Changing a token, a component contract or a page archetype needs Product Owner sign-off and a
-`design-system` agent review. The **display invariants** quoted in this system (Dr/Cr treatment,
+Changing a token, a component contract or a page archetype is decided by the **design-system seat**
+— the `design-system` agent, a delegated owner under [ADR-0024](../adr/ADR-0024-operating-model.md).
+The Product Owner sees the result in the demo and accepts or rejects the workflow, not the token. The **display invariants** quoted in this system (Dr/Cr treatment,
 posted-record immutability affordances, period-lock states, tenant scoping of every list) are
 restatements of **Level 0** rules from [docs/NON_NEGOTIABLES.md](../NON_NEGOTIABLES.md) and are
 not editable here.

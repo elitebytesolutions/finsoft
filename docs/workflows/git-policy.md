@@ -2,9 +2,9 @@
 
 **Status:** Operational. Records what is enforced, by what, and what is not.
 
-`IMPLEMENTATION.md:287` states that an agent never merges its own PR. This
-document says how that is upheld today, and — more importantly — where it is
-upheld by discipline rather than by a control.
+[IMPLEMENTATION.md §10](../IMPLEMENTATION.md) states that an agent never merges
+its own PR. This document says how that is upheld today, and — more importantly
+— where it is upheld by discipline rather than by a control.
 
 ---
 
@@ -65,13 +65,33 @@ Agents may **not**:
 - delete a branch they do not own
 - deploy
 
-A guardian review happens in-session and is recorded in the pull request. It is
-not a GitHub approval, because an agent has no GitHub identity.
+A Council seat's review happens in-session and is recorded in the pull request.
+It is not a GitHub approval, because an agent has no GitHub identity.
+
+## Reviewers by tier
+
+The PR's tier is the highest tier any changed path reaches
+([OPERATING_MODEL.md §4](../OPERATING_MODEL.md), [ADR-0024](../adr/ADR-0024-operating-model.md)).
+Every tier runs secret scanning and the FinancialInvariantSuite.
+
+| Tier | Change | Reviewer recorded in the PR |
+|---|---|---|
+| T0 | docs, copy, prototype UI | one peer agent |
+| T1 | normal UI/API behaviour | one peer agent; `packages/ui/**` → design-system |
+| T2 | auth, permissions, tenancy, migrations, infra, CI | named Council seat: Database/Security, or Architecture for `packages/database/**` and guards; devops-guardian for infra and CI |
+| T3 | posting, money, inventory, tax, periods | Accounting seat, plus Architecture for the kernels |
+
+A seat's rejection is final within its domain. Disputes go to the Technical
+Council, and to the Product Owner only under ADR-0024's escalation criteria.
 
 ## Maintainer workflow
 
-1. Agent pushes `feature/FND-0NN-…` and opens a PR against `develop`.
-2. CI runs the full required-check set.
+Unchanged by ADR-0024: humans merge, and [GAP-001](../COMPLIANCE_GAPS.md) is
+still open.
+
+1. Agent pushes `feature/<ID>-…` and opens a PR against `develop`, naming the
+   tier and the Council seat that reviewed it.
+2. CI runs the required checks for that tier; `develop` runs everything.
 3. Maintainer confirms the checks passed **on the head commit of that PR**, reads
    the diff, and merges by hand.
 4. Deployment happens only after checks pass **on the exact commit being
