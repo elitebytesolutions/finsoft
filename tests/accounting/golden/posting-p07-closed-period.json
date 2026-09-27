@@ -1,0 +1,311 @@
+{
+  "id": "P07",
+  "format": "posting-scenario/v1",
+  "name": "Closed and locked periods reject postings; a closed-period entry is reversed into today's open period",
+  "rules": [
+    "PERIODS/monthly-v1",
+    "PERIOD_CLOSED@1",
+    "REVERSAL@1",
+    "JOURNAL_VOUCHER_POSTED@1",
+    "REPORT/trial-balance@1"
+  ],
+  "source": "docs/posting-rules/periods.md",
+  "governedBy": ["ADR-0012", "ADR-0006", "NON_NEGOTIABLES rules 5 and 13", "Invariant 5"],
+  "executableFrom": "M2",
+  "status": "Specified, hand-computed. Not yet executed: the M2 QA lane writes the runner.",
+  "description": [
+    "Today is 2026-09-27 (Asia/Karachi). FY2027 = 2026-07-01 … 2027-06-30.",
+    "",
+    "A voucher in August (Dr 6300 2000.0000 / Cr 1120 2000.0000) is posted, then July and",
+    "August are closed in order. A posting into August is rejected. A replay of the",
+    "August voucher's own request still returns it (a replay is not a posting).",
+    "",
+    "The August voucher is then reversed. Its period is CLOSED, so the reversal is dated",
+    "TODAY, 2026-09-27, in September (reversal.md §4):",
+    "  RV-2027-000001  Dr 1120 2000.0000 / Cr 6300 2000.0000",
+    "",
+    "The closed period's figures do not move. By hand:",
+    "  TB as of 2026-08-31, before AND after the reversal: 6300 2000.0000 Dr, 1120 2000.0000 Cr",
+    "  TB as of 2026-09-30: 6300 0.0000, 1120 0.0000",
+    "  September movement: 1120 2000.0000 Dr, 6300 2000.0000 Cr — the disclosed correction",
+    "",
+    "The actor matrix ADR-0012 demands (user, admin, job, outbox, import, SQL as app role,",
+    "SQL as migration role) is an Invariant 5 suite concern, not a golden scenario: the",
+    "numbers do not depend on the actor, and the rejection must not either."
+  ],
+  "fixture": {
+    "coa": "standard-v1",
+    "timezone": "Asia/Karachi",
+    "fiscalYearStartMonth": 7,
+    "today": "2026-09-27",
+    "periods": { "fiscalYear": 2027, "status": "all OPEN" },
+    "tenants": ["GOLDEN_A"]
+  },
+  "steps": [
+    {
+      "step": 1,
+      "do": "post",
+      "event": "JOURNAL_VOUCHER_POSTED",
+      "idempotencyKey": "p07-aug",
+      "occurredAt": "2026-08-10",
+      "payload": {
+        "narration": "Office repairs paid from bank",
+        "lines": [
+          { "account": "6300", "debit": "2000.0000" },
+          { "account": "1120", "credit": "2000.0000" }
+        ]
+      },
+      "expect": {
+        "outcome": "POSTED",
+        "entryNumber": "JV-2027-000001",
+        "period": "2026-08",
+        "lines": [
+          { "account": "6300", "debit": "2000.0000", "credit": "0.0000" },
+          { "account": "1120", "debit": "0.0000", "credit": "2000.0000" }
+        ],
+        "entriesAfter": 1
+      }
+    },
+    {
+      "step": 2,
+      "do": "period",
+      "action": "close",
+      "period": "2026-10",
+      "expect": {
+        "outcome": "REJECTED",
+        "error": "PERIOD_CLOSE_OUT_OF_ORDER",
+        "periodStatus": { "2026-10": "OPEN" }
+      }
+    },
+    {
+      "step": 3,
+      "do": "period",
+      "action": "close",
+      "period": "2026-07",
+      "expect": {
+        "outcome": "TRANSITIONED",
+        "periodStatus": { "2026-07": "CLOSED" },
+        "journalEntriesWritten": 0,
+        "auditRecordsWritten": 1
+      }
+    },
+    {
+      "step": 4,
+      "do": "period",
+      "action": "close",
+      "period": "2026-08",
+      "expect": {
+        "outcome": "TRANSITIONED",
+        "periodStatus": { "2026-08": "CLOSED" },
+        "journalEntriesWritten": 0,
+        "auditRecordsWritten": 1
+      }
+    },
+    {
+      "step": 5,
+      "do": "assert",
+      "trialBalance": {
+        "asOf": "2026-08-31",
+        "rows": [
+          { "account": "1120", "debit": "0.0000", "credit": "2000.0000" },
+          { "account": "6300", "debit": "2000.0000", "credit": "0.0000" }
+        ],
+        "totals": { "debit": "2000.0000", "credit": "2000.0000" }
+      }
+    },
+    {
+      "step": 6,
+      "do": "post",
+      "event": "JOURNAL_VOUCHER_POSTED",
+      "idempotencyKey": "p07-late",
+      "occurredAt": "2026-08-31",
+      "payload": {
+        "narration": "Late August bill",
+        "lines": [
+          { "account": "6400", "debit": "500.0000" },
+          { "account": "1120", "credit": "500.0000" }
+        ]
+      },
+      "expect": {
+        "outcome": "REJECTED",
+        "error": "PERIOD_CLOSED",
+        "errorDetail": { "period": "2026-08", "currentOpenPeriod": "2026-09" },
+        "entriesAfter": 1
+      }
+    },
+    {
+      "step": 7,
+      "do": "post",
+      "$comment": "Exact replay of step 1. Idempotency runs before the period check, so the original is returned although August is now CLOSED.",
+      "event": "JOURNAL_VOUCHER_POSTED",
+      "idempotencyKey": "p07-aug",
+      "occurredAt": "2026-08-10",
+      "payload": {
+        "narration": "Office repairs paid from bank",
+        "lines": [
+          { "account": "6300", "debit": "2000.0000" },
+          { "account": "1120", "credit": "2000.0000" }
+        ]
+      },
+      "expect": { "outcome": "REPLAYED", "entryNumber": "JV-2027-000001", "entriesAfter": 1 }
+    },
+    {
+      "step": 8,
+      "do": "reverse",
+      "entry": "JV-2027-000001",
+      "idempotencyKey": "p07-rev",
+      "reason": "Repairs were for the owner's house, not the office",
+      "expect": {
+        "outcome": "POSTED",
+        "entryNumber": "RV-2027-000001",
+        "occurredAt": "2026-09-27",
+        "period": "2026-09",
+        "postingRule": "REVERSAL@1",
+        "reversalOf": "JV-2027-000001",
+        "disclosure": { "originalPeriod": "2026-08", "originalPeriodStatus": "CLOSED" },
+        "lines": [
+          { "account": "1120", "debit": "2000.0000", "credit": "0.0000" },
+          { "account": "6300", "debit": "0.0000", "credit": "2000.0000" }
+        ],
+        "totals": { "debit": "2000.0000", "credit": "2000.0000" },
+        "originalAfter": {
+          "entry": "JV-2027-000001",
+          "status": "REVERSED",
+          "reversedBy": "RV-2027-000001"
+        },
+        "entriesAfter": 2
+      }
+    },
+    {
+      "step": 9,
+      "do": "assert",
+      "$comment": "August's trial balance is identical to step 5: the correction did not reach the closed period.",
+      "trialBalance": {
+        "asOf": "2026-08-31",
+        "rows": [
+          { "account": "1120", "debit": "0.0000", "credit": "2000.0000" },
+          { "account": "6300", "debit": "2000.0000", "credit": "0.0000" }
+        ],
+        "totals": { "debit": "2000.0000", "credit": "2000.0000" }
+      },
+      "trialBalanceAfter": {
+        "asOf": "2026-09-30",
+        "rows": [
+          { "account": "1120", "debit": "0.0000", "credit": "0.0000" },
+          { "account": "6300", "debit": "0.0000", "credit": "0.0000" }
+        ],
+        "totals": { "debit": "0.0000", "credit": "0.0000" }
+      },
+      "periodMovement": {
+        "2026-08": {
+          "rows": [
+            { "account": "1120", "debit": "0.0000", "credit": "2000.0000" },
+            { "account": "6300", "debit": "2000.0000", "credit": "0.0000" }
+          ],
+          "totals": { "debit": "2000.0000", "credit": "2000.0000" }
+        },
+        "2026-09": {
+          "rows": [
+            { "account": "1120", "debit": "2000.0000", "credit": "0.0000" },
+            { "account": "6300", "debit": "0.0000", "credit": "2000.0000" }
+          ],
+          "totals": { "debit": "2000.0000", "credit": "2000.0000" }
+        }
+      },
+      "invariant6": { "perAccountResidual": { "1120": "0.0000", "6300": "0.0000" } }
+    },
+    {
+      "step": 10,
+      "do": "period",
+      "action": "lock",
+      "period": "2026-08",
+      "expect": {
+        "outcome": "REJECTED",
+        "error": "PERIOD_LOCK_OUT_OF_ORDER",
+        "periodStatus": { "2026-08": "CLOSED" }
+      }
+    },
+    {
+      "step": 11,
+      "do": "period",
+      "action": "lock",
+      "period": "2026-07",
+      "expect": {
+        "outcome": "TRANSITIONED",
+        "periodStatus": { "2026-07": "LOCKED" },
+        "auditRecordsWritten": 1
+      }
+    },
+    {
+      "step": 12,
+      "do": "period",
+      "action": "reopen",
+      "period": "2026-07",
+      "reason": "Attempt to reopen a locked period",
+      "expect": {
+        "outcome": "REJECTED",
+        "error": "PERIOD_LOCKED",
+        "periodStatus": { "2026-07": "LOCKED" }
+      }
+    },
+    {
+      "step": 13,
+      "do": "post",
+      "event": "JOURNAL_VOUCHER_POSTED",
+      "idempotencyKey": "p07-july",
+      "occurredAt": "2026-07-15",
+      "payload": {
+        "narration": "July bill found late",
+        "lines": [
+          { "account": "6400", "debit": "300.0000" },
+          { "account": "1120", "credit": "300.0000" }
+        ]
+      },
+      "expect": { "outcome": "REJECTED", "error": "PERIOD_LOCKED", "entriesAfter": 2 }
+    },
+    {
+      "step": 14,
+      "do": "post",
+      "event": "JOURNAL_VOUCHER_POSTED",
+      "idempotencyKey": "p07-noperiod",
+      "occurredAt": "2026-06-30",
+      "$comment": "The day before FY2027 begins. No FY2026 periods exist; there is no nearest-period fallback.",
+      "payload": {
+        "narration": "Dated before the first fiscal year",
+        "lines": [
+          { "account": "6400", "debit": "300.0000" },
+          { "account": "1120", "credit": "300.0000" }
+        ]
+      },
+      "expect": { "outcome": "REJECTED", "error": "PERIOD_NOT_FOUND", "entriesAfter": 2 }
+    },
+    {
+      "step": 15,
+      "do": "post",
+      "event": "JOURNAL_VOUCHER_POSTED",
+      "idempotencyKey": "p07-future",
+      "occurredAt": "2026-09-28",
+      "$comment": "Tomorrow in Asia/Karachi. September is OPEN; the future-date tolerance is 0 days.",
+      "payload": {
+        "narration": "Dated tomorrow",
+        "lines": [
+          { "account": "6400", "debit": "300.0000" },
+          { "account": "1120", "credit": "300.0000" }
+        ]
+      },
+      "expect": { "outcome": "REJECTED", "error": "DATE_IN_FUTURE", "entriesAfter": 2 }
+    },
+    {
+      "step": 16,
+      "do": "assert",
+      "periodStatus": {
+        "2026-07": "LOCKED",
+        "2026-08": "CLOSED",
+        "2026-09": "OPEN",
+        "2026-10": "OPEN"
+      },
+      "journalEntryCount": 2,
+      "roundingAccountBalance": "0.0000"
+    }
+  ]
+}

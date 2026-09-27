@@ -1,0 +1,302 @@
+{
+  "id": "P06",
+  "format": "posting-scenario/v1",
+  "name": "Reversal: invoice blocked by a live allocation, receipt reversed, then invoice reversed; every account back to zero",
+  "rules": [
+    "REVERSAL@1",
+    "SALE_POSTED/service@1",
+    "CUSTOMER_PAYMENT_RECEIVED@1",
+    "REPORT/trial-balance@1"
+  ],
+  "source": "docs/posting-rules/reversal.md",
+  "governedBy": ["ADR-0006", "ADR-0012", "ADR-0014", "Invariant 6"],
+  "executableFrom": "M3",
+  "status": "Specified, hand-computed. Not yet executed: needs invoices and receipts (M3). Step 3 depends on PO-Q1 (service-sale.md §8); Option A is specified.",
+  "description": [
+    "Setup: P05's invoice (10000.0000, 2026-09-15) and receipt (6000.0000, 2026-09-20).",
+    "",
+    "Both originals are in September, which is OPEN, so each reversal takes its",
+    "original's date (reversal.md §4):",
+    "  RV-2027-000001  2026-09-20  reverses JE-2027-000002 (receipt)",
+    "                  Dr 1200 [CUST-A] 6000.0000 / Cr 1120 6000.0000",
+    "  RV-2027-000002  2026-09-15  reverses JE-2027-000001 (invoice)",
+    "                  Dr 4200 10000.0000 / Cr 1200 [CUST-A] 10000.0000",
+    "",
+    "Invariant 6, per account, by hand:",
+    "  1120: +6000.0000 − 6000.0000 = 0.0000",
+    "  1200: +10000.0000 − 6000.0000 + 6000.0000 − 10000.0000 = 0.0000",
+    "  4200: −10000.0000 + 10000.0000 = 0.0000",
+    "",
+    "Customer ledger order is occurred_at, then created_at (ledger-and-trial-balance.md §2).",
+    "Created in the order JE-1, JE-2, RV-1, RV-2, so the 2026-09-15 pair sorts JE-1, RV-2",
+    "and the 2026-09-20 pair JE-2, RV-1. Running balance: 10000.0000, 0.0000, −6000.0000,",
+    "0.0000. The −6000.0000 is intra-day only; every end-of-day balance is 0.0000 from",
+    "2026-09-15 on. That is the accepted consequence of 'as if E never happened'.",
+    "",
+    "Trial balance as of 2026-09-17 already shows 1200 and 4200 at 0.0000: the invoice and",
+    "its reversal share a date, so no date range can see one without the other."
+  ],
+  "fixture": {
+    "coa": "standard-v1",
+    "timezone": "Asia/Karachi",
+    "fiscalYearStartMonth": 7,
+    "today": "2026-09-27",
+    "periods": { "fiscalYear": 2027, "status": "all OPEN" },
+    "tenants": ["GOLDEN_A"],
+    "customers": [{ "ref": "CUST-A", "tenant": "GOLDEN_A", "status": "ACTIVE" }],
+    "draftInvoices": ["INV-A1"],
+    "draftReceipts": ["RCT-A1"]
+  },
+  "steps": [
+    {
+      "step": 1,
+      "do": "post",
+      "event": "SALE_POSTED",
+      "referenceType": "sales_invoice",
+      "referenceId": "INV-A1",
+      "idempotencyKey": "p06-inv",
+      "occurredAt": "2026-09-15",
+      "payload": {
+        "settlement": "CREDIT",
+        "customer": "CUST-A",
+        "lines": [
+          {
+            "kind": "SERVICE",
+            "description": "Monthly maintenance",
+            "quantity": "1.000000",
+            "unitPrice": "7500.000000",
+            "lineNet": "7500.0000"
+          },
+          {
+            "kind": "SERVICE",
+            "description": "Site visit",
+            "quantity": "3.000000",
+            "unitPrice": "833.333333",
+            "lineNet": "2500.0000"
+          }
+        ],
+        "netAmount": "10000.0000"
+      },
+      "expect": {
+        "outcome": "POSTED",
+        "entryNumber": "JE-2027-000001",
+        "documentNumber": "INV-2027-000001"
+      }
+    },
+    {
+      "step": 2,
+      "do": "post",
+      "event": "CUSTOMER_PAYMENT_RECEIVED",
+      "referenceType": "customer_receipt",
+      "referenceId": "RCT-A1",
+      "idempotencyKey": "p06-rct",
+      "occurredAt": "2026-09-20",
+      "payload": {
+        "customer": "CUST-A",
+        "method": "BANK",
+        "amount": "6000.0000",
+        "allocations": [{ "invoice": "INV-A1", "amount": "6000.0000" }]
+      },
+      "expect": {
+        "outcome": "POSTED",
+        "entryNumber": "JE-2027-000002",
+        "documentNumber": "RCT-2027-000001"
+      }
+    },
+    {
+      "step": 3,
+      "do": "reverseDocument",
+      "document": "INV-A1",
+      "idempotencyKey": "p06-rev-inv-1",
+      "reason": "Invoiced to the wrong customer",
+      "$comment": "PO-Q1 Option A. If the Product Owner chooses B, this step is replaced in the same PR as the rule change.",
+      "expect": {
+        "outcome": "REJECTED",
+        "error": "INVOICE_HAS_LIVE_ALLOCATIONS",
+        "errorDetail": { "receipts": ["RCT-2027-000001"] },
+        "entriesAfter": 2
+      }
+    },
+    {
+      "step": 4,
+      "do": "reverse",
+      "entry": "JE-2027-000001",
+      "idempotencyKey": "p06-rev-direct",
+      "reason": "Trying to reverse the invoice's entry from the journal",
+      "expect": {
+        "outcome": "REJECTED",
+        "error": "REVERSAL_VIA_SOURCE_REQUIRED",
+        "entriesAfter": 2
+      }
+    },
+    {
+      "step": 5,
+      "do": "reverseDocument",
+      "document": "RCT-A1",
+      "idempotencyKey": "p06-rev-rct-noreason",
+      "reason": "   ",
+      "expect": { "outcome": "REJECTED", "error": "REVERSAL_REASON_REQUIRED", "entriesAfter": 2 }
+    },
+    {
+      "step": 6,
+      "do": "reverseDocument",
+      "document": "RCT-A1",
+      "idempotencyKey": "p06-rev-rct",
+      "reason": "Payment belonged to another customer",
+      "expect": {
+        "outcome": "POSTED",
+        "entryNumber": "RV-2027-000001",
+        "occurredAt": "2026-09-20",
+        "period": "2026-09",
+        "postingRule": "REVERSAL@1",
+        "reversalOf": "JE-2027-000002",
+        "lines": [
+          { "account": "1200", "party": "CUST-A", "debit": "6000.0000", "credit": "0.0000" },
+          { "account": "1120", "debit": "0.0000", "credit": "6000.0000" }
+        ],
+        "totals": { "debit": "6000.0000", "credit": "6000.0000" },
+        "originalAfter": {
+          "entry": "JE-2027-000002",
+          "status": "REVERSED",
+          "reversedBy": "RV-2027-000001"
+        },
+        "documentStatus": { "RCT-A1": "REVERSED" },
+        "allocations": [{ "invoice": "INV-A1", "amount": "6000.0000", "status": "VOIDED" }],
+        "invoiceOutstanding": { "INV-A1": "10000.0000" },
+        "entriesAfter": 3
+      }
+    },
+    {
+      "step": 7,
+      "do": "reverseDocument",
+      "document": "RCT-A1",
+      "idempotencyKey": "p06-rev-rct",
+      "reason": "Payment belonged to another customer",
+      "expect": { "outcome": "REPLAYED", "entryNumber": "RV-2027-000001", "entriesAfter": 3 }
+    },
+    {
+      "step": 8,
+      "do": "reverseDocument",
+      "document": "RCT-A1",
+      "idempotencyKey": "p06-rev-rct-again",
+      "reason": "Second attempt under a new key",
+      "expect": { "outcome": "REJECTED", "error": "ALREADY_REVERSED", "entriesAfter": 3 }
+    },
+    {
+      "step": 9,
+      "do": "reverse",
+      "entry": "RV-2027-000001",
+      "idempotencyKey": "p06-rev-of-rev",
+      "reason": "Undo the reversal",
+      "expect": { "outcome": "REJECTED", "error": "REVERSAL_OF_REVERSAL", "entriesAfter": 3 }
+    },
+    {
+      "step": 10,
+      "do": "reverseDocument",
+      "document": "INV-A1",
+      "idempotencyKey": "p06-rev-inv-2",
+      "reason": "Invoiced to the wrong customer",
+      "expect": {
+        "outcome": "POSTED",
+        "entryNumber": "RV-2027-000002",
+        "occurredAt": "2026-09-15",
+        "period": "2026-09",
+        "postingRule": "REVERSAL@1",
+        "reversalOf": "JE-2027-000001",
+        "lines": [
+          { "account": "4200", "debit": "10000.0000", "credit": "0.0000" },
+          { "account": "1200", "party": "CUST-A", "debit": "0.0000", "credit": "10000.0000" }
+        ],
+        "totals": { "debit": "10000.0000", "credit": "10000.0000" },
+        "originalAfter": {
+          "entry": "JE-2027-000001",
+          "status": "REVERSED",
+          "reversedBy": "RV-2027-000002"
+        },
+        "documentStatus": { "INV-A1": "REVERSED" },
+        "invoiceOutstanding": { "INV-A1": "0.0000" },
+        "entriesAfter": 4
+      }
+    },
+    {
+      "step": 11,
+      "do": "assert",
+      "trialBalance": {
+        "asOf": "2026-09-27",
+        "rows": [
+          { "account": "1120", "debit": "0.0000", "credit": "0.0000" },
+          { "account": "1200", "debit": "0.0000", "credit": "0.0000" },
+          { "account": "4200", "debit": "0.0000", "credit": "0.0000" }
+        ],
+        "totals": { "debit": "0.0000", "credit": "0.0000" }
+      },
+      "trialBalanceMidRange": {
+        "asOf": "2026-09-17",
+        "rows": [
+          { "account": "1200", "debit": "0.0000", "credit": "0.0000" },
+          { "account": "4200", "debit": "0.0000", "credit": "0.0000" }
+        ],
+        "totals": { "debit": "0.0000", "credit": "0.0000" }
+      },
+      "customerLedger": {
+        "customer": "CUST-A",
+        "from": "2026-07-01",
+        "to": "2026-09-27",
+        "openingBalance": "0.0000",
+        "lines": [
+          {
+            "entryNumber": "JE-2027-000001",
+            "document": "INV-2027-000001",
+            "date": "2026-09-15",
+            "debit": "10000.0000",
+            "credit": "0.0000",
+            "runningBalance": "10000.0000"
+          },
+          {
+            "entryNumber": "RV-2027-000002",
+            "document": "INV-2027-000001",
+            "date": "2026-09-15",
+            "debit": "0.0000",
+            "credit": "10000.0000",
+            "runningBalance": "0.0000"
+          },
+          {
+            "entryNumber": "JE-2027-000002",
+            "document": "RCT-2027-000001",
+            "date": "2026-09-20",
+            "debit": "0.0000",
+            "credit": "6000.0000",
+            "runningBalance": "-6000.0000"
+          },
+          {
+            "entryNumber": "RV-2027-000001",
+            "document": "RCT-2027-000001",
+            "date": "2026-09-20",
+            "debit": "6000.0000",
+            "credit": "0.0000",
+            "runningBalance": "0.0000"
+          }
+        ],
+        "closingBalance": "0.0000"
+      },
+      "invariant6": {
+        "perAccountResidual": { "1120": "0.0000", "1200": "0.0000", "4200": "0.0000" },
+        "perCustomerResidual": { "CUST-A": "0.0000" }
+      },
+      "invariant9": {
+        "customer": "CUST-A",
+        "gl": "0.0000",
+        "subledger": "0.0000",
+        "difference": "0.0000"
+      },
+      "entryStatuses": {
+        "JE-2027-000001": "REVERSED",
+        "JE-2027-000002": "REVERSED",
+        "RV-2027-000001": "POSTED",
+        "RV-2027-000002": "POSTED"
+      },
+      "journalEntryCount": 4,
+      "roundingAccountBalance": "0.0000"
+    }
+  ]
+}
