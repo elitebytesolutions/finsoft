@@ -2,6 +2,7 @@
 
 **Status:** Factory Constitution v1
 **Authority:** LEVEL 2 for sequencing; the gates and policies in §6–§10 are LEVEL 1 and require an ADR to change.
+**Governed by [ADR-0024](adr/ADR-0024-operating-model.md) (2026-09-27):** §5–§10 describe the risk-tiered process — delivery brief, pipeline by tier, DoR, DoD per tier, reviewers per tier. Roles, tiers and the board are detailed in [OPERATING_MODEL.md](OPERATING_MODEL.md). The Technical Council owns this process; the Product Owner owns scope and sequencing priority.
 
 This document describes **how work gets done** — how it is decomposed, assigned, bounded, reviewed and released. It is the operating manual for the factory.
 
@@ -13,6 +14,7 @@ We are not opening fifteen coding sessions and letting them work independently. 
 
 ```
                          PRODUCT OWNER (human)
+             scope · priority · budget · compliance · release · acceptance
                                 │
                                 ▼
                     ┌──────────────────────┐
@@ -21,12 +23,12 @@ We are not opening fifteen coding sessions and letting them work independently. 
                                │
              ┌─────────────────┼─────────────────┐
              ▼                 ▼                 ▼
-      Architecture       Accounting          QA / Security
-        Guardian          Guardian             Guardians
+      TECHNICAL COUNCIL — every implementation decision
+      Architecture seat   Accounting seat   Database/Security seat
              │                 │                 │
              └────────┬────────┴────────┬────────┘
                       ▼                 ▼
-               PLATFORM SQUAD      DOMAIN SQUADS
+               PLATFORM SQUAD      DOMAIN SQUADS          (engineers + QA)
             DB / migrations        Finance / GL
             Auth / tenant          Banking
             API framework          Customers / Vendors
@@ -34,6 +36,8 @@ We are not opening fifteen coding sessions and letting them work independently. 
             CI/CD                  Procurement
             Observability          Sales · Reporting · Tax
 ```
+
+The Product Owner is asked only when a decision changes business scope, cost, compliance exposure or delivery date — as two options with impact ([ADR-0024](adr/ADR-0024-operating-model.md)). Everything technical closes in the Council within two working days.
 
 **The orchestrator does not write most production code.** Its job is: decompose work into safe tasks, assign ownership, prevent collisions, verify acceptance criteria, track dependencies, and coordinate integration. That distinction is what keeps the repository coherent.
 
@@ -45,10 +49,17 @@ Agent definitions live in [`.claude/agents/`](../.claude/agents/) and are invoca
 
 ```
 LEVEL 0   Financial invariants        Cannot be overridden by anyone
-LEVEL 1   Architecture policies       Require an ADR to change
+LEVEL 1   Architecture policies       Require an ADR, decided by the Technical Council
 LEVEL 2   Product specifications      Require Product Owner approval
-LEVEL 3   Agent implementation        Freely optimised within boundaries
+          Delivery process            Technical Council (ADR-0024)
+LEVEL 3   Engineer implementation     Freely optimised within the brief's Paths
 ```
+
+| Who | Decides |
+|---|---|
+| **Product Owner** | Business priority, workflow acceptance, budget, production and compliance risk, release readiness, PRD scope |
+| **Technical Council** | Architecture, posting rules, schema, security — one seat within its domain, every touched seat across domains |
+| **Engineers** | How to build it, inside the brief |
 
 Never invert this into:
 
@@ -117,36 +128,26 @@ Branches are short-lived. `main` is always production-quality. No long-running i
 
 ---
 
-## 5. The task contract
+## 5. The delivery brief
 
-Every task issued to an agent is a contract with explicit boundaries. An agent without a contract does not start.
+Every task has a one-page brief. An agent without a brief writes one with the [`delivery-brief` skill](../.claude/skills/delivery-brief/SKILL.md) before its first edit.
 
 ```
-TASK        INV-021
-TITLE       Create stock movement entity
-
-ALLOWED     packages/inventory-kernel/src/domain/**
-            tests/accounting/inventory/**
-
-READ ONLY   packages/database/**
-            packages/accounting-kernel/**
-            docs/**
-
-FORBIDDEN   database/migrations/**
-            packages/auth/**
-            modules/**
-
-DEPENDS ON  DB-014 (stock_movements table)
-
-ACCEPTANCE  - Movement value object with direction, quantity, reason
-            - Quantity is decimal, never number
-            - tenant_id required and typed
-            - Rejects zero and negative quantity
-            - Unit tests cover each rejection
-            - No import from modules/* or NestJS
+ID & TITLE    INV-021 · Create stock movement entity
+OUTCOME       the inventory kernel can represent an inward or outward movement
+SCOPE         in: value object + rejections    out: repository, migration
+PATHS         ALLOWED   packages/inventory-kernel/src/domain/**, tests/accounting/inventory/**
+              FORBIDDEN database/migrations/**, packages/auth/**, modules/**
+BEHAVIOUR     none (domain only)
+TIER          T3 → full financial gate + Accounting seat
+ACCEPTANCE    - Quantity is decimal, never number
+              - tenant_id required and typed
+              - Rejects zero and negative quantity; a unit test per rejection
+              - No import from modules/* or NestJS
+OWNER         backend-engineer · Accounting seat
 ```
 
-`ALLOWED` is the only place the agent may write. `FORBIDDEN` is not advisory. An agent that needs to change something outside `ALLOWED` **stops and reports** — it does not "quickly also fix" the adjacent thing.
+`ALLOWED` is the only place the agent may write. `FORBIDDEN` is not advisory. An agent that needs to change something outside `ALLOWED` **stops and reports** — it does not "quickly also fix" the adjacent thing. The tier sets the gate ([OPERATING_MODEL.md](OPERATING_MODEL.md) §4); the highest tier touched wins.
 
 This is what prevents an agent from casually refactoring the entire application while implementing a list endpoint.
 
@@ -156,135 +157,105 @@ This is what prevents an agent from casually refactoring the entire application 
 
 Do not issue: *"Build inventory."*
 
-Issue:
+Issue one brief per coherent change:
 
 ```
-INV-021  Create stock movement entity
-INV-022  Create stock movement repository + migration
-INV-023  Implement stock-in transaction
-INV-024  Implement stock-out transaction with FEFO batch selection
-INV-025  Enforce negative-stock policy
-INV-026  Implement running balance query
-INV-027  Stock movement listing UI
-INV-028  Inventory reconciliation invariant tests
+INV-021  Create stock movement entity                          T3
+INV-022  Create stock movement repository + migration          T3
+INV-023  Implement stock-in transaction                        T3
+INV-024  Implement stock-out transaction with FEFO batch selection  T3
+INV-025  Enforce negative-stock policy                         T3
+INV-026  Implement running balance query                       T3
+INV-027  Stock movement listing UI                             T1
+INV-028  Inventory reconciliation invariant tests              T3
 ```
 
-**Target: one task = one coherent PR.** Agent output quality falls off sharply above that size, and review quality falls off with it.
+**Target: one task = one coherent PR, within the WIP limit on [BOARD.md](BOARD.md).** Agent output quality falls off sharply above that size, and review quality falls off with it.
 
 ---
 
-## 7. The feature pipeline
+## 7. The feature pipeline — by tier
 
-Every feature, without exception, follows the same path:
-
-```
-Requirement
-   ↓  Domain specification
-   ↓  Acceptance criteria
-   ↓  Accounting + threat impact assessment
-   ↓  Technical design
-   ↓  Task decomposition
-   ↓  Parallel implementation
-   ↓  Unit tests
-   ↓  Integration tests
-   ↓  Peer agent review
-   ↓  Domain guardian review
-   ↓  QA
-   ↓  Staging
-   ↓  UAT
-   ↓  Production
-```
-
-An agent never goes from *"user wants cheque management"* directly to *"write 8,000 lines"*. There is always an intermediate specification, and that specification is where the accounting impact gets decided.
-
-### Board states
+Process is spent in proportion to risk ([OPERATING_MODEL.md](OPERATING_MODEL.md) §4). The highest tier touched wins.
 
 ```
-SPEC → READY → IN DEVELOPMENT → IN REVIEW → IN QA → STAGING → ACCEPTED → RELEASED
+T0 / T1   docs, copy, prototype UI, normal UI/API behaviour
+   Brief → Build → Affected tests → PR → Merge
+
+T2 / T3   auth, permissions, tenancy, migrations — posting, money, inventory, tax, periods
+   Brief
+   ↓  Specification — posting rule, threat model or schema note; the accounting impact is decided here
+   ↓  Build
+   ↓  Unit + integration + schema/security suites (T3: + full financial gate)
+   ↓  Named Council seat review (T3: Accounting seat)
+   ↓  PR → Merge
+   ↓  Verified on staging
 ```
 
-**Agents may not start a task in `SPEC`.** Moving `SPEC → READY` is the orchestrator's decision and requires the Definition of Ready.
+An agent never goes from *"user wants cheque management"* directly to *"write 8,000 lines"*. For T2/T3 there is always an intermediate specification, and that specification is where the accounting impact gets decided.
+
+Release to production keeps its own gates regardless of tier: staging → UAT → Product Owner release readiness → production (§12, §16).
+
+### Board
+
+Work is tracked on [BOARD.md](BOARD.md): **Now · Next · Blocked · Decisions needed · Demo ready**. WIP limit: the current MVP increment plus one platform task. **Agents may not start a task with no brief.**
 
 ---
 
 ## 8. Definition of Ready
 
-A task cannot enter `READY` — and therefore cannot be started — without all of:
+A task is ready when it has **a delivery brief with a tier** — ID and title, outcome, scope, Paths, behaviour, tier, 3–8 testable acceptance checks, owner (and Council seat for T2/T3).
+
+T2 and T3 briefs also state, explicitly:
 
 ```
-☐ Business purpose
-☐ User story
-☐ Acceptance criteria (testable, not aspirational)
-☐ Domain rules that apply
-☐ Permissions required
-☐ Affected entities and tables
-☐ API behaviour (endpoints, shapes, errors)
-☐ UI states (empty, loading, error, partial, success)
-☐ Error states and messages
-☐ Accounting impact  (or explicitly: none)
-☐ Inventory impact   (or explicitly: none)
-☐ Audit requirement
-☐ Test scenarios, including negative and concurrency cases
-☐ File ownership boundary (ALLOWED / READ ONLY / FORBIDDEN)
+☐ Accounting impact  (or: none)          ☐ Inventory impact (or: none)
+☐ Permissions required                   ☐ Audit requirement
+☐ Negative and concurrency test cases    ☐ Affected tables
 ```
 
-This single policy prevents more AI-generated rework than any other rule in this document. "Accounting impact: none" must be *stated*, not left blank — the act of stating it is the check.
+"Accounting impact: none" must be *stated*, not left blank — the act of stating it is the check.
 
 ---
 
-## 9. Definition of Done
+## 9. Definition of Done — per tier
 
-A ticket is not done because the page looks right.
+A ticket is not done because the page looks right. Tiers are cumulative.
 
 ```
-☐ Implementation complete against acceptance criteria
-☐ Type check passes
-☐ Lint passes
-☐ Unit tests pass, meaningful coverage of branches
-☐ Integration tests pass
-☐ FinancialInvariantSuite passes
-☐ Tenant isolation tested (adversarial: tenant B cannot reach tenant A)
-☐ RBAC tested (missing permission → 403, not 500, not 200)
-☐ Audit records asserted in tests
-☐ Domain invariants tested
-☐ API documented (OpenAPI)
-☐ Migration reviewed and safe (forward, backward-compatible first)
-☐ UI states handled
-☐ Error states handled and user-comprehensible
-☐ Structured logging added for business events
-☐ No secrets, no TODOs masking incomplete work
-☐ Security scan clean
-☐ Review completed by the required reviewers
-☐ Verified on staging
+ALL   acceptance checks met · type check · lint · format · depcruise · secret scan clean
+      FinancialInvariantSuite green (NON_NEGOTIABLES §3: every PR, not nightly)
+      no TODOs masking incomplete work · stayed inside ALLOWED
+
+T0    affected unit tests · web preview build if web changed
+
+T1    affected unit + API tests · one relevant Playwright journey
+      RBAC tested (missing permission → 403, not 500, not 200)
+      API documented (OpenAPI) · UI and error states handled · structured logging for business events
+
+T2    DB stack: schema, integration and adversarial security suites
+      tenant isolation tested (adversarial: tenant B cannot reach tenant A)
+      migration reviewed and safe (forward, backward-compatible first)
+      named Council seat review · verified on staging
+
+T3    golden scenarios · reconciliation · accounting suite · domain invariants tested
+      audit records asserted in tests · Accounting seat review
 ```
 
 ---
 
-## 10. Review and merge policy
+## 10. Review and merge policy — per tier
 
-Required checks on every PR:
+Required checks on a PR are selected by tier (`tools/ci/classify.mjs`, OPS-002). **Every PR, at every tier, runs secret scanning and the FinancialInvariantSuite** — both are LEVEL 0 requirements on every PR, and a tier cannot waive them. **`develop`, release and nightly run everything.**
 
-```
-build · typescript · lint · unit · FinancialInvariantSuite
-database integration · API integration · Playwright smoke
-migration checks · dependency audit · secret scanning · SAST
-```
+| Tier | Required checks | Required reviewer |
+|------|-----------------|-------------------|
+| **T0** | build · typescript · lint · format · depcruise · secret scanning · FinancialInvariantSuite · affected unit | One peer agent |
+| **T1** | T0 + affected API tests · Playwright journey | One peer agent; `packages/ui/**` → design-system |
+| **T2** | T1 + database integration · schema · security (adversarial) · migration checks · SAST | Database/Security seat (migrations, RLS, auth, permissions); Architecture seat (`packages/database/**`, guards); `infrastructure/**`, CI → devops-guardian + Security |
+| **T3** | T2 + golden scenarios · reconciliation · accounting suite | Accounting seat + Architecture seat (kernels, module domain that posts); Database/Security seat for financial-table migrations |
 
-Required reviewers by area:
-
-| Area touched | Required reviewers |
-|--------------|-------------------|
-| `packages/accounting-kernel/**` | Architecture + Accounting + QA |
-| `packages/inventory-kernel/**` | Architecture + Accounting + QA |
-| `database/migrations/**` | Database Guardian (+ Accounting if financial tables) |
-| `packages/auth/**`, `packages/permissions/**` | Security + Architecture |
-| Module domain layer | Architecture (+ Accounting if it posts) |
-| Module API layer | Backend peer + Security |
-| `packages/ui/**` | Design System Agent |
-| `infrastructure/**`, CI | DevOps + Security |
-| Everything else | One peer agent |
-
-**An agent never merges its own PR.** A guardian's rejection is final within its domain and is escalated to the Product Owner, not argued around.
+**An agent never merges its own PR.** A seat's rejection is final within its domain and is not argued around. A dispute goes to the **Technical Council**, which closes it within two working days; it reaches the Product Owner only when it changes scope, cost, compliance exposure or delivery date ([ADR-0024](adr/ADR-0024-operating-model.md)), as two options with impact.
 
 ---
 
@@ -372,8 +343,9 @@ design system skeleton            database framework + tenant context + RLS help
 > not durable between sessions.
 >
 > **"One test of each kind" has an open scope question.** `tests/reconciliation/` has no suite and cannot have a meaningful one until a
-> posting exists. A deferral to Wave 5/6 is proposed, with an owner and acceptance criteria, and is **pending Product Owner approval** —
-> see the register. Wave 0 does not close on that deliverable until the decision is recorded.
+> posting exists. A deferral to Wave 5/6 is proposed, with an owner and acceptance criteria — see the register. Under
+> [ADR-0024](adr/ADR-0024-operating-model.md) the decision moved from the Product Owner to the **Technical Council** (Architecture
+> seat); it is tracked on [BOARD.md](BOARD.md). Wave 0 does not close on that deliverable until the decision is recorded.
 
 ### Wave 1 — Platform
 
@@ -401,6 +373,29 @@ Backend Engineer 2  → account ledger + trial balance
 Delivers: COA · journal voucher · general ledger · trial balance · period controls · reversal · audit.
 
 **If these are not mathematically reliable, stop everything else.** No wave 3 work starts while an invariant is red.
+
+### MVP slice (M1–M4) — *the demo that proves the factory*
+
+Waves 1 and 2 are delivered as **one thin, demoable journey** rather than as complete layers. Approved by the Product Owner, 2026-09-27 ([ADR-0024](adr/ADR-0024-operating-model.md)).
+
+```
+Login → tenant membership → permission check → customer → service invoice (non-stock, no tax)
+      → payment → journal entry → customer ledger → trial balance → reversal → audit trail
+```
+
+Working on **staging, for two tenants**. No sales tax, no stock, MFA deferred ([GAP-003](COMPLIANCE_GAPS.md)), a minimal ~20-account standard chart of accounts.
+
+| Increment | Delivers |
+|---|---|
+| **M1 — Minimum platform** | Auth including tenant-code login and refresh rotation · real `TenantGuard` · RBAC migration 008 with the MVP permissions · `audit_log` migration 009 + chain verifier per ADR-0020 · web login page + API client · staging HTTPS on `31-220-74-159.sslip.io` · the W1-006 exit suite |
+| **M2 — Accounting core** | Posting-rules spec including the standard COA · migrations 010 `accounts`, 011 `fiscal_periods`, 012 `journal_entries`/`journal_lines`, 013 `document_sequences` · `postingEngine` · account ledger + trial balance · invariants 1, 2, 4, 5, 6, 8 enforced |
+| **M3 — Customers, service invoice, receipts** | Migrations 014–016 · AR subledger · invariant 9, AR half |
+| **M4 — The journey, on real screens** | API-backed screens replacing the mocks for the journey · a Playwright journey passing for both tenants on staging · **Product Owner acceptance demo** |
+
+- **Each increment must be demoable.** The Product Owner accepts workflows, not database details.
+- **WIP limit:** the current increment plus one platform task.
+- **No new mock-only business screens** until M1–M4 works. Existing mock screens are prototypes, not delivered functionality.
+- **Waves 3–10 resume after M4 acceptance.** Wave 1's and Wave 2's remaining scope folds into them or into later increments on [BOARD.md](BOARD.md).
 
 ### Wave 3 — Cash and banking
 
@@ -533,12 +528,16 @@ OWASP ASVS is the technical verification baseline. NIST SSDF is the secure-SDLC 
 
 ## 17. Factory dashboard
 
-The factory reports on itself:
+The factory reports on itself in two places ([OPERATING_MODEL.md](OPERATING_MODEL.md) §6–§8):
+
+- **[BOARD.md](BOARD.md)** — Now · Next · Blocked (with deadline) · Decisions needed (Product Owner or Council, with date) · Demo ready.
+- **`docs/status/YYYY-Www.md`** — one page a week: what changed, what is demoable, next week, at most three decisions, risks.
+
+Metrics, in priority order:
 
 ```
-Backlog · Active agents · Open PRs · CI state · Failed tests
-Blocked tasks · Architecture decisions pending · Security findings
-Migration status · Module completion · Regression coverage
+API-backed workflows working on staging        ← the primary metric
+CI minutes per tier · failed-gate causes · hours waiting for decisions
 Invariant suite status (must be green)
 ```
 
