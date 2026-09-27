@@ -144,6 +144,8 @@ export interface PolicyRow {
   permissive: string
   using_expression: string | null
   with_check_expression: string | null
+  /** ADR-0023: `{-}` (rendered as the literal role name "public" by regrole) means PUBLIC. */
+  roles: string[]
 }
 
 export function policies(): Promise<PolicyRow[]> {
@@ -155,12 +157,67 @@ export function policies(): Promise<PolicyRow[]> {
               p.polcmd::text                           as command,
               case when p.polpermissive then 'PERMISSIVE' else 'RESTRICTIVE' end as permissive,
               pg_get_expr(p.polqual, p.polrelid)       as using_expression,
-              pg_get_expr(p.polwithcheck, p.polrelid)  as with_check_expression
+              pg_get_expr(p.polwithcheck, p.polrelid)  as with_check_expression,
+              p.polroles::regrole[]::text[]            as roles
          from pg_policy p
          join pg_class c on c.oid = p.polrelid
          join pg_namespace n on n.oid = c.relnamespace
         where n.nspname = 'public'
         order by c.relname, p.polname`,
+    ),
+  )
+}
+
+export interface ColumnPrivilegeRow {
+  table_name: string
+  column_name: string
+  grantee: string
+  privilege: string
+}
+
+/**
+ * Column-level grants, straight from `pg_attribute.attacl` via `aclexplode`
+ * — NOT `information_schema.column_privileges`, which is privilege-filtered
+ * by the querying role and would silently show only what `finsoft_app`
+ * itself can see (this file's own header rule). `attacl IS NOT NULL` only:
+ * a column with no column-level ACL of its own inherits the table-level
+ * grant, which `roles.spec.ts`'s `has_table_privilege`/`has_column_privilege`
+ * checks already cover.
+ */
+export function columnPrivileges(): Promise<ColumnPrivilegeRow[]> {
+  return withGlobal((tx) =>
+    rawOn<ColumnPrivilegeRow>(
+      tx,
+      `select c.relname as table_name,
+              a.attname as column_name,
+              (aclexplode(a.attacl)).grantee::regrole::text as grantee,
+              (aclexplode(a.attacl)).privilege_type as privilege
+         from pg_attribute a
+         join pg_class c on c.oid = a.attrelid
+         join pg_namespace n on n.oid = c.relnamespace
+        where n.nspname = 'public'
+          and a.attnum > 0
+          and not a.attisdropped
+          and a.attacl is not null
+        order by c.relname, a.attname, grantee, privilege`,
+    ),
+  )
+}
+
+export interface SchemaRow {
+  schema_name: string
+  owner: string
+}
+
+/** Non-system schemas. ADR-0023: "the non-system schema set is exactly {public, auth_lookup}". */
+export function schemas(): Promise<SchemaRow[]> {
+  return withGlobal((tx) =>
+    rawOn<SchemaRow>(
+      tx,
+      `select nspname as schema_name, nspowner::regrole::text as owner
+         from pg_namespace
+        where nspname not like 'pg\\_%' and nspname <> 'information_schema'
+        order by nspname`,
     ),
   )
 }
