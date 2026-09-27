@@ -1,0 +1,16 @@
+{
+  // Typechecking for the reconciliation suite.
+  //
+  // Like tests/accounting, these files sit outside the npm workspaces, so
+  // `npm run typecheck --workspaces` does not reach them. Without this
+  // project they would run under Vitest but never be typechecked — which is
+  // exactly the gap OPS-002 closes: root `typecheck` did not previously
+  // include this directory at all.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "types": ["node"]
+  },
+  "include": ["**/*.ts"]
+}
