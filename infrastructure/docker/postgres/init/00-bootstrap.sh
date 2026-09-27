@@ -50,6 +50,32 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres \
 	-- Support reads. Also subject to RLS: access to a tenant is granted by
 	-- setting the tenant, never by bypassing the policy (ADR-0004:61).
 	CREATE ROLE readonly_support LOGIN PASSWORD :'readonly_password';
+
+	-- The pre-tenant refresh resolver's owner (ADR-0023 §2, migration 006).
+	-- NOLOGIN: never connects directly. NOBYPASSRLS: explicit and
+	-- load-bearing — ADR-0023's own residual register says this attribute is
+	-- "protected by NOTHING but a catalogue assertion", because it lives here
+	-- rather than in a checksummed migration. finsoft_migration has no
+	-- CREATEROLE (measured: CREATE ROLE raises "permission denied to create
+	-- role"), so this role cannot be created by a migration — it must be
+	-- created here, on an empty data directory, or provisioned out of band
+	-- on an existing cluster (see infrastructure/staging/RUNBOOK-finsoft-refresh-role.md).
+	-- Guarded rather than bare CREATE ROLE, matching migration 006's own
+	-- existence-check style, so a second run of this block (a hand-invoked
+	-- bootstrap, or a future entrypoint change) is a no-op and not an error.
+	DO $do$ BEGIN
+	  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'finsoft_refresh') THEN
+	    CREATE ROLE finsoft_refresh NOLOGIN NOBYPASSRLS;
+	  END IF;
+	END $do$;
+
+	-- INHERIT FALSE: finsoft_migration never holds the privilege passively —
+	-- it must SET ROLE to use it. SET TRUE: permits that SET ROLE, which
+	-- migration 006 needs to create auth_lookup.resolve_refresh owned by (not
+	-- merely authorized to) finsoft_refresh. On PostgreSQL 17, re-granting an
+	-- existing membership with the same WITH options is a no-op rather than
+	-- an error, so this line is idempotent without an additional guard.
+	GRANT finsoft_refresh TO finsoft_migration WITH INHERIT FALSE, SET TRUE;
 SQL
 
 # ---------------------------------------------------------------------------

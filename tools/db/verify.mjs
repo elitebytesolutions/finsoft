@@ -120,6 +120,49 @@ for (const [service, db] of [
     return row === '0' ? true : `found ${row}`
   })
 
+  /* -------------------------------------------------------------- *
+   * finsoft_refresh — ADR-0023 §2, migration 006's pre-tenant
+   * refresh resolver. Created by 00-bootstrap.sh, not by a migration
+   * (finsoft_migration has no CREATEROLE). Its NOLOGIN/NOBYPASSRLS
+   * attributes are "protected by NOTHING but a catalogue assertion"
+   * per the ADR's own residual register — this is that assertion.
+   * -------------------------------------------------------------- */
+  check(
+    `${service}: finsoft_refresh is NOLOGIN and NOBYPASSRLS`,
+    'ADR-0023 §2 — owner of the pre-tenant resolver must never connect and never bypass RLS',
+    () => {
+      const row = psql(
+        service,
+        db,
+        "SELECT rolcanlogin::text || ',' || rolbypassrls::text FROM pg_roles WHERE rolname = 'finsoft_refresh'",
+      )
+      return row === 'false,false' ? true : `rolcanlogin,rolbypassrls = ${row || '(role missing)'}`
+    },
+  )
+
+  check(
+    `${service}: finsoft_refresh membership options exact`,
+    'ADR-0023 §2 — finsoft_migration holds SET, not INHERIT, on finsoft_refresh',
+    () => {
+      // Asserting only the member list would leave the INHERIT FALSE claim
+      // untested — a re-grant with INHERIT TRUE keeps the member set
+      // identical while handing finsoft_migration passive cross-tenant
+      // reach, per the ADR's own compliance section.
+      const row = psql(
+        service,
+        db,
+        `SELECT m.inherit_option::text || ',' || m.set_option::text || ',' || m.admin_option::text
+         FROM pg_auth_members m
+         JOIN pg_roles r ON r.oid = m.roleid
+         JOIN pg_roles g ON g.oid = m.member
+         WHERE r.rolname = 'finsoft_refresh' AND g.rolname = 'finsoft_migration'`,
+      )
+      return row === 'false,true,false'
+        ? true
+        : `inherit_option,set_option,admin_option = ${row || '(no membership row)'}`
+    },
+  )
+
   check(`${service}: finsoft_app owns nothing and cannot create`, 'ADR-0004:59', () => {
     const canCreate = psql(
       service,
