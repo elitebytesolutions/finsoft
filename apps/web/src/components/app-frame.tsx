@@ -5,9 +5,21 @@
 import { Suspense, type ReactNode } from 'react'
 import { Shell } from './shell'
 import { useFinsoft } from '@/app-context'
+import { usePathname } from '@/lib/router'
+
+/* /login is not "inside" the application — no sidebar, no top bar, no signed-in
+ * identity to show, per docs/design-system/pages/login/README.md §2. Every other
+ * route (including /unauthorized) keeps the Shell it always had. */
+const NO_SHELL_ROUTES = new Set(['/login'])
 
 export function AppFrame({ children }: { children: ReactNode }) {
   const { role, setRole } = useFinsoft()
+  const pathname = usePathname()
+
+  if (NO_SHELL_ROUTES.has(pathname)) {
+    return <Suspense fallback={null}>{children}</Suspense>
+  }
+
   return (
     <Shell role={role} setRole={setRole}>
       {/* One boundary, here, for every page.

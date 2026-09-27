@@ -22,8 +22,30 @@
 import { useState, type ReactNode } from 'react'
 import { FinsoftProvider } from '@/app-context'
 import { AppFrame } from '@/components/app-frame'
+import { AuthContext, type AuthContextValue } from '@/lib/api/auth-context'
 import { matchRoute } from './route-table'
 import { createRouterStore, RouterStoreContext, useRouterState } from './router-store'
+
+/*
+ * A fake, already-authenticated session — not the real `<AuthProvider>`, which calls
+ * `GET /api/auth/me` on mount. jsdom has no API to answer that, and every ported screen
+ * test below expects its route to render immediately, the way it did before a session
+ * existed at all. `AuthContext` is exported by auth-context.tsx for exactly this: a test
+ * seam that supplies `useAuth()` a value with no network call behind it, so `<Shell>`
+ * (which reads the real user/tenant for its header) and the session-required guard logic
+ * (which lives on <AuthProvider> itself, not on this fake value, and so never runs here)
+ * both stay out of every ported test's way. */
+const fakeAuth: AuthContextValue = {
+  status: 'authenticated',
+  user: { id: 'test-user', fullName: 'Test User', email: 'test.user@example.com' },
+  tenant: { id: 'test-tenant', code: 'TEST', name: 'Test Tenant' },
+  sessionId: 'test-session',
+  permissionVersion: 1,
+  errorMessage: null,
+  retry: () => {},
+  syncAfterLogin: async () => {},
+  signOut: async () => {},
+}
 
 export function MemoryRouter({
   initialEntries,
@@ -48,10 +70,12 @@ function CurrentRoute() {
 
 export default function App() {
   return (
-    <FinsoftProvider>
-      <AppFrame>
-        <CurrentRoute />
-      </AppFrame>
-    </FinsoftProvider>
+    <AuthContext.Provider value={fakeAuth}>
+      <FinsoftProvider>
+        <AppFrame>
+          <CurrentRoute />
+        </AppFrame>
+      </FinsoftProvider>
+    </AuthContext.Provider>
   )
 }

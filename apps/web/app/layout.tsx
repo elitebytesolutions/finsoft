@@ -5,6 +5,7 @@ import '@finsoft/ui/kit.css'
 import '@finsoft/ui/employee-wizard.css'
 import { FinsoftProvider } from '@/app-context'
 import { AppFrame } from '@/components/app-frame'
+import { AuthProvider } from '@/lib/api/auth-context'
 
 export const metadata: Metadata = {
   title: 'Finsoft — Bhatti Traders',
@@ -36,9 +37,16 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           managers) write attributes onto <body> before React hydrates, and there is
           no way to prevent that from the page. */}
       <body suppressHydrationWarning>
-        <FinsoftProvider>
-          <AppFrame>{children}</AppFrame>
-        </FinsoftProvider>
+        {/* AuthProvider owns the real session (identity, tenant, sign-out) and the
+            client-side "you need a session" redirect; it wraps FinsoftProvider, whose
+            mock role/`can()`/`act()` still drive the prototype screens underneath
+            (docs/briefs/M1-W-web-infra.md — no new mock-only screens, existing ones are
+            not rebuilt here). */}
+        <AuthProvider>
+          <FinsoftProvider>
+            <AppFrame>{children}</AppFrame>
+          </FinsoftProvider>
+        </AuthProvider>
       </body>
     </html>
   )
