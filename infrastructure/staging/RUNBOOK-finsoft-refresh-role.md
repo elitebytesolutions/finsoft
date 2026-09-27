@@ -150,3 +150,57 @@ If either query returns no rows, or any value differs from the table above,
   `infrastructure/docker/postgres/init/*` to `/opt/finsoft/postgres/init/`
   on every deploy (`.github/workflows/ci.yml`, the "ship configuration"
   step).
+
+## Unrelated but adjacent: the refresh cookie prefix differs by environment
+
+Not part of provisioning `finsoft_refresh` — recorded here because it is the
+other piece of ADR-0023 that is environment-specific and easy to copy
+verbatim by mistake between staging and production.
+
+`infrastructure/staging/compose.yaml`'s `api` service now sets:
+
+```yaml
+AUTH_REFRESH_COOKIE_NAME: __Host-finsoft_rt
+AUTH_REFRESH_COOKIE_PATH: /
+```
+
+This is **staging-only**. The staging host (`31-220-74-159.sslip.io`) shares
+its registrable domain, `sslip.io`, with every other service hosted under
+sslip.io — `sslip.io` is not on the Public Suffix List, so the browser treats
+it as one registrable domain, not as a suffix. ADR-0023's Open item on the
+cookie prefix names exactly this case as the exception to its own default
+recommendation: `__Host-`'s anti-subdomain-shadowing property wins when the
+app shares a registrable domain with anything else. `__Host-` forces
+`Path=/`, which is why both variables change together.
+
+**Production must use the ADR's default recommendation instead**, because
+production does not share its registrable domain with anything else:
+
+```yaml
+AUTH_REFRESH_COOKIE_NAME: __Secure-finsoft_rt
+AUTH_REFRESH_COOKIE_PATH: /api/auth
+```
+
+`apps/api/src/auth/cookie.ts`'s `assertProductionCookieSecurity()` fails
+startup (refuses to boot) when `NODE_ENV=production` and
+`AUTH_REFRESH_COOKIE_NAME` carries neither prefix — so a deploy that forgets
+to set it at all fails loudly at boot, in either environment, rather than
+serving an unprefixed cookie. It does **not** and cannot enforce which of
+the two prefixes is *correct* for a given host, only that one of them is
+present; that judgement (registrable-domain sharing) is an environment fact,
+recorded here rather than in code.
+
+**Governance note, stated plainly rather than silently assumed:** ADR-0023's
+own "Open" section marks the cookie prefix as a **GATE** — *"`/auth/login`
+emits no `Set-Cookie` until this is recorded. Decider: Architecture Guardian
+plus whoever owns the domain layout."* As of this commit, `docs/adr/ADR-0023-pre-tenant-authentication-reads.md`'s
+signature block still shows the Architecture Guardian's line for that gate
+unchecked. This runbook implements the environment-specific *values* that
+follow from the ADR's own stated rule once a domain topology is known; it
+does not substitute for that rule itself being recorded as decided. Before
+this configuration is relied on for a real deploy, confirm the Architecture
+Guardian has signed off on the cookie-prefix decision in the ADR itself —
+if the "HTTPS cut-over review" that requested this change already carries
+that sign-off, the ADR's Open section and signature block should be updated
+to say so; if it does not, this configuration is technically sound but
+formally ungated.

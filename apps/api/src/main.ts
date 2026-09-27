@@ -7,6 +7,7 @@ import { initLogger } from '@finsoft/observability'
 import { FinsoftNestLogger } from './common/nest-logger'
 import { AllExceptionsFilter } from './common/all-exceptions.filter'
 import { AppModule } from './app.module'
+import { assertProductionCookieSecurity, refreshCookieName } from './auth/cookie'
 
 /*
  * The API process.
@@ -20,6 +21,18 @@ import { AppModule } from './app.module'
 const DEFAULT_PORT = 3001
 
 async function bootstrap(): Promise<void> {
+  /*
+   * Before anything else, including the logger and the database pool: a
+   * synchronous, dependency-free check of the refresh cookie configuration.
+   * assertProductionCookieSecurity() refuses to start in production without
+   * a __Host- or __Secure- prefix; refreshCookieName() (already called on
+   * every request) is called here too so a __Host- name paired with the
+   * wrong path fails at boot, on every environment, rather than on the
+   * first request that happens to touch it.
+   */
+  assertProductionCookieSecurity()
+  refreshCookieName()
+
   /*
    * Before anything that might log. NestJS's own bootstrap messages are
    * routed through this logger below, and getLogger() throws if it has not
