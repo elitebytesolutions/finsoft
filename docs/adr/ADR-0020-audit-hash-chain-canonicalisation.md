@@ -7,6 +7,18 @@
 **Authority:** LEVEL 1 — reversing this requires a superseding ADR
 **Blocks:** migration 007 (`audit_log`) and everything that writes to it
 
+---
+
+> ## Renumbering notice — `audit_log` is migration 009, not 007
+>
+> **This ADR is Accepted and in force, unchanged.** This notice is permanent and annotates one identifier only; the decision, rationale, consequences, conditions and signatures below stay exactly as accepted, per [the ADR README](README.md) §4 ("A renumbering notice").
+>
+> The Product Owner's migration numbering of 2026-09-26 ([WAVE_1_REGISTER](../WAVE_1_REGISTER.md) "Migration numbering") assigns **009** to `audit_log`; 007 is now the `users` regrant and transition trigger. Every "migration 007" and bare "007" below means **the migration that creates `audit_log`, numbered 009**. Nothing attached to it changes: the schema facts, the two-connection `FOR SHARE` test, TD-001, the partitioning decision and the Database Guardian's three conditions bind 009 exactly as written for 007, and 009 does not merge before all three signatures.
+>
+> Affected as-accepted lines: **8** (`Blocks:`) · **244**, **249** (anchor backfill) · **401** (TD-001 merge condition) · **530** (schema facts heading) · **559** (`FOR SHARE` test, twice) · **566** (partitioning, twice) · **604** (Database Guardian signature) · **608**, **610**, **616**, **618** (the three conditions and the merge gate). The signature at 604 was given on 2026-09-25 against the numbering then in force and is not rewritten.
+>
+> **Line numbers.** `ADR-0020:NN` citations are written against the as-accepted text. This notice adds 12 lines after line 8, so an as-accepted line NN greater than 8 is now at NN+12 — :530 → 542, :608 → 620. The offset is permanent and fixed at +12; any later edit here must preserve the notice's line count.
+
 ## Context
 
 [NON_NEGOTIABLES rule 9](../NON_NEGOTIABLES.md) requires an append-only `audit_log`, hash-chained per tenant for tamper evidence:
