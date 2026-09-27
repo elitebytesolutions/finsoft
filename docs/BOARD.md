@@ -7,7 +7,7 @@
 - **Decisions needed** name the decider and the date asked; each closes within 2 working days.
 - **Demo ready** holds only workflows running against the real API on staging. Mock screens never go here.
 
-*Last updated: 2026-09-27 (M1-000b: ADR-0020 renumbering notice; M1-D Audit started).*
+*Last updated: 2026-09-27 (M2-000: posting-rules spec in review; Council decision on the service sale; two Product Owner questions).*
 
 ---
 
@@ -28,9 +28,12 @@
 
 | ID | Item | Tier | Seat |
 |---|---|---|---|
+| **M2-000 Posting-rules spec** | `docs/posting-rules/` — standard COA (`standard-v1`), JV, reversal, periods, ledger + trial balance, service sale, customer receipt · golden scenarios P01–P10 in `tests/accounting/golden/`. Documents only. **In review** on `feature/M2-000-posting-rules-spec` | T3 | Accounting (author) · Architecture (event surface, hand-offs in `docs/posting-rules/README.md` §5) |
 | **M1-X Exit** | W1-006 exit suite — authorised access succeeds, cross-tenant fails, at API and SQL · seed for the demo tenants `BHATTI1` / `BHATTI2` · **demo 1** (login into each tenant on staging) | T2 | Database/Security |
 
 Then **M2** accounting core · **M3** customers, service invoice, receipts · **M4** API-backed journey + Product Owner demo ([IMPLEMENTATION.md](IMPLEMENTATION.md) §13).
+
+**Dated deferral (M2-000, [periods.md](posting-rules/periods.md) §6):** the MVP creates fiscal year FY2027 only. "Create next fiscal year" must ship **before 2027-07-01**, or every posting dated on or after that day is rejected `PERIOD_NOT_FOUND`. Year-end closing entries are due before FY2027 is closed.
 
 ## Blocked
 
@@ -48,13 +51,16 @@ Then **M2** accounting core · **M3** customers, service invoice, receipts · **
 |---|---|---|---|
 | **Council — Architecture + `devops-guardian`** | Refresh-cookie prefix: `__Host-` or `__Secure-` (ADR-0023 *Open*; gates `Set-Cookie` on `/auth/login`) | 2026-09-27 | **Architecture seat: `__Host-` on staging.** ADR-0023's own rule — `__Host-` wins where the app shares a registrable domain with anything else. `sslip.io` is **not** on the Public Suffix List (measured 2026-09-27), so `31-220-74-159.sslip.io` shares `sslip.io` with every other sslip host on the internet, any of which can set a `Domain=sslip.io` cookie. Production is decided when its domain is chosen, not inherited from staging. Needs `devops-guardian` |
 | **Council — Architecture + Database/Security** | A request that supplies a tenant: ADR-0004 rule 2 (:75) says *"the field is rejected by the DTO schema"*. ADR-0009's Compliance says it *"has no effect on the tenant used"*. ADR-0023's test demands a *"byte-identical response"* on login and refresh. The three do not agree on body and query fields | 2026-09-27 | **Architecture seat: reject by schema.** Every request schema is strict: an unknown body or query key, `tenantId` included, is a 400. A header, cookie or path value is never read as a tenant, so it has no effect. That satisfies ADR-0004 as written and ADR-0009's "no effect on the tenant used", since a 400 uses no tenant. On login it falls outside ADR-0023 §4's envelope (schema validation, 400: no database, no counter). ADR-0023's byte-identical test is then read as "identical to any other unknown key" for body and query, and byte-identical for header and cookie. **Option B**, strip and ignore everywhere, hides client bugs and lets probes pass silently. Needs Database/Security to agree; recorded in ADR-0023's signatures when closed |
-| **Council — Accounting + Architecture** | M2 — service sale: a `SALE_POSTED` variant, or a new financial event | 2026-09-27 | **Architecture seat: `SALE_POSTED` variant with non-stock lines — pending the Accounting seat.** One business fact, one event: a sale carries lines of a declared kind, and a non-stock (service) line posts receivable and revenue only and never calls `inventoryKernel.postMovement`. Stock lines later add inventory and COGS inside the same event and the same transaction, so no second posting-rule family and no second reversal path. The accounting-kernel public surface gains a line kind, not an event. **Needed from Accounting:** the posting rule for a service line (accounts, and that the MVP slice is no-tax), and confirmation that reversal of a mixed sale is one reversal of one entry |
+| **Product Owner** — PO-Q1 | A customer has paid part of an invoice and the user wants to cancel the invoice ([service-sale.md](posting-rules/service-sale.md) §8). **A:** refuse until the payment is reversed first — two visible steps, the customer never shows a credit, no extra scope. **B:** allow it and show the customer in credit — pulls customer advances into M3, about +3–4 days, plus a new golden family | 2026-09-27 | **Accounting seat: A.** It keeps the MVP inside rules that exist; golden P06/P09 are written for A |
+| **Product Owner** — PO-Q2 | Does a manual journal voucher need a second person to approve it before it posts ([journal-voucher.md](posting-rules/journal-voucher.md) §9)? **A:** single step for the MVP — the author posts; audit trail and reversal are the controls. **B:** maker–checker now — JV drafts, an approval screen, two users per demo tenant, about +2–3 days on M2 | 2026-09-27 | **Accounting seat: A.** Approval is a configurable control (PRD §4.2) that belongs with Wave 2's remaining scope |
+| **Council — Database/Security + Architecture** | Journal-line party dimension: `journal_lines` (migration 012, kernel) must carry a customer on every AR-control line, but `customers` arrives in M3 (migration 014+, a module table). Nullable party columns in 012 with the composite FK added in M3, or the columns added in M3 — and whether a kernel table may reference a module table at all ([posting-rules README](posting-rules/README.md) §4.1, §5) | 2026-09-27 | — |
 | **Council — Architecture (+ Accounting for D4, D6)** | The D1–D9 deferrals and the reconciliation-scope deferral ([RECONCILIATION-2026-09](adr/RECONCILIATION-2026-09.md), [WAVE_0_REGISTER](WAVE_0_REGISTER.md)) — moved from the Product Owner by ADR-0024 | 2026-09-27 | — |
 
 ## Decided
 
 | Date | Decider | Decision |
 |---|---|---|
+| 2026-09-27 | **Council — Accounting + Architecture** | **Service sale is a `SALE_POSTED` variant, not a new event.** Lines carry a closed `kind` (`SERVICE` now, `STOCK` from Wave 7); a service line posts `Dr AR control [customer] / Cr Service Revenue`, no tax, at invoice post and never at draft, and never calls the inventory kernel. Reversal of any sale, mixed included, is one reversal of one entry. Accounting seat concurring with the Architecture seat's recommendation — reasoning in [service-sale.md](posting-rules/service-sale.md) §1 |
 | 2026-09-27 | **Product Owner** | **Weekly demo day: Monday.** The weekly status page (`docs/status/YYYY-Www.md`) is written the day before, Sunday |
 | 2026-09-27 | **Council — Architecture** | ADR-0023 addendum: **A1 widened** (every auth and RBAC query body in `packages/database`), **A4 withdrawn** (no ADR-0013 extension), **A5 delivered** (head notices on ADR-0009 and ADR-0004) |
 | 2026-09-27 | **Product Owner** | **Demo tenants: `bhatti1` and `bhatti2`** — tenant codes; staging demo data only. Stored as `BHATTI1` / `BHATTI2`: `tenants.code` is `^[A-Z][A-Z0-9_]{1,15}$` (`001_create_tenants.sql:43`) and the login form upper-cases input (ADR-0023 §5), so users may type either case |
