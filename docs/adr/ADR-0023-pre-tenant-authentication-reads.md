@@ -11,22 +11,22 @@
 
 ---
 
-> ## ⛔ Conflict notice — one sentence of §3 (:191) is to be superseded by ADR-0025, pending
+> ## ⛔ Partial supersession — one sentence of §3 (:191) is no longer in force
 >
-> **This ADR is in force.** Its `Status:` stays `Accepted`. This notice records status only. The decision, rationale and consequences below are untouched and stay exactly as accepted, per [the ADR README](README.md) §4.
+> **This ADR is still in force**, and this notice is permanent. Its `Status:` stays `Accepted`. The notice records status only, and the decision, rationale and consequences below stay exactly as accepted, per [the ADR README](README.md) §4. Because the supersession is partial, this record does not become `Superseded by ADR-0025`.
 >
-> [ADR-0025](ADR-0025-login-read-and-write-transactions.md) is **Proposed, 2026-09-27**. The Architecture seat has approved it, and the Database/Security seat is pending. It would supersede **one sentence of §3 and nothing else in this record**. It also clarifies one §5 cell without changing that cell:
+> [ADR-0025](ADR-0025-login-read-and-write-transactions.md) (**Accepted 2026-09-27**) supersedes **one sentence of §3 and nothing else in this record**. It also clarifies one §5 cell without changing it. The body below still states :191 as an unqualified rule, and this notice is the only thing that says otherwise, which is why it is not removed:
 >
 > | Provision | Under ADR-0025 |
 > |---|---|
-> | Line 191: "Sharing the helper also means the credential verification and the `last_login_at` write share one transaction with the tenant established once, which §1's claim about RLS being in force during verification requires and does not otherwise get." | **Would be superseded.** The resolve+read transaction and the write transaction are separate. Both enter via `withResolvedTenant`. The write re-asserts user status, the verified `password_hash`, tenant identity and tenant status atomically. No transaction is open during credential verification. §1's RLS claim is met by the read |
-> | Line 235: layer 4, "alert and global slowdown, never a hard block" | **Unchanged, but clarified.** The slowdown is the capped argon2id semaphore. The `login:global` counter is alert-only, and its alert is deduplicated to once a minute |
+> | Line 191: "Sharing the helper also means the credential verification and the `last_login_at` write share one transaction with the tenant established once, which §1's claim about RLS being in force during verification requires and does not otherwise get." | **No longer in force.** Read instead: the resolve+read transaction and the write transaction are separate. Both enter via `withResolvedTenant`. The write re-asserts user status, the verified `password_hash`, tenant identity and tenant status atomically. No transaction is open during credential verification. §1's RLS claim is met by the read |
+> | Line 235: layer 4, "alert and global slowdown, never a hard block" | **In force, clarified.** The slowdown is the capped argon2id semaphore (8 concurrent, queue 64, then 503). The `login:global` counter is alert-only, and its alert is deduplicated to once a minute |
 >
 > Everything else in §3 stays in force, including :187 and requirements 1–4 at :201–:204. Each of the two transactions meets them separately.
 >
-> **Blocked meanwhile:** the M1-A login split (`feature/M1-A-auth`) cannot merge until ADR-0025 is Accepted. When it is, this notice is replaced in place, at the same line count, by the permanent supersession scope notice.
+> **Before changing the login path, read ADR-0025.** For :191 it, not the sentence below, is the operative rule. Nothing is blocked on this record any longer.
 >
-> **Line numbers.** Every `ADR-0023:NN` citation in the repository was written against the **as-accepted** text. This notice adds 21 lines at the head, so an as-accepted line NN is now at NN+21: :191 → 212, :235 → 256. Citations are not rewritten. The offset is fixed at +21, and any later edit here must preserve its line count.
+> **Line numbers.** Every `ADR-0023:NN` citation in the repository was written against the **as-accepted** text. This notice adds 21 lines at the head, so an as-accepted line NN is now at NN+21: :191 → 212, :235 → 256. Citations are not rewritten. The notice is permanent, so the offset is permanent and fixed at +21. Any later edit here must preserve its line count.
 
 ---
 

@@ -1,6 +1,6 @@
 # ADR-0025: Login reads and writes in two transactions, and the write re-asserts account state
 
-**Status:** Proposed
+**Status:** Accepted — 2026-09-27
 **Date:** 2026-09-27
 **Deciders:** Architecture seat, Database/Security seat ([ADR-0024](ADR-0024-operating-model.md))
 **Authority:** LEVEL 1 — reversing this requires a superseding ADR
@@ -47,7 +47,7 @@ An alternative was to keep one transaction and accept the pool-exhaustion vector
 **Negative / accepted.**
 - Two transactions and two `tenants` reads per successful login. The second read is an indexed lookup by code.
 - A login races an argon2id parameter upgrade that rehashes the same password. It fails once with a 401 and succeeds on retry. Accepted, because it fails closed.
-- The test-only `beforeWrite` hook is on the production signature of `login()` and `withLoginAttempt()`. It is inert unless passed, and it is how the window is tested. It is booked as debt, not as a pattern to copy.
+- The test-only `beforeWrite` hook is on the production signature of `login()` and `withLoginAttempt()`. It is inert unless passed, and it is how the window is tested. It is booked as debt ([TD-006](../TECH_DEBT.md)), not as a pattern to copy.
 
 ## Compliance
 
@@ -71,4 +71,4 @@ An alternative was to keep one transaction and accept the pool-exhaustion vector
 | Seat | Verdict |
 |---|---|
 | **Architecture seat** | ✅ **APPROVED WITH CONDITIONS C1–C2, 2026-09-27.** Author. Reviewed diff `0926851..5e1d3cd` of `packages/database/src/auth/login.ts`, `packages/auth/src/login.ts` and `tests/integration/login-toctou.spec.ts`. F1, F2 and F3 are closed. The conditions bind the M1-A merge, not this record. |
-| **Database/Security seat** | ☐ pending. Reviewing `5e1d3cd` in parallel. |
+| **Database/Security seat** | ✅ **APPROVED, 2026-09-27.** Reviewed `packages/database/src/auth/login.ts` at `5e1d3cd` against every claim above. Both transactions enter via `withResolvedTenant(tenantByCodeResolver(tenantCode), …)`. `decide` runs between them. The `UPDATE users` predicates are `tenant_id`, `id`, `status = 'ACTIVE'` and `password_hash = $verified`, with `version = version + 1` unconditional and not a predicate. The write re-resolves, compares the tenant id with transaction one's, requires `ACTIVE`, and returns an ordinary 401 on any mismatch or on zero rows, with no retry. Transaction one's id enters no tenant-scoping call. The semaphore is 8/64, and `login:global` is `blocking: false` with a 60 s dedup. The Security seat concurred in session: N1–N5 closed, and the tenant-status snapshot is acceptable because suspension must revoke live sessions (M1-X). Conditions C1–C2 bind the M1-A merge, not this record. |
