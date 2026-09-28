@@ -22,9 +22,15 @@ export {
   type LoginDecision,
   type LoginSessionWrite,
   type LoginSuccess,
+  type LoginTestHooks,
 } from './login.ts'
 
-export { spendRefreshToken, type RefreshOutcome, type SpendRefreshTokenParams } from './refresh.ts'
+export {
+  spendRefreshToken,
+  type RefreshOutcome,
+  type SpendRefreshTokenParams,
+  type RefreshTestHooks,
+} from './refresh.ts'
 
 export {
   getAuthenticatedProfile,
