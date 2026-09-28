@@ -22,34 +22,32 @@ would force it**. An entry with no forcing condition is a wish, not debt.
 
 ---
 
-## TD-001 · `lock_timeout` is set nowhere
+## TD-001 · `lock_timeout` is set nowhere — RESOLVED
 
-**What.** [ADR-0020](adr/ADR-0020-audit-hash-chain-canonicalisation.md) §5 states
-that "a `lock_timeout` bounds the queue so contention surfaces as a bounded error
-rather than an unbounded stall." No `lock_timeout` is set in this repository.
-Verified: the string appears only in ADR prose and in one migration comment
-saying *not* to add one locally.
+**RESOLVED, M1-D.** [ADR-0020](adr/ADR-0020-audit-hash-chain-canonicalisation.md)
+§5's sentence is no longer a stated protection with no mechanism: `lock_timeout`
+is named and set. `AUDIT_LOCK_TIMEOUT_MS = 2000` (one exported constant,
+`packages/database/src/audit/lock-timeout.ts`) is applied via
+`SET LOCAL lock_timeout` immediately before `pg_advisory_xact_lock` at both call
+sites — `packages/database/src/audit/writer.ts` (`recordAudit`) and
+`packages/database/src/audit/anchor.ts` (`createAuditChainAnchor`). Because it
+is `SET LOCAL` rather than scoped to the one statement, it bounds every lock
+wait for the REST of that transaction too — the linkage trigger's own `FOR
+SHARE` read and the self-referential FK's `KEY SHARE` waits, both of which
+happen after the advisory lock is acquired and before commit. A wait that
+exceeds it surfaces as Postgres `55P03`, mapped to a named, retryable
+`AuditLockTimeoutError` (thrown from both the advisory-lock acquisition and the
+INSERT itself, since either can be where the wait actually happens).
+Value confirmed by the Database/Architecture seats at 2.5x the ARCHITECTURE §11
+800ms posting P95 budget and well under the 15000ms `statement_timeout`.
+Tested: `database/tests/audit-lock-timeout.spec.ts`.
 
-The only bound in force is `statement_timeout`, set at
-`packages/database/src/pool.ts:222` to `15_000` ms — **roughly nineteen times the
-800 ms P95 posting budget** in [ARCHITECTURE.md](ARCHITECTURE.md) §11, and sized
-for slow queries rather than for a lock wait. A transaction blocked on the
-per-tenant audit lock therefore stalls for up to fifteen seconds before anything
-intervenes.
+**Original finding, for the record.** No `lock_timeout` was set anywhere in
+the repository. The only bound in force was `statement_timeout`
+(`packages/database/src/pool.ts:222`, `15_000` ms) — roughly nineteen times the
+800 ms budget and sized for slow queries, not lock waits.
 
-**Why it is accepted for now.** No posting path exists yet — both kernels are
-`export {}`, and `audit_log` does not exist until migration 009. There is
-nothing to stall. Choosing the value blind is also worse than choosing it
-against a measurement: too low and legitimate contention becomes spurious
-posting failures, which is a worse failure than a slow posting.
-
-**Owner.** Database Guardian, with the Architecture Guardian on the value, since
-it trades against the §11 budget.
-
-**What would force it.** Migration 009, or the first code path that takes the
-per-tenant audit lock — whichever is first. ADR-0020's §5 sentence must either
-name the value and where it is set, or be withdrawn; it must not ship as a
-stated protection with no mechanism.
+**Owner.** Database Guardian, with the Architecture Guardian on the value.
 
 ---
 
@@ -143,3 +141,40 @@ edit. Nothing currently writes those columns.
 
 **What would force it.** The first code path that updates a `users` row —
 W1-002's login flow updates `last_login_at`, so this is live now, not later.
+
+---
+
+## TD-006 · `audit_log` is not partitioned
+
+**What.** [Migration 009](../database/migrations/009_create_audit_log.sql)
+creates `audit_log` as a single, unpartitioned table. Rule 4 forbids `DELETE`
+and this table grants none, so the only rule-4-compatible retention mechanism
+is `DETACH PARTITION` — and `DETACH` removes rows, which is exactly what §6 of
+[ADR-0020](adr/ADR-0020-audit-hash-chain-canonicalisation.md) defines as
+tampering evidence ("a seq gap is what the verifier reads as evidence of a
+deleted row"). Partitioning this table for retention and verifying its chain
+are in tension until a further ADR resolves it.
+
+**Why it is accepted.** `RANGE (occurred_at)` — the key ADR-0020 §5's own
+deferred-fallback text names — is measured incompatible with this table's own
+gap-freedom guarantee: PostgreSQL requires the partition key in every unique
+index of a partitioned table, which would force `occurred_at` into
+`audit_log_tenant_seq_key` and admit two rows at the same `seq` with different
+`occurred_at` values as "not a duplicate." `HASH (tenant_id)` avoids that, but
+needs the primary key to become `(tenant_id, id)` — an ADR-0021 §1 amendment,
+since that section currently grants this table's surrogate-key exemption on
+the footing of `(tenant_id, id)` UNIQUE existing ALONGSIDE a single-column
+`id` PRIMARY KEY, not instead of it. And retention specifically needs a further
+ADR defining SEALED CHAIN SEGMENTS — a closing manifest (final hash, row count,
+detachment record) a segment-aware verifier checks instead of reading a
+detached range's absence as a gap. None of that exists yet, so no partition of
+this table may be detached even after `HASH (tenant_id)` lands.
+
+**Owner.** Database Guardian, with the Architecture Guardian on the
+ADR-0021 §1 amendment and the sealed-chain-segment ADR.
+
+**What would force it.** Whichever of these is reached first: roughly 50
+million rows in `audit_log`, roughly 50 GB of table size, or any single
+tenant reaching 10 million rows. Recorded with the same thresholds in
+migration 009's own partitioning comment, so the trigger condition is not
+only here.

@@ -418,8 +418,10 @@ CREATE TRIGGER audit_log_no_truncate
 -- Indexes
 --
 -- ADR-0003 requires tenant_id first on every index of a tenant-owned table;
--- the four constraint indexes above already give that. These two are for the
--- read paths ADR-0020's own verifier and GET /api/audit need beyond them.
+-- the four constraint indexes above already give that. These three are for
+-- the read paths ADR-0020's own verifier and GET /api/audit need beyond
+-- them. Free to declare now, on a table with no rows; a CREATE INDEX later,
+-- on a table that is never deleted from, only grows more expensive.
 -- ---------------------------------------------------------------------------
 CREATE INDEX audit_log_entity_idx
   ON audit_log (tenant_id, entity_type, entity_id, seq);
@@ -427,34 +429,55 @@ CREATE INDEX audit_log_entity_idx
 CREATE INDEX audit_log_occurred_idx
   ON audit_log (tenant_id, occurred_at);
 
+-- GET /api/audit's `actor` filter (audit-query.dto.ts) and any future
+-- "what did this user do" support/incident query.
+CREATE INDEX audit_log_actor_idx
+  ON audit_log (tenant_id, actor_user_id, seq);
+
 -- ---------------------------------------------------------------------------
--- Partitioning: DEFERRED, with the key and its cost recorded now
+-- Partitioning: NOT DONE IN 009. Council ruling recorded here rather than
+-- only in the review thread, per outbox's own precedent (the cheapest
+-- moment this decision will ever be).
 --
--- Rule 4 forbids DELETE and this table grants none, so the only retention
--- mechanism compatible with it is DETACH PARTITION (004's outbox deferral
--- reasons the same way). Not declared here, and the reasons are sharper than
--- "not yet needed":
+-- RANGE (occurred_at) — the key ADR-0020 §5's deferred-fallback discussion
+-- names — is WITHDRAWN as the intended key, not merely deferred.
+-- occurred_at is APPLICATION-SUPPLIED (§4 writer rule 2), not the seq order,
+-- and PostgreSQL requires the partition key in every unique index of a
+-- partitioned table. Declaring RANGE (occurred_at) would therefore force
+-- occurred_at INTO audit_log_tenant_seq_key, admitting two rows at the same
+-- seq with different occurred_at values as "not a duplicate" — silently
+-- reopening the gap-freedom guarantee ADR-0020 §5 rests on (UNIQUE
+-- (tenant_id, seq) is one of the four facts gap-freedom is built from).
+-- That is disqualifying on its own, and there is a second, independent
+-- reason RANGE (occurred_at) does not even buy retention: DETACH PARTITION
+-- removes rows. Removing rows from the MIDDLE of a seq sequence is exactly
+-- what §6 defines as tampering — "a seq gap is what the verifier reads as
+-- evidence of a deleted row" — so detaching an occurred_at-keyed partition
+-- manufactures a false tamper alert on the tenant's live chain the moment
+-- retention runs. RANGE (occurred_at) partitioning and this table's own
+-- verifier are incompatible, not merely awkward together.
 --
---   RANGE (occurred_at) is the intended key (ADR-0020 §5's deferred fallback
---   discussion), but occurred_at is APPLICATION-SUPPLIED (§4 writer rule 2)
---   and is not the seq order — measured: declaring it would require every
---   UNIQUE constraint on this table to include occurred_at (PostgreSQL
---   requires the partition key in every unique index of a partitioned
---   table), which admits two rows at the same seq with different
---   occurred_at values as "not a duplicate" under
---   audit_log_tenant_seq_key — silently reopening exactly the gap-freedom
---   guarantee ADR-0020 §5 rests on ("UNIQUE (tenant_id, seq)" is one of the
---   four facts gap-freedom is built from).
+-- THE FUTURE PATH, if this table's growth ever forces the question: HASH
+-- (tenant_id), which sidesteps the seq/occurred_at conflict entirely because
+-- it does not touch ordering within a tenant's chain — but it requires the
+-- PRIMARY KEY to become (tenant_id, id), which needs an ADR-0021 §1
+-- AMENDMENT: that section currently grants this table's surrogate-key
+-- exemption on the footing of the (tenant_id, id) UNIQUE constraint existing
+-- ALONGSIDE a single-column `id` PRIMARY KEY, not instead of it.
 --
---   HASH (tenant_id) sidesteps that, but requires the primary key to become
---   (tenant_id, id) — touching ADR-0021 §1, which grants this table's
---   surrogate-key exemption on the footing of the CURRENT (tenant_id, id)
---   UNIQUE constraint existing ALONGSIDE a single-column `id` PRIMARY KEY.
+-- RETENTION specifically — as opposed to partitioning for query performance
+-- — additionally requires an ADR this repository does not have yet: one
+-- defining SEALED CHAIN SEGMENTS, because DETACH is still the only
+-- rule-4-compatible mechanism and detaching HASH-partitioned data still
+-- removes rows the verifier would otherwise walk. A sealed segment needs its
+-- own closing manifest (a final hash, a row count, a detachment record) that
+-- a segment-aware verifier checks INSTEAD OF treating the absence as a gap.
+-- Until that ADR exists, no partition of this table may be detached.
 --
--- Either path is an Architecture Guardian and Database Guardian decision,
--- not a migration-author default. Recorded here — the cheapest moment this
--- decision will ever be, per outbox's own precedent — rather than only in a
--- comment nobody greps.
+-- REVISIT AT: roughly 50 million rows, or 50 GB, or any single tenant
+-- reaching 10 million rows — whichever comes first. Recorded as TD-004 in
+-- TECH_DEBT.md with these same thresholds, so the trigger condition lives
+-- somewhere a growth dashboard can cite it rather than only in this comment.
 -- ---------------------------------------------------------------------------
 
 -- ---------------------------------------------------------------------------
@@ -527,13 +550,21 @@ $$;
 -- for exactly one reason: PostgreSQL's row-locking clauses require UPDATE
 -- privilege to even attempt (see audit_log_enforce_linkage's header comment
 -- for the measurement), and audit_log_link's FOR SHARE read needs that
--- privilege to run as finsoft_app at all. `ip` was chosen for being
--- unremarkable, not for any property of the column itself — the
--- unconditional audit_log_no_update trigger rejects EVERY UPDATE statement
--- regardless of which column it names, so this grant confers no actual
--- ability to change a stored value. If that trigger is ever weakened, this
--- grant becomes a real write path on `ip` and must be reconsidered together
--- with it — they are not independent.
+-- privilege to run as finsoft_app at all. The unconditional
+-- audit_log_no_update trigger rejects EVERY UPDATE statement regardless of
+-- which column it names, so this grant confers no actual ability to change
+-- a stored value while that trigger stands.
+--
+-- `ip` IS THE RIGHT COLUMN, not an arbitrary one, for a reason beyond being
+-- unremarkable: it is one of the twelve HASHED columns (ADR-0020 §4). If
+-- `audit_log_no_update` is ever disabled or dropped, a write this grant then
+-- makes possible is a write to a column the chain has already committed to
+-- — the next `npm run audit:verify` run recomputes the row's hash from its
+-- stored columns and reports a break at that row's seq. A column excluded
+-- from the twelve (there are none on this table, but the principle is what
+-- matters for the next author reaching for this pattern elsewhere) would
+-- let a defeated trigger's write go completely undetected. This grant and
+-- that trigger are not independent — reconsider them together.
 --
 -- DELETE is not in the default privilege set (roles.spec.ts's generic
 -- "grants DELETE to nobody" assertion holds without an explicit REVOKE here,
