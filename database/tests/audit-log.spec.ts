@@ -5,7 +5,6 @@ import {
   prepareTestDatabase,
   rawOn,
   runAs,
-  scalarOn,
   teardownTestDatabase,
   type TenantFixture,
 } from '@finsoft/database/testing'
@@ -73,48 +72,85 @@ async function append(t: TenantFixture = tenant, action = 'PROBE_ACTION') {
 }
 
 describe('append-only, at the privilege layer', () => {
-  it('grants finsoft_app SELECT, INSERT, DELETE=false, TRUNCATE=false', async () => {
-    for (const [privilege, expected] of [
-      ['SELECT', true],
-      ['INSERT', true],
-      ['DELETE', false],
-      ['TRUNCATE', false],
-    ] as const) {
-      const granted = await runAs({ tenantId: tenant.tenantId, userId: tenant.ownerId }, () =>
-        withTenant((tx) =>
-          scalarOn<boolean>(tx, 'select has_table_privilege(current_user, $1, $2)', [
-            'audit_log',
-            privilege,
-          ]),
-        ),
-      )
-      expect(granted, `finsoft_app ${privilege} on audit_log`).toBe(expected)
-    }
-  })
-
-  it('grants finsoft_app UPDATE on exactly one column (ip), and no table-level UPDATE', async () => {
-    // has_table_privilege('UPDATE') reports true if ANY column carries the
-    // grant — it does not by itself distinguish "the whole row" from "one
-    // column". has_column_privilege is what actually draws that line.
-    const columns = await runAs({ tenantId: tenant.tenantId, userId: tenant.ownerId }, () =>
+  /*
+   * R4 (Database Guardian review). `has_table_privilege`/`has_column_privilege`
+   * each answer ONE yes/no question at a time — they cannot, by construction,
+   * prove a NEGATIVE about every other role and privilege combination that was
+   * never asked about. `aclexplode` reads the table's and every column's ACL
+   * (access control list) directly and lists every (grantee, privilege) pair
+   * that exists at all, for any role — which is what an EXACT map needs: not
+   * "does finsoft_app have SELECT" (yes), but "is there anything granted to
+   * anyone that this list does not name" (there must not be).
+   */
+  it('matches the table-level ACL exactly: finsoft_app {SELECT, INSERT}, readonly_support {SELECT}, nobody else anything', async () => {
+    const grants = await runAs({ tenantId: tenant.tenantId, userId: tenant.ownerId }, () =>
       withTenant((tx) =>
-        rawOn<{ column_name: string }>(
+        rawOn<{ grantee: string; privilege: string }>(
           tx,
-          `select a.attname as column_name
-             from pg_attribute a
-             join pg_class c on c.oid = a.attrelid
+          `select coalesce(r.rolname, 'PUBLIC') as grantee, x.privilege_type as privilege
+             from pg_class c
+             cross join lateral aclexplode(c.relacl) as x
+             -- LEFT JOIN, deliberately: grantee = 0 means the grant is to
+             -- PUBLIC and has no matching pg_roles row at all. An inner join
+             -- here would silently DROP a PUBLIC grant from the result set —
+             -- exactly the forgery this test exists to catch, made invisible
+             -- by the query meant to catch it.
+             left join pg_roles r on r.oid = x.grantee
             where c.relname = 'audit_log'
-              and a.attnum > 0 and not a.attisdropped
-              and has_column_privilege(current_user, c.oid, a.attname, 'UPDATE')`,
+              -- The OWNER (finsoft_migration) always holds every privilege on
+              -- a table it owns, and PostgreSQL materialises that into relacl
+              -- explicitly the moment any GRANT/REVOKE touches it (which 009
+              -- does). That is not a "grant" in the sense this test audits —
+              -- database/tests/roles.spec.ts separately asserts finsoft_migration
+              -- owns every table and is the only non-superuser role with
+              -- BYPASSRLS. "Nobody else anything" means no OTHER role, and no
+              -- PUBLIC grant (which the expected set below still checks for).
+              and coalesce(r.rolname, 'PUBLIC') <> 'finsoft_migration'`,
         ),
       ),
     )
+
+    const actual = new Set(grants.map((g) => `${g.grantee}:${g.privilege}`))
+    const expected = new Set([
+      'finsoft_app:SELECT',
+      'finsoft_app:INSERT',
+      'readonly_support:SELECT',
+    ])
+
     expect(
-      columns.map((c) => c.column_name),
-      'finsoft_app should hold UPDATE on exactly the ip column — a privilege-only grant so ' +
-        "PostgreSQL's row-locking clauses (FOR SHARE) are reachable at all, superseded in practice " +
-        'by audit_log_no_update, which rejects every UPDATE unconditionally',
-    ).toEqual(['ip'])
+      actual,
+      `audit_log's table-level ACL does not match exactly. Actual: ${[...actual].sort().join(', ')} ` +
+        `— Expected: ${[...expected].sort().join(', ')}`,
+    ).toEqual(expected)
+  })
+
+  it('matches the column-level ACL exactly: finsoft_app UPDATE(ip), nothing else on any column for any role', async () => {
+    const grants = await runAs({ tenantId: tenant.tenantId, userId: tenant.ownerId }, () =>
+      withTenant((tx) =>
+        rawOn<{ grantee: string; privilege: string; column_name: string }>(
+          tx,
+          `select coalesce(r.rolname, 'PUBLIC') as grantee, x.privilege_type as privilege, a.attname as column_name
+             from pg_class c
+             join pg_attribute a on a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped
+             cross join lateral aclexplode(a.attacl) as x
+             left join pg_roles r on r.oid = x.grantee
+            where c.relname = 'audit_log'
+              and a.attacl is not null
+              and coalesce(r.rolname, 'PUBLIC') <> 'finsoft_migration'`,
+        ),
+      ),
+    )
+
+    const actual = new Set(grants.map((g) => `${g.grantee}:${g.privilege}:${g.column_name}`))
+    const expected = new Set(['finsoft_app:UPDATE:ip'])
+
+    expect(
+      actual,
+      `audit_log's column-level ACL does not match exactly (should be UPDATE(ip) for finsoft_app ` +
+        `only, granted so PostgreSQL's row-locking clauses are reachable at all — superseded in ` +
+        `practice by audit_log_no_update, which rejects every UPDATE unconditionally). Actual: ` +
+        `${[...actual].sort().join(', ')}`,
+    ).toEqual(expected)
   })
 
   it('still rejects an UPDATE of ip itself — the grant confers no real capability', async () => {
@@ -128,23 +164,30 @@ describe('append-only, at the privilege layer', () => {
     ).rejects.toThrow(/append-only/)
   })
 
-  it('grants readonly_support SELECT only', async () => {
-    const select = await runAs({ tenantId: tenant.tenantId, userId: tenant.ownerId }, () =>
-      withTenant((tx) =>
-        scalarOn<boolean>(tx, "select has_table_privilege('readonly_support', $1, 'SELECT')", [
-          'audit_log',
-        ]),
+  it('rejects an INSERT ... ON CONFLICT DO UPDATE SET ip — the UPDATE path fires the same trigger', async () => {
+    // R5 (Database Guardian review): ON CONFLICT DO UPDATE is still an
+    // UPDATE internally — PostgreSQL fires BEFORE UPDATE triggers for the
+    // conflict-resolution path exactly as it would for an explicit UPDATE
+    // statement. Reachable at the privilege layer (finsoft_app holds
+    // UPDATE(ip)), which is exactly why this needs its own test rather than
+    // being assumed to be covered by the plain UPDATE case above: a
+    // reviewer could reasonably wonder whether the trigger fires for this
+    // less obvious path too.
+    const row = await append()
+    await expect(
+      runAs({ tenantId: tenant.tenantId, userId: tenant.ownerId }, () =>
+        withTenant((tx) =>
+          rawOn(
+            tx,
+            `INSERT INTO audit_log (id, tenant_id, seq, occurred_at, action, entity_type, ip,
+               hash_version, hash, previous_hash)
+             VALUES ($1, $2, $3, now(), 'CONFLICT_ATTEMPT', 'probe', '203.0.113.9', 'v1', $4, $5)
+             ON CONFLICT (tenant_id, id) DO UPDATE SET ip = excluded.ip`,
+            [row.id, tenant.tenantId, row.seq, row.hash, row.previousHash],
+          ),
+        ),
       ),
-    )
-    const insert = await runAs({ tenantId: tenant.tenantId, userId: tenant.ownerId }, () =>
-      withTenant((tx) =>
-        scalarOn<boolean>(tx, "select has_table_privilege('readonly_support', $1, 'INSERT')", [
-          'audit_log',
-        ]),
-      ),
-    )
-    expect(select).toBe(true)
-    expect(insert).toBe(false)
+    ).rejects.toThrow(/append-only/)
   })
 })
 
