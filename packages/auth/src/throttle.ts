@@ -41,6 +41,13 @@ export interface ThrottleLayer {
   readonly windowSeconds: number
   /** Defaults to `true`. `false` = alert-only (ADR-0023 §5 layer 4). */
   readonly blocking?: boolean
+  /**
+   * Defaults to `false`. `true` for layers keyed on the victim's own
+   * identity (email, email+tenant, ip+email) — the ones a HashingQueueFullError
+   * must not spend, since a full hashing queue is a capacity problem, not
+   * something the account did (see `refundLayers`).
+   */
+  readonly accountKeyed?: boolean
 }
 
 export interface ThrottleDecision {
@@ -135,16 +142,49 @@ async function incrementAndCheck(layer: ThrottleLayer): Promise<LayerResult> {
 }
 
 /**
+ * N5, security re-review 2026-09-27: an alert-only layer (§5 layer 4) is
+ * exhausted on EVERY request once past its limit, for as long as volume
+ * stays high — without this, "log a business event" becomes "log one every
+ * request", which floods the very channel an on-call engineer needs during
+ * the incident it's meant to signal. `SET NX EX` is the dedup: the first
+ * caller to observe the layer exhausted within a window wins the alert: the
+ * rest see the key already set and skip it, atomically (SET NX is a single
+ * command, so there is no separate check-then-set race here).
+ */
+const ALERT_DEDUP_SECONDS = 60
+
+async function shouldAlert(layerKey: string): Promise<boolean> {
+  try {
+    const result = await client().set(
+      `throttle:alerted:${layerKey}`,
+      '1',
+      'EX',
+      ALERT_DEDUP_SECONDS,
+      'NX',
+    )
+    return result === 'OK'
+  } catch {
+    // The alert itself is best-effort; a Redis hiccup here must not turn an
+    // alert-only layer into something that affects the request's outcome.
+    return false
+  }
+}
+
+/**
  * Evaluate every layer. A BLOCKING layer that is exhausted makes the whole
  * call `throttled`; a non-blocking layer that is exhausted never does, and
- * is reported in `alertedLayers` instead. Throws `ThrottleUnavailableError`
- * — never silently permits — if Redis cannot be reached for ANY layer.
+ * is reported in `alertedLayers` — deduplicated to at most once per
+ * `ALERT_DEDUP_SECONDS` window (N5) — instead. Throws
+ * `ThrottleUnavailableError` — never silently permits — if Redis cannot be
+ * reached for ANY layer.
  */
 export async function checkLayers(layers: readonly ThrottleLayer[]): Promise<ThrottleDecision> {
   const results = await Promise.all(layers.map(incrementAndCheck))
 
   const blockingExhausted = results.filter((r) => r.exhausted && r.blocking)
-  const alertedLayers = results.filter((r) => r.exhausted && !r.blocking).map((r) => r.key)
+  const nonBlockingExhausted = results.filter((r) => r.exhausted && !r.blocking)
+  const alertDecisions = await Promise.all(nonBlockingExhausted.map((r) => shouldAlert(r.key)))
+  const alertedLayers = nonBlockingExhausted.filter((_, i) => alertDecisions[i]).map((r) => r.key)
 
   if (blockingExhausted.length === 0) {
     return { throttled: false, retryAfterSeconds: 0, alertedLayers }
@@ -154,6 +194,26 @@ export async function checkLayers(layers: readonly ThrottleLayer[]): Promise<Thr
     retryAfterSeconds: Math.max(...blockingExhausted.map((r) => r.retryAfterSeconds)),
     alertedLayers,
   }
+}
+
+/**
+ * Item 1d, security re-review: `HashingQueueFullError` is a capacity
+ * problem, not something the account did, so the account-keyed layers this
+ * request already incremented must be given back — a full hashing queue
+ * must not spend a legitimate user's throttle budget. IP-only and global
+ * layers are NOT refunded: volume from an IP, or globally, is exactly what
+ * those layers exist to track regardless of why an individual request
+ * failed.
+ */
+export async function refundLayers(layers: readonly ThrottleLayer[]): Promise<void> {
+  const toRefund = layers.filter((l) => l.accountKeyed)
+  await Promise.all(
+    toRefund.map((l) =>
+      client()
+        .decr(`throttle:${l.key}`)
+        .catch(() => undefined),
+    ),
+  )
 }
 
 /*
@@ -184,17 +244,24 @@ export function loginLayers(input: {
   readonly ipPrefix: string
 }): readonly ThrottleLayer[] {
   return [
-    { key: `login:email:${input.normalisedEmail}`, limit: 30, windowSeconds: 15 * 60 },
+    {
+      key: `login:email:${input.normalisedEmail}`,
+      limit: 30,
+      windowSeconds: 15 * 60,
+      accountKeyed: true,
+    },
     {
       key: `login:email-tenant:${input.normalisedEmail}:${input.normalisedTenantCode}`,
       limit: 10,
       windowSeconds: 15 * 60,
+      accountKeyed: true,
     },
     { key: `login:ip:${input.ipPrefix}`, limit: 60, windowSeconds: 5 * 60 },
     {
       key: `login:ip-email:${input.ipPrefix}:${input.normalisedEmail}`,
       limit: 5,
       windowSeconds: 5 * 60,
+      accountKeyed: true,
     },
     { key: 'login:global', limit: 2000, windowSeconds: 60, blocking: false },
   ]
