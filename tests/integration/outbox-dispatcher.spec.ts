@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { Client } from 'pg'
 import { claimBatch, reclaimExpired, withTenant, ATTEMPT_CAP, RECLAIM_CAP } from '@finsoft/database'
 import {
   createTenantFixture,
@@ -518,10 +519,23 @@ describe('6 — tenant enumeration', () => {
     const dormant = await createTenantFixture('DSR')
     const owed = await enqueue(dormant)
 
-    const { withGlobal } = await import('@finsoft/database')
-    await withGlobal((tx) =>
-      rawOn(tx, `UPDATE tenants SET status = 'SUSPENDED' WHERE id = $1`, [dormant.tenantId]),
-    )
+    // Migration 007 (ADR-0023 §1) narrows finsoft_app's UPDATE grant on
+    // tenants to exclude `status` — a business rule this suite tests
+    // AROUND, not a hole to route its own fixture writes through. Suspending
+    // a tenant is now a finsoft_migration-only action, exactly as an
+    // operator's real suspend path will be.
+    const migrationUrl = process.env['TEST_MIGRATION_DATABASE_URL']
+    if (!migrationUrl) throw new Error('TEST_MIGRATION_DATABASE_URL is not set')
+    const client = new Client({ connectionString: migrationUrl })
+    await client.connect()
+    try {
+      await client.query('UPDATE tenants SET status = $2 WHERE id = $1', [
+        dormant.tenantId,
+        'SUSPENDED',
+      ])
+    } finally {
+      await client.end()
+    }
 
     const seen: string[] = []
     await dispatcherWith(async (c) => {

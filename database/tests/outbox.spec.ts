@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { Client } from 'pg'
 import { withTenant } from '@finsoft/database'
 import {
   createTenantFixture,
@@ -30,6 +31,28 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 beforeAll(prepareTestDatabase, 60_000)
 afterAll(teardownTestDatabase)
+
+/**
+ * Fixture setup only. Migration 007 (ADR-0023 §1) narrows `finsoft_app`'s
+ * grant on `tenants` to exclude `code` and `status` — a business rule this
+ * suite must go on being able to test AROUND, not a hole to route the
+ * suite's own writes through. `finsoft_app` genuinely cannot flip a
+ * tenant's status any more, so a test that needs a SUSPENDED tenant to exist
+ * connects as `finsoft_migration`, exactly the way an operator's own
+ * suspend action will (a separately permissioned, separately audited path
+ * per ADR-0023 §1 — not this one).
+ */
+async function setTenantStatusForTest(tenantId: string, status: string): Promise<void> {
+  const url = process.env['TEST_MIGRATION_DATABASE_URL']
+  if (!url) throw new Error('TEST_MIGRATION_DATABASE_URL is not set')
+  const client = new Client({ connectionString: url })
+  await client.connect()
+  try {
+    await client.query('UPDATE tenants SET status = $2 WHERE id = $1', [tenantId, status])
+  } finally {
+    await client.end()
+  }
+}
 
 /** Every row this file writes, so a failure names a real id. */
 interface Row {
@@ -825,12 +848,7 @@ describe('tenant enumeration: scoped, bounded, and nobody starves', () => {
     const dormant = await createTenantFixture('OBZ')
     const owed = await enqueue(dormant)
 
-    await runAs({ tenantId: dormant.tenantId, userId: null }, async () => {
-      const { withGlobal } = await import('@finsoft/database')
-      await withGlobal((tx) =>
-        rawOn(tx, `UPDATE tenants SET status = 'SUSPENDED' WHERE id = $1`, [dormant.tenantId]),
-      )
-    })
+    await setTenantStatusForTest(dormant.tenantId, 'SUSPENDED')
 
     const { withGlobal } = await import('@finsoft/database')
 

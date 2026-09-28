@@ -208,6 +208,9 @@ export interface Tenants {
    * PKR only in v1 (ADR-0011). Widening this requires a reviewed migration.
    */
   base_currency: Generated<string>;
+  /**
+   * Business identifier and a login input (ADR-0023 §1). finsoft_app holds no UPDATE grant on this column as of migration 007 — renaming a tenant is a separately permissioned, separately audited action, not a side effect of a profile edit.
+   */
   code: string;
   created_at: Generated<Timestamp>;
   id: Generated<string>;
@@ -215,7 +218,7 @@ export interface Tenants {
   name: string;
   ntn: string | null;
   /**
-   * ACTIVE | SUSPENDED | CLOSED. Tenants are never deleted (rule 4).
+   * ACTIVE | SUSPENDED | CLOSED, and a login input (ADR-0023 §1). finsoft_app holds no UPDATE grant on this column as of migration 007 — see the comment on tenants.code.
    */
   status: Generated<string>;
   strn: string | null;

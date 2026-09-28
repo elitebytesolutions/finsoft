@@ -120,6 +120,121 @@ for (const [service, db] of [
     return row === '0' ? true : `found ${row}`
   })
 
+  /* -------------------------------------------------------------- *
+   * finsoft_refresh — ADR-0023 §2, migration 006's pre-tenant
+   * refresh resolver. Created by 00-bootstrap.sh, not by a migration
+   * (finsoft_migration has no CREATEROLE). Its NOLOGIN/NOBYPASSRLS
+   * attributes are "protected by NOTHING but a catalogue assertion"
+   * per the ADR's own residual register — this is that assertion.
+   * -------------------------------------------------------------- */
+  check(
+    `${service}: finsoft_refresh is NOLOGIN and NOBYPASSRLS`,
+    'ADR-0023 §2 — owner of the pre-tenant resolver must never connect and never bypass RLS',
+    () => {
+      const row = psql(
+        service,
+        db,
+        "SELECT rolcanlogin::text || ',' || rolbypassrls::text FROM pg_roles WHERE rolname = 'finsoft_refresh'",
+      )
+      return row === 'false,false' ? true : `rolcanlogin,rolbypassrls = ${row || '(role missing)'}`
+    },
+  )
+
+  check(
+    `${service}: finsoft_refresh membership options exact`,
+    'ADR-0023 §2 — finsoft_migration holds SET, not INHERIT, on finsoft_refresh',
+    () => {
+      // Asserting only the member list would leave the INHERIT FALSE claim
+      // untested — a re-grant with INHERIT TRUE keeps the member set
+      // identical while handing finsoft_migration passive cross-tenant
+      // reach, per the ADR's own compliance section.
+      const row = psql(
+        service,
+        db,
+        `SELECT m.inherit_option::text || ',' || m.set_option::text || ',' || m.admin_option::text
+         FROM pg_auth_members m
+         JOIN pg_roles r ON r.oid = m.roleid
+         JOIN pg_roles g ON g.oid = m.member
+         WHERE r.rolname = 'finsoft_refresh' AND g.rolname = 'finsoft_migration'`,
+      )
+      return row === 'false,true,false'
+        ? true
+        : `inherit_option,set_option,admin_option = ${row || '(no membership row)'}`
+    },
+  )
+
+  /*
+   * D6, security/database re-review 2026-09-27. `pg_has_role` treats a
+   * superuser as a member of every role, so this is deliberately a direct
+   * `rolsuper` read rather than a role-membership check — and a separate
+   * check that finsoft_refresh holds no membership OF ITS OWN, distinct
+   * from the check above (which only asserts finsoft_migration's options as
+   * a member OF finsoft_refresh).
+   */
+  check(`${service}: finsoft_refresh is not a superuser`, 'ADR-0023 §2', () => {
+    const rolsuper = psql(
+      service,
+      db,
+      "SELECT rolsuper::text FROM pg_roles WHERE rolname = 'finsoft_refresh'",
+    )
+    return rolsuper === 'false' ? true : `rolsuper = ${rolsuper || '(role missing)'}`
+  })
+
+  check(
+    `${service}: finsoft_refresh holds no membership of its own`,
+    'a NOLOGIN, non-superuser role picking up passive privilege through a role it was granted would be a hole nobody granted directly',
+    () => {
+      const count = psql(
+        service,
+        db,
+        `SELECT count(*)::text FROM pg_auth_members m
+         JOIN pg_roles g ON g.oid = m.member
+        WHERE g.rolname = 'finsoft_refresh'`,
+      )
+      return count === '0' ? true : `finsoft_refresh is a member of ${count} role(s)`
+    },
+  )
+
+  /*
+   * Item 4, database re-review 2026-09-27: the checks above pin
+   * finsoft_migration's INHERIT/SET/ADMIN options on finsoft_refresh, and
+   * that finsoft_refresh itself is a member of nothing — but neither one
+   * closes off finsoft_app or readonly_support silently picking up a
+   * membership grant later (a `GRANT finsoft_refresh TO finsoft_app`, say,
+   * would fail no existing check), nor confirms finsoft_migration's own
+   * membership set is EXACTLY {finsoft_refresh} and not that plus something
+   * else. This is the exact allowlist, one row per role, checked against
+   * the full member list rather than a single named row.
+   */
+  for (const [role, expected] of [
+    ['finsoft_app', []],
+    ['readonly_support', []],
+    ['finsoft_migration', ['finsoft_refresh']],
+    ['finsoft_refresh', []],
+  ]) {
+    check(
+      `${service}: ${role} membership allowlist is exact`,
+      'item 4, database re-review 2026-09-27',
+      () => {
+        const rows = psql(
+          service,
+          db,
+          `SELECT r.rolname FROM pg_auth_members m
+         JOIN pg_roles r ON r.oid = m.roleid
+         JOIN pg_roles g ON g.oid = m.member
+         WHERE g.rolname = '${role}'
+         ORDER BY r.rolname`,
+        )
+        const actual = rows === '' ? [] : rows.split('\n')
+        const wanted = [...expected].sort()
+        const match = actual.length === wanted.length && actual.every((v, i) => v === wanted[i])
+        return match
+          ? true
+          : `memberships = [${actual.join(', ')}], expected [${wanted.join(', ')}]`
+      },
+    )
+  }
+
   check(`${service}: finsoft_app owns nothing and cannot create`, 'ADR-0004:59', () => {
     const canCreate = psql(
       service,

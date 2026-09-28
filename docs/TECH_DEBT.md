@@ -144,37 +144,34 @@ W1-002's login flow updates `last_login_at`, so this is live now, not later.
 
 ---
 
-## TD-006 · `audit_log` is not partitioned
+## TD-006 · Test-only hooks on production auth signatures
 
-**What.** [Migration 009](../database/migrations/009_create_audit_log.sql)
-creates `audit_log` as a single, unpartitioned table. Rule 4 forbids `DELETE`
-and this table grants none, so the only rule-4-compatible retention mechanism
-is `DETACH PARTITION` — and `DETACH` removes rows, which is exactly what §6 of
-[ADR-0020](adr/ADR-0020-audit-hash-chain-canonicalisation.md) defines as
-tampering evidence ("a seq gap is what the verifier reads as evidence of a
-deleted row"). Partitioning this table for retention and verifying its chain
-are in tension until a further ADR resolves it.
+**What.** Two production functions in `packages/database/src/auth/` take an
+optional test-only parameter. `withLoginAttempt()` in `login.ts` takes
+`LoginTestHooks.beforeWrite`, and `login()` in `packages/auth/src/login.ts`
+passes it through. The refresh spend in `refresh.ts` takes
+`RefreshTestHooks.beforeSpend`, re-exported from `auth/index.ts`. Each hook is
+inert unless it is passed, and each exists so an integration test can mutate
+state on a separate connection at an exact race window. `beforeWrite` runs
+between login's two transactions, with none open
+(`tests/integration/login-toctou.spec.ts`). `beforeSpend` runs **inside** the
+refresh transaction, between the candidate read and the atomic spend, with a
+connection held. Nothing stops a production caller from passing one. A hook is
+an arbitrary `async` callback that runs between the read and the write of an
+authentication path.
 
-**Why it is accepted.** `RANGE (occurred_at)` — the key ADR-0020 §5's own
-deferred-fallback text names — is measured incompatible with this table's own
-gap-freedom guarantee: PostgreSQL requires the partition key in every unique
-index of a partitioned table, which would force `occurred_at` into
-`audit_log_tenant_seq_key` and admit two rows at the same `seq` with different
-`occurred_at` values as "not a duplicate." `HASH (tenant_id)` avoids that, but
-needs the primary key to become `(tenant_id, id)` — an ADR-0021 §1 amendment,
-since that section currently grants this table's surrogate-key exemption on
-the footing of `(tenant_id, id)` UNIQUE existing ALONGSIDE a single-column
-`id` PRIMARY KEY, not instead of it. And retention specifically needs a further
-ADR defining SEALED CHAIN SEGMENTS — a closing manifest (final hash, row count,
-detachment record) a segment-aware verifier checks instead of reading a
-detached range's absence as a gap. None of that exists yet, so no partition of
-this table may be detached even after `HASH (tenant_id)` lands.
+**Why it is accepted.** [ADR-0025](adr/ADR-0025-login-read-and-write-transactions.md)
+names it an accepted cost. The TOCTOU window it tests is the property ADR-0025
+exists to close, and no other seam can reach that window deterministically
+today. Neither hook receives a connection, a `TenantTx` or a tenant id, so
+neither can widen what the write decides. `beforeSpend` holds the refresh
+transaction open for as long as it runs, which is harmless in a test and one
+more reason no production caller may pass it.
 
-**Owner.** Database Guardian, with the Architecture Guardian on the
-ADR-0021 §1 amendment and the sealed-chain-segment ADR.
+**Owner.** Database Guardian, with the Security seat.
 
-**What would force it.** Whichever of these is reached first: roughly 50
-million rows in `audit_log`, roughly 50 GB of table size, or any single
-tenant reaching 10 million rows. Recorded with the same thresholds in
-migration 009's own partitioning comment, so the trigger condition is not
-only here.
+**What would force it.** A better seam: for example, an injectable clock or
+barrier at the `packages/database` boundary, or a test-build-only export.
+Either can reach the window without widening a production signature. Also
+forced sooner if a third hook is proposed, or if any non-test caller passes
+one. Until then, **do not copy the pattern.** A new hook needs a line here.
