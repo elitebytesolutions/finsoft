@@ -1,0 +1,384 @@
+{
+  "id": "P09",
+  "format": "posting-scenario/v1",
+  "name": "The MVP journey in two tenants: capital, expenses, service invoice, receipt, reversals, trial balance",
+  "rules": [
+    "JOURNAL_VOUCHER_POSTED@1",
+    "SALE_POSTED/service@1",
+    "CUSTOMER_PAYMENT_RECEIVED@1",
+    "REVERSAL@1",
+    "REPORT/trial-balance@1",
+    "REPORT/account-ledger@1"
+  ],
+  "source": "docs/PRD.md §6.1; docs/posting-rules/",
+  "governedBy": ["ADR-0005", "ADR-0006", "ADR-0011", "ADR-0012", "Invariants 1, 2, 6, 7, 9"],
+  "executableFrom": "M3",
+  "status": "Specified, hand-computed. Not yet executed: the M4 journey test should assert the same figures through the API.",
+  "description": [
+    "PRD §6.1: customer → service invoice → payment → journal entry → customer ledger →",
+    "trial balance → reversal, in two tenants that cannot see each other.",
+    "",
+    "Tenant GOLDEN_A, all dated in September 2026 (OPEN); today 2026-09-27:",
+    "  1  JV-2027-000001  09-01  Dr 1120 500000.0000 / Cr 3100 500000.0000",
+    "  2  JV-2027-000002  09-05  Dr 6200 45000.0000, Dr 6300 1249.5000, Dr 6400 8750.5000 / Cr 1120 55000.0000",
+    "  3  JE-2027-000001  09-15  INV-2027-000001  Dr 1200 [CUST-A] 10000.0000 / Cr 4200 10000.0000",
+    "  4  JE-2027-000002  09-20  RCT-2027-000001  Dr 1120 6000.0000 / Cr 1200 [CUST-A] 6000.0000",
+    "",
+    "Checkpoint after step 4 (trial balance as of 2026-09-27), by hand:",
+    "  1120  500000.0000 − 55000.0000 + 6000.0000 = 451000.0000 Dr",
+    "  1200  10000.0000 − 6000.0000              =   4000.0000 Dr",
+    "  3100                                        500000.0000 Cr",
+    "  4200                                         10000.0000 Cr",
+    "  6200 45000.0000 Dr · 6300 1249.5000 Dr · 6400 8750.5000 Dr",
+    "  Σ Dr = 451000.0000 + 4000.0000 + 45000.0000 + 1249.5000 + 8750.5000 = 510000.0000",
+    "  Σ Cr = 500000.0000 + 10000.0000 = 510000.0000",
+    "",
+    "  7  invoice reversal refused while the receipt is allocated (PO-Q1 Option A)",
+    "  8  RV-2027-000001  09-20  reverses the receipt:  Dr 1200 [CUST-A] 6000.0000 / Cr 1120 6000.0000",
+    "  9  RV-2027-000002  09-15  reverses the invoice:  Dr 4200 10000.0000 / Cr 1200 [CUST-A] 10000.0000",
+    "",
+    "Final trial balance as of 2026-09-27, by hand:",
+    "  1120  451000.0000 − 6000.0000 = 445000.0000 Dr",
+    "  1200  4000.0000 + 6000.0000 − 10000.0000 = 0.0000",
+    "  4200  10000.0000 Cr − 10000.0000 = 0.0000",
+    "  3100 500000.0000 Cr; 6200, 6300, 6400 unchanged",
+    "  Σ Dr = 445000.0000 + 45000.0000 + 1249.5000 + 8750.5000 = 500000.0000 = Σ Cr",
+    "",
+    "The reversed pairs net to exactly zero (Invariant 6) and the books are back to the",
+    "capital and expense vouchers alone — the same figures as P02's trial balance.",
+    "",
+    "Tenant GOLDEN_B posts one voucher and receives JV-2027-000001 of its own: numbering is",
+    "per tenant. Neither tenant's trial balance contains a single row of the other's."
+  ],
+  "fixture": {
+    "coa": "standard-v1",
+    "timezone": "Asia/Karachi",
+    "fiscalYearStartMonth": 7,
+    "today": "2026-09-27",
+    "periods": { "fiscalYear": 2027, "status": "all OPEN" },
+    "tenants": ["GOLDEN_A", "GOLDEN_B"],
+    "customers": [{ "ref": "CUST-A", "tenant": "GOLDEN_A", "status": "ACTIVE" }],
+    "draftInvoices": ["INV-A1"],
+    "draftReceipts": ["RCT-A1"]
+  },
+  "steps": [
+    {
+      "step": 1,
+      "tenant": "GOLDEN_A",
+      "do": "post",
+      "event": "JOURNAL_VOUCHER_POSTED",
+      "idempotencyKey": "p09-a-capital",
+      "occurredAt": "2026-09-01",
+      "payload": {
+        "narration": "Owner's opening capital deposited to bank",
+        "lines": [
+          { "account": "1120", "debit": "500000.0000" },
+          { "account": "3100", "credit": "500000.0000" }
+        ]
+      },
+      "expect": { "outcome": "POSTED", "entryNumber": "JV-2027-000001" }
+    },
+    {
+      "step": 2,
+      "tenant": "GOLDEN_A",
+      "do": "post",
+      "event": "JOURNAL_VOUCHER_POSTED",
+      "idempotencyKey": "p09-a-expenses",
+      "occurredAt": "2026-09-05",
+      "payload": {
+        "narration": "September rent, office supplies and utilities paid from bank",
+        "lines": [
+          { "account": "6200", "debit": "45000.0000" },
+          { "account": "6300", "debit": "1249.5000" },
+          { "account": "6400", "debit": "8750.5000" },
+          { "account": "1120", "credit": "55000.0000" }
+        ]
+      },
+      "expect": {
+        "outcome": "POSTED",
+        "entryNumber": "JV-2027-000002",
+        "totals": { "debit": "55000.0000", "credit": "55000.0000" }
+      }
+    },
+    {
+      "step": 3,
+      "tenant": "GOLDEN_A",
+      "do": "post",
+      "event": "SALE_POSTED",
+      "referenceType": "sales_invoice",
+      "referenceId": "INV-A1",
+      "idempotencyKey": "p09-a-inv",
+      "occurredAt": "2026-09-15",
+      "payload": {
+        "settlement": "CREDIT",
+        "customer": "CUST-A",
+        "lines": [
+          {
+            "kind": "SERVICE",
+            "description": "Monthly maintenance",
+            "quantity": "1.000000",
+            "unitPrice": "7500.000000",
+            "lineNet": "7500.0000"
+          },
+          {
+            "kind": "SERVICE",
+            "description": "Site visit",
+            "quantity": "3.000000",
+            "unitPrice": "833.333333",
+            "lineNet": "2500.0000"
+          }
+        ],
+        "netAmount": "10000.0000"
+      },
+      "expect": {
+        "outcome": "POSTED",
+        "entryNumber": "JE-2027-000001",
+        "documentNumber": "INV-2027-000001",
+        "lines": [
+          { "account": "1200", "party": "CUST-A", "debit": "10000.0000", "credit": "0.0000" },
+          { "account": "4200", "debit": "0.0000", "credit": "10000.0000" }
+        ]
+      }
+    },
+    {
+      "step": 4,
+      "tenant": "GOLDEN_A",
+      "do": "post",
+      "event": "CUSTOMER_PAYMENT_RECEIVED",
+      "referenceType": "customer_receipt",
+      "referenceId": "RCT-A1",
+      "idempotencyKey": "p09-a-rct",
+      "occurredAt": "2026-09-20",
+      "payload": {
+        "customer": "CUST-A",
+        "method": "BANK",
+        "amount": "6000.0000",
+        "allocations": [{ "invoice": "INV-A1", "amount": "6000.0000" }]
+      },
+      "expect": {
+        "outcome": "POSTED",
+        "entryNumber": "JE-2027-000002",
+        "documentNumber": "RCT-2027-000001",
+        "lines": [
+          { "account": "1120", "debit": "6000.0000", "credit": "0.0000" },
+          { "account": "1200", "party": "CUST-A", "debit": "0.0000", "credit": "6000.0000" }
+        ]
+      }
+    },
+    {
+      "step": 5,
+      "tenant": "GOLDEN_A",
+      "do": "assert",
+      "trialBalance": {
+        "asOf": "2026-09-27",
+        "rows": [
+          { "account": "1120", "debit": "451000.0000", "credit": "0.0000" },
+          { "account": "1200", "debit": "4000.0000", "credit": "0.0000" },
+          { "account": "3100", "debit": "0.0000", "credit": "500000.0000" },
+          { "account": "4200", "debit": "0.0000", "credit": "10000.0000" },
+          { "account": "6200", "debit": "45000.0000", "credit": "0.0000" },
+          { "account": "6300", "debit": "1249.5000", "credit": "0.0000" },
+          { "account": "6400", "debit": "8750.5000", "credit": "0.0000" }
+        ],
+        "totals": { "debit": "510000.0000", "credit": "510000.0000" }
+      },
+      "customerLedger": {
+        "customer": "CUST-A",
+        "from": "2026-07-01",
+        "to": "2026-09-27",
+        "openingBalance": "0.0000",
+        "lines": [
+          {
+            "entryNumber": "JE-2027-000001",
+            "document": "INV-2027-000001",
+            "date": "2026-09-15",
+            "debit": "10000.0000",
+            "credit": "0.0000",
+            "runningBalance": "10000.0000"
+          },
+          {
+            "entryNumber": "JE-2027-000002",
+            "document": "RCT-2027-000001",
+            "date": "2026-09-20",
+            "debit": "0.0000",
+            "credit": "6000.0000",
+            "runningBalance": "4000.0000"
+          }
+        ],
+        "closingBalance": "4000.0000"
+      },
+      "invoiceOutstanding": { "INV-A1": "4000.0000" },
+      "invariant9": {
+        "customer": "CUST-A",
+        "gl": "4000.0000",
+        "subledger": "4000.0000",
+        "difference": "0.0000"
+      }
+    },
+    {
+      "step": 6,
+      "tenant": "GOLDEN_B",
+      "do": "assert",
+      "$comment": "Tenant B sees nothing of tenant A: empty trial balance, no entries, CUST-A not resolvable.",
+      "trialBalance": {
+        "asOf": "2026-09-27",
+        "rows": [],
+        "totals": { "debit": "0.0000", "credit": "0.0000" }
+      },
+      "journalEntryCount": 0
+    },
+    {
+      "step": 7,
+      "tenant": "GOLDEN_A",
+      "do": "reverseDocument",
+      "document": "INV-A1",
+      "idempotencyKey": "p09-a-rev-inv-early",
+      "reason": "Customer disputes the site visit",
+      "expect": {
+        "outcome": "REJECTED",
+        "error": "INVOICE_HAS_LIVE_ALLOCATIONS",
+        "entriesAfter": 4
+      }
+    },
+    {
+      "step": 8,
+      "tenant": "GOLDEN_A",
+      "do": "reverseDocument",
+      "document": "RCT-A1",
+      "idempotencyKey": "p09-a-rev-rct",
+      "reason": "Payment to be re-applied after the invoice is corrected",
+      "expect": {
+        "outcome": "POSTED",
+        "entryNumber": "RV-2027-000001",
+        "occurredAt": "2026-09-20",
+        "reversalOf": "JE-2027-000002",
+        "lines": [
+          { "account": "1200", "party": "CUST-A", "debit": "6000.0000", "credit": "0.0000" },
+          { "account": "1120", "debit": "0.0000", "credit": "6000.0000" }
+        ],
+        "invoiceOutstanding": { "INV-A1": "10000.0000" }
+      }
+    },
+    {
+      "step": 9,
+      "tenant": "GOLDEN_A",
+      "do": "reverseDocument",
+      "document": "INV-A1",
+      "idempotencyKey": "p09-a-rev-inv",
+      "reason": "Customer disputes the site visit",
+      "expect": {
+        "outcome": "POSTED",
+        "entryNumber": "RV-2027-000002",
+        "occurredAt": "2026-09-15",
+        "reversalOf": "JE-2027-000001",
+        "lines": [
+          { "account": "4200", "debit": "10000.0000", "credit": "0.0000" },
+          { "account": "1200", "party": "CUST-A", "debit": "0.0000", "credit": "10000.0000" }
+        ],
+        "documentStatus": { "INV-A1": "REVERSED" }
+      }
+    },
+    {
+      "step": 10,
+      "tenant": "GOLDEN_B",
+      "do": "post",
+      "event": "JOURNAL_VOUCHER_POSTED",
+      "idempotencyKey": "p09-a-capital",
+      "$comment": "The SAME key string tenant A used in step 1. Keys are unique per tenant, so this is not a replay of A's voucher.",
+      "occurredAt": "2026-09-01",
+      "payload": {
+        "narration": "Owner's opening capital deposited to bank",
+        "lines": [
+          { "account": "1120", "debit": "100000.0000" },
+          { "account": "3100", "credit": "100000.0000" }
+        ]
+      },
+      "expect": { "outcome": "POSTED", "entryNumber": "JV-2027-000001", "entriesAfter": 1 }
+    },
+    {
+      "step": 11,
+      "tenant": "GOLDEN_A",
+      "do": "assert",
+      "trialBalance": {
+        "asOf": "2026-09-27",
+        "rows": [
+          { "account": "1120", "debit": "445000.0000", "credit": "0.0000" },
+          { "account": "1200", "debit": "0.0000", "credit": "0.0000" },
+          { "account": "3100", "debit": "0.0000", "credit": "500000.0000" },
+          { "account": "4200", "debit": "0.0000", "credit": "0.0000" },
+          { "account": "6200", "debit": "45000.0000", "credit": "0.0000" },
+          { "account": "6300", "debit": "1249.5000", "credit": "0.0000" },
+          { "account": "6400", "debit": "8750.5000", "credit": "0.0000" }
+        ],
+        "totals": { "debit": "500000.0000", "credit": "500000.0000" }
+      },
+      "customerLedger": {
+        "customer": "CUST-A",
+        "from": "2026-07-01",
+        "to": "2026-09-27",
+        "openingBalance": "0.0000",
+        "lines": [
+          {
+            "entryNumber": "JE-2027-000001",
+            "document": "INV-2027-000001",
+            "date": "2026-09-15",
+            "debit": "10000.0000",
+            "credit": "0.0000",
+            "runningBalance": "10000.0000"
+          },
+          {
+            "entryNumber": "RV-2027-000002",
+            "document": "INV-2027-000001",
+            "date": "2026-09-15",
+            "debit": "0.0000",
+            "credit": "10000.0000",
+            "runningBalance": "0.0000"
+          },
+          {
+            "entryNumber": "JE-2027-000002",
+            "document": "RCT-2027-000001",
+            "date": "2026-09-20",
+            "debit": "0.0000",
+            "credit": "6000.0000",
+            "runningBalance": "-6000.0000"
+          },
+          {
+            "entryNumber": "RV-2027-000001",
+            "document": "RCT-2027-000001",
+            "date": "2026-09-20",
+            "debit": "6000.0000",
+            "credit": "0.0000",
+            "runningBalance": "0.0000"
+          }
+        ],
+        "closingBalance": "0.0000"
+      },
+      "invariant6": {
+        "perAccountResidual": { "1120": "0.0000", "1200": "0.0000", "4200": "0.0000" },
+        "$comment": "Residual over the reversed entries and their reversals only; 1120 also carries the unreversed JVs."
+      },
+      "invariant9": {
+        "customer": "CUST-A",
+        "gl": "0.0000",
+        "subledger": "0.0000",
+        "difference": "0.0000"
+      },
+      "journalEntryCount": 6,
+      "roundingAccountBalance": "0.0000"
+    },
+    {
+      "step": 12,
+      "tenant": "GOLDEN_B",
+      "do": "assert",
+      "trialBalance": {
+        "asOf": "2026-09-27",
+        "rows": [
+          { "account": "1120", "debit": "100000.0000", "credit": "0.0000" },
+          { "account": "3100", "debit": "0.0000", "credit": "100000.0000" }
+        ],
+        "totals": { "debit": "100000.0000", "credit": "100000.0000" }
+      },
+      "journalEntryCount": 1
+    }
+  ]
+}

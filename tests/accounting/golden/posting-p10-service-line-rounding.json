@@ -1,0 +1,132 @@
+{
+  "id": "P10",
+  "format": "posting-scenario/v1",
+  "name": "A true half-way tie at the service-line rounding boundary: half-up, not half-even, not truncation",
+  "rules": ["SALE_POSTED/service@1"],
+  "source": "docs/posting-rules/service-sale.md §6",
+  "governedBy": ["ADR-0011", "ADR-0014"],
+  "executableFrom": "M3",
+  "status": "Specified, hand-computed. Not yet executed: needs sales invoices (M3).",
+  "description": [
+    "Line 1: 2.500000 × 1234.567700 = 3086.41925 exactly — a tie at the 5th decimal.",
+    "  half-up (ADR-0011, away from zero)  → 3086.4193   ← the only accepted value",
+    "  half-even (banker's)                → 3086.4192   (4th digit 2 is even)",
+    "  truncation                          → 3086.4192",
+    "Line 2: 1.000000 × 13.580700 = 13.5807 exactly; no rounding occurs.",
+    "netAmount = 3086.4193 + 13.5807 = 3100.0000",
+    "",
+    "Step 1 submits the half-even / truncated figure and must be rejected: the kernel",
+    "verifies the module's arithmetic with the same Money function and never substitutes",
+    "its own figure.",
+    "",
+    "Step 2 posts: Dr 1200 [CUST-A] 3100.0000 / Cr 4200 3100.0000. Both sides are built",
+    "from the same rounded line nets, so no residual exists and the rounding account",
+    "stays at 0.0000.",
+    "",
+    "Independently recomputed for M2-000 with decimal.js: 2.5 × 1234.5677 = 3086.41925;",
+    "toDecimalPlaces(4, ROUND_HALF_UP) = 3086.4193; ROUND_HALF_EVEN = 3086.4192."
+  ],
+  "fixture": {
+    "coa": "standard-v1",
+    "timezone": "Asia/Karachi",
+    "fiscalYearStartMonth": 7,
+    "today": "2026-09-27",
+    "periods": { "fiscalYear": 2027, "status": "all OPEN" },
+    "tenants": ["GOLDEN_A"],
+    "customers": [{ "ref": "CUST-A", "tenant": "GOLDEN_A", "status": "ACTIVE" }],
+    "draftInvoices": ["INV-X1", "INV-A2"]
+  },
+  "steps": [
+    {
+      "step": 1,
+      "do": "post",
+      "event": "SALE_POSTED",
+      "referenceType": "sales_invoice",
+      "referenceId": "INV-X1",
+      "idempotencyKey": "p10-x1",
+      "occurredAt": "2026-09-22",
+      "payload": {
+        "settlement": "CREDIT",
+        "customer": "CUST-A",
+        "lines": [
+          {
+            "kind": "SERVICE",
+            "description": "Technician hours",
+            "quantity": "2.500000",
+            "unitPrice": "1234.567700",
+            "lineNet": "3086.4192"
+          },
+          {
+            "kind": "SERVICE",
+            "description": "Call-out fee",
+            "quantity": "1.000000",
+            "unitPrice": "13.580700",
+            "lineNet": "13.5807"
+          }
+        ],
+        "netAmount": "3099.9999"
+      },
+      "expect": {
+        "outcome": "REJECTED",
+        "error": "SALE_AMOUNT_MISMATCH",
+        "errorDetail": { "line": 1, "submitted": "3086.4192", "expected": "3086.4193" },
+        "entriesAfter": 0
+      }
+    },
+    {
+      "step": 2,
+      "do": "post",
+      "event": "SALE_POSTED",
+      "referenceType": "sales_invoice",
+      "referenceId": "INV-A2",
+      "idempotencyKey": "p10-a2",
+      "occurredAt": "2026-09-22",
+      "payload": {
+        "settlement": "CREDIT",
+        "customer": "CUST-A",
+        "lines": [
+          {
+            "kind": "SERVICE",
+            "description": "Technician hours",
+            "quantity": "2.500000",
+            "unitPrice": "1234.567700",
+            "lineNet": "3086.4193"
+          },
+          {
+            "kind": "SERVICE",
+            "description": "Call-out fee",
+            "quantity": "1.000000",
+            "unitPrice": "13.580700",
+            "lineNet": "13.5807"
+          }
+        ],
+        "netAmount": "3100.0000"
+      },
+      "expect": {
+        "outcome": "POSTED",
+        "entryNumber": "JE-2027-000001",
+        "documentNumber": "INV-2027-000001",
+        "lines": [
+          { "account": "1200", "party": "CUST-A", "debit": "3100.0000", "credit": "0.0000" },
+          { "account": "4200", "debit": "0.0000", "credit": "3100.0000" }
+        ],
+        "totals": { "debit": "3100.0000", "credit": "3100.0000" },
+        "entriesAfter": 1
+      }
+    },
+    {
+      "step": 3,
+      "do": "assert",
+      "trialBalance": {
+        "asOf": "2026-09-27",
+        "rows": [
+          { "account": "1200", "debit": "3100.0000", "credit": "0.0000" },
+          { "account": "4200", "debit": "0.0000", "credit": "3100.0000" }
+        ],
+        "totals": { "debit": "3100.0000", "credit": "3100.0000" }
+      },
+      "invoiceOutstanding": { "INV-A2": "3100.0000" },
+      "roundingAccountBalance": "0.0000"
+    }
+  ]
+}

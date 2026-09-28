@@ -1,0 +1,294 @@
+{
+  "id": "P03",
+  "format": "posting-scenario/v1",
+  "name": "Manual journal voucher: every validation rejection, then a valid voucher numbered 000001",
+  "rules": ["JOURNAL_VOUCHER_POSTED@1"],
+  "source": "docs/posting-rules/journal-voucher.md §3",
+  "governedBy": ["ADR-0005", "ADR-0011", "ADR-0014", "NON_NEGOTIABLES rule 1"],
+  "executableFrom": "M2",
+  "status": "Specified, hand-computed. Not yet executed: the M2 QA lane writes the runner.",
+  "description": [
+    "Each step violates exactly one rule and must be rejected with the named error.",
+    "After every rejection the tenant has zero journal entries and zero audit records",
+    "of a posting. The final step posts a valid voucher and must receive JV-2027-000001:",
+    "that is the proof that no rejected voucher consumed a document number.",
+    "",
+    "Step 1 is the case the Accounting Guardian cares most about: a voucher out by",
+    "0.0001 is REJECTED. It is not completed with a Suspense or Rounding line, and the",
+    "error reports both totals and the difference (1000.0000 − 999.9999 = 0.0001).",
+    "",
+    "Every step runs in its own transaction against a tenant with no prior postings."
+  ],
+  "fixture": {
+    "coa": "standard-v1",
+    "timezone": "Asia/Karachi",
+    "fiscalYearStartMonth": 7,
+    "today": "2026-09-27",
+    "periods": { "fiscalYear": 2027, "status": "all OPEN" },
+    "tenants": ["GOLDEN_A", "GOLDEN_B"],
+    "actingTenant": "GOLDEN_A"
+  },
+  "steps": [
+    {
+      "step": 1,
+      "do": "post",
+      "event": "JOURNAL_VOUCHER_POSTED",
+      "idempotencyKey": "p03-01",
+      "occurredAt": "2026-09-10",
+      "payload": {
+        "narration": "Unbalanced by one ten-thousandth",
+        "lines": [
+          { "account": "6300", "debit": "1000.0000" },
+          { "account": "1110", "credit": "999.9999" }
+        ]
+      },
+      "expect": {
+        "outcome": "REJECTED",
+        "error": "JV_UNBALANCED",
+        "errorDetail": { "debit": "1000.0000", "credit": "999.9999", "difference": "0.0001" },
+        "entriesAfter": 0
+      }
+    },
+    {
+      "step": 2,
+      "do": "post",
+      "event": "JOURNAL_VOUCHER_POSTED",
+      "idempotencyKey": "p03-02",
+      "occurredAt": "2026-09-10",
+      "payload": { "narration": "One line", "lines": [{ "account": "6300", "debit": "100.0000" }] },
+      "expect": { "outcome": "REJECTED", "error": "JV_TOO_FEW_LINES", "entriesAfter": 0 }
+    },
+    {
+      "step": 3,
+      "do": "post",
+      "event": "JOURNAL_VOUCHER_POSTED",
+      "idempotencyKey": "p03-03",
+      "occurredAt": "2026-09-10",
+      "payload": {
+        "narration": "Zero line",
+        "lines": [
+          { "account": "6300", "debit": "100.0000" },
+          { "account": "6400", "debit": "0.0000" },
+          { "account": "1110", "credit": "100.0000" }
+        ]
+      },
+      "expect": { "outcome": "REJECTED", "error": "JV_ZERO_LINE", "entriesAfter": 0 }
+    },
+    {
+      "step": 4,
+      "do": "post",
+      "event": "JOURNAL_VOUCHER_POSTED",
+      "idempotencyKey": "p03-04",
+      "occurredAt": "2026-09-10",
+      "payload": {
+        "narration": "Both sides on one line",
+        "lines": [
+          { "account": "6300", "debit": "100.0000", "credit": "100.0000" },
+          { "account": "1110", "credit": "100.0000" }
+        ]
+      },
+      "expect": { "outcome": "REJECTED", "error": "JV_LINE_BOTH_SIDES", "entriesAfter": 0 }
+    },
+    {
+      "step": 5,
+      "do": "post",
+      "event": "JOURNAL_VOUCHER_POSTED",
+      "idempotencyKey": "p03-05",
+      "occurredAt": "2026-09-10",
+      "payload": {
+        "narration": "Negative amount",
+        "lines": [
+          { "account": "6300", "debit": "-100.0000" },
+          { "account": "1110", "credit": "-100.0000" }
+        ]
+      },
+      "expect": { "outcome": "REJECTED", "error": "AMOUNT_NEGATIVE", "entriesAfter": 0 }
+    },
+    {
+      "step": 6,
+      "do": "post",
+      "event": "JOURNAL_VOUCHER_POSTED",
+      "idempotencyKey": "p03-06",
+      "occurredAt": "2026-09-10",
+      "payload": {
+        "narration": "Five decimal places",
+        "lines": [
+          { "account": "6300", "debit": "100.00001" },
+          { "account": "1110", "credit": "100.00001" }
+        ]
+      },
+      "expect": { "outcome": "REJECTED", "error": "AMOUNT_SCALE", "entriesAfter": 0 }
+    },
+    {
+      "step": 7,
+      "do": "post",
+      "event": "JOURNAL_VOUCHER_POSTED",
+      "idempotencyKey": "p03-07",
+      "occurredAt": "2026-09-10",
+      "$comment": "The amounts below are JSON numbers ON PURPOSE. The request must be rejected, not coerced.",
+      "payload": {
+        "narration": "Amounts sent as JSON numbers",
+        "lines": [
+          { "account": "6300", "debit": 100 },
+          { "account": "1110", "credit": 100 }
+        ]
+      },
+      "expect": { "outcome": "REJECTED", "error": "AMOUNT_NOT_STRING", "entriesAfter": 0 }
+    },
+    {
+      "step": 8,
+      "do": "post",
+      "event": "JOURNAL_VOUCHER_POSTED",
+      "idempotencyKey": "p03-08",
+      "occurredAt": "2026-09-10",
+      "payload": {
+        "narration": "Posting to a header account",
+        "lines": [
+          { "account": "6000", "debit": "100.0000" },
+          { "account": "1110", "credit": "100.0000" }
+        ]
+      },
+      "expect": { "outcome": "REJECTED", "error": "ACCOUNT_NOT_POSTABLE", "entriesAfter": 0 }
+    },
+    {
+      "step": 9,
+      "do": "post",
+      "event": "JOURNAL_VOUCHER_POSTED",
+      "idempotencyKey": "p03-09",
+      "occurredAt": "2026-09-10",
+      "payload": {
+        "narration": "Manual posting to AR control",
+        "lines": [
+          { "account": "1200", "debit": "100.0000" },
+          { "account": "4200", "credit": "100.0000" }
+        ]
+      },
+      "expect": {
+        "outcome": "REJECTED",
+        "error": "ACCOUNT_CONTROL_MANUAL_FORBIDDEN",
+        "entriesAfter": 0
+      }
+    },
+    {
+      "step": 10,
+      "do": "post",
+      "event": "JOURNAL_VOUCHER_POSTED",
+      "idempotencyKey": "p03-10",
+      "occurredAt": "2026-09-10",
+      "payload": {
+        "narration": "Manual posting to the rounding account",
+        "lines": [
+          { "account": "6900", "debit": "0.0100" },
+          { "account": "1110", "credit": "0.0100" }
+        ]
+      },
+      "expect": { "outcome": "REJECTED", "error": "ACCOUNT_RESTRICTED", "entriesAfter": 0 }
+    },
+    {
+      "step": 11,
+      "do": "post",
+      "event": "JOURNAL_VOUCHER_POSTED",
+      "idempotencyKey": "p03-11",
+      "occurredAt": "2026-09-10",
+      "payload": {
+        "narration": "Manual posting to retained earnings",
+        "lines": [
+          { "account": "1120", "debit": "100.0000" },
+          { "account": "3200", "credit": "100.0000" }
+        ]
+      },
+      "expect": { "outcome": "REJECTED", "error": "ACCOUNT_RESTRICTED", "entriesAfter": 0 }
+    },
+    {
+      "step": 12,
+      "do": "post",
+      "event": "JOURNAL_VOUCHER_POSTED",
+      "idempotencyKey": "p03-12",
+      "occurredAt": "2026-09-10",
+      "payload": {
+        "narration": "Same account on both sides",
+        "lines": [
+          { "account": "1110", "debit": "100.0000" },
+          { "account": "1110", "credit": "100.0000" }
+        ]
+      },
+      "expect": { "outcome": "REJECTED", "error": "JV_SAME_ACCOUNT_BOTH_SIDES", "entriesAfter": 0 }
+    },
+    {
+      "step": 13,
+      "do": "post",
+      "event": "JOURNAL_VOUCHER_POSTED",
+      "idempotencyKey": "p03-13",
+      "occurredAt": "2026-09-10",
+      "payload": {
+        "narration": "   ",
+        "lines": [
+          { "account": "6300", "debit": "100.0000" },
+          { "account": "1110", "credit": "100.0000" }
+        ]
+      },
+      "expect": { "outcome": "REJECTED", "error": "NARRATION_REQUIRED", "entriesAfter": 0 }
+    },
+    {
+      "step": 14,
+      "do": "post",
+      "event": "JOURNAL_VOUCHER_POSTED",
+      "idempotencyKey": "p03-14",
+      "occurredAt": "2026-09-10",
+      "$comment": "GOLDEN_B:1120 is the id of tenant B's bank account, submitted by a GOLDEN_A user. The error must not reveal that the id exists elsewhere.",
+      "payload": {
+        "narration": "Another tenant's account",
+        "lines": [
+          { "account": "6300", "debit": "100.0000" },
+          { "account": "GOLDEN_B:1120", "credit": "100.0000" }
+        ]
+      },
+      "expect": {
+        "outcome": "REJECTED",
+        "error": "ACCOUNT_NOT_FOUND",
+        "entriesAfter": 0,
+        "entriesAfterInTenant": { "GOLDEN_B": 0 }
+      }
+    },
+    {
+      "step": 15,
+      "do": "post",
+      "event": "JOURNAL_VOUCHER_POSTED",
+      "idempotencyKey": "p03-15",
+      "occurredAt": "2026-09-10",
+      "payload": {
+        "narration": "Petty cash purchase of office supplies",
+        "lines": [
+          { "account": "6300", "debit": "1000.0000" },
+          { "account": "1110", "credit": "1000.0000" }
+        ]
+      },
+      "expect": {
+        "outcome": "POSTED",
+        "entryNumber": "JV-2027-000001",
+        "period": "2026-09",
+        "lines": [
+          { "account": "6300", "debit": "1000.0000", "credit": "0.0000" },
+          { "account": "1110", "debit": "0.0000", "credit": "1000.0000" }
+        ],
+        "totals": { "debit": "1000.0000", "credit": "1000.0000" },
+        "entriesAfter": 1
+      }
+    },
+    {
+      "step": 16,
+      "do": "assert",
+      "trialBalance": {
+        "asOf": "2026-09-27",
+        "rows": [
+          { "account": "1110", "debit": "0.0000", "credit": "1000.0000" },
+          { "account": "6300", "debit": "1000.0000", "credit": "0.0000" }
+        ],
+        "totals": { "debit": "1000.0000", "credit": "1000.0000" }
+      },
+      "journalEntryCount": 1,
+      "roundingAccountBalance": "0.0000",
+      "suspenseAccountBalance": "0.0000"
+    }
+  ]
+}
