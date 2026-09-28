@@ -9,6 +9,27 @@
 **Carves out of:** [ADR-0004](ADR-0004-postgresql-row-level-security.md) binding rule 2 (:75, *"The value comes from the authenticated session only — the `tenant_id` claim in the verified JWT"*) at **both** claim-minting endpoints, where the value comes from a resolver instead; and binding rule 4 (:77, *"it operates only on global tables"*) at **`/auth/refresh` only**, through `auth_lookup.resolve_refresh`. Login does not carve out of :77 — its pre-tenant phase reads only `tenants` — which is what §1 says. Nothing else in ADR-0004 changes; rules 1, 3 and 5 hold on both paths, and rule 3 is what §3 builds on. *Added by the Architecture seat at signature, 2026-09-27: the same defect class as the §6 finding above — the record argued against :77 and never named :75, the sentence both paths actually contradict. No decision or mechanism in §1–§6 changes.*
 **Blocks:** `packages/auth`, the `/auth/login` and `/auth/refresh` endpoints, and migrations 006 and 007 — **until accepted; accepted 2026-09-27.** The Compliance assertions still ship in the same PR as the DDL they guard, and the Architecture seat's conditions under Signatures bind the merge.
 
+---
+
+> ## ⛔ Partial supersession — one sentence of §3 (:191) is no longer in force
+>
+> **This ADR is still in force**, and this notice is permanent. Its `Status:` stays `Accepted`. The notice records status only, and the decision, rationale and consequences below stay exactly as accepted, per [the ADR README](README.md) §4. Because the supersession is partial, this record does not become `Superseded by ADR-0025`.
+>
+> [ADR-0025](ADR-0025-login-read-and-write-transactions.md) (**Accepted 2026-09-27**) supersedes **one sentence of §3 and nothing else in this record**. It also clarifies one §5 cell without changing it. The body below still states :191 as an unqualified rule, and this notice is the only thing that says otherwise, which is why it is not removed:
+>
+> | Provision | Under ADR-0025 |
+> |---|---|
+> | Line 191: "Sharing the helper also means the credential verification and the `last_login_at` write share one transaction with the tenant established once, which §1's claim about RLS being in force during verification requires and does not otherwise get." | **No longer in force.** Read instead: the resolve+read transaction and the write transaction are separate. Both enter via `withResolvedTenant`. The write re-asserts user status, the verified `password_hash`, tenant identity and tenant status atomically. No transaction is open during credential verification. §1's RLS claim is met by the read |
+> | Line 235: layer 4, "alert and global slowdown, never a hard block" | **In force, clarified.** The slowdown is the capped argon2id semaphore (8 concurrent, queue 64, then 503). The `login:global` counter is alert-only, and its alert is deduplicated to once a minute |
+>
+> Everything else in §3 stays in force, including :187 and requirements 1–4 at :201–:204. Each of the two transactions meets them separately.
+>
+> **Before changing the login path, read ADR-0025.** For :191 it, not the sentence below, is the operative rule. Nothing is blocked on this record any longer.
+>
+> **Line numbers.** Every `ADR-0023:NN` citation in the repository was written against the **as-accepted** text. This notice adds 21 lines at the head, so an as-accepted line NN is now at NN+21: :191 → 212, :235 → 256. Citations are not rewritten. The notice is permanent, so the offset is permanent and fixed at +21. Any later edit here must preserve its line count.
+
+---
+
 ## Context
 
 [ADR-0004](ADR-0004-postgresql-row-level-security.md):77 is unambiguous: a caller with no tenant *"operates only on global tables."* Every tenant-owned table has `ENABLE` + `FORCE ROW LEVEL SECURITY` and a policy comparing `tenant_id` to `current_setting('app.tenant_id')` **with no `missing_ok`** — so an unset tenant does not return zero rows, it **raises**. That loud failure is deliberate, and `withGlobal` is typed so a tenant-owned table cannot even be named inside it.

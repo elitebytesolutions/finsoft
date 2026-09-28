@@ -143,3 +143,37 @@ edit. Nothing currently writes those columns.
 
 **What would force it.** The first code path that updates a `users` row —
 W1-002's login flow updates `last_login_at`, so this is live now, not later.
+
+---
+
+## TD-006 · Test-only hooks on production auth signatures
+
+**What.** Two production functions in `packages/database/src/auth/` take an
+optional test-only parameter. `withLoginAttempt()` in `login.ts` takes
+`LoginTestHooks.beforeWrite`, and `login()` in `packages/auth/src/login.ts`
+passes it through. The refresh spend in `refresh.ts` takes
+`RefreshTestHooks.beforeSpend`, re-exported from `auth/index.ts`. Each hook is
+inert unless it is passed, and each exists so an integration test can mutate
+state on a separate connection at an exact race window. `beforeWrite` runs
+between login's two transactions, with none open
+(`tests/integration/login-toctou.spec.ts`). `beforeSpend` runs **inside** the
+refresh transaction, between the candidate read and the atomic spend, with a
+connection held. Nothing stops a production caller from passing one. A hook is
+an arbitrary `async` callback that runs between the read and the write of an
+authentication path.
+
+**Why it is accepted.** [ADR-0025](adr/ADR-0025-login-read-and-write-transactions.md)
+names it an accepted cost. The TOCTOU window it tests is the property ADR-0025
+exists to close, and no other seam can reach that window deterministically
+today. Neither hook receives a connection, a `TenantTx` or a tenant id, so
+neither can widen what the write decides. `beforeSpend` holds the refresh
+transaction open for as long as it runs, which is harmless in a test and one
+more reason no production caller may pass it.
+
+**Owner.** Database Guardian, with the Security seat.
+
+**What would force it.** A better seam: for example, an injectable clock or
+barrier at the `packages/database` boundary, or a test-build-only export.
+Either can reach the window without widening a production signature. Also
+forced sooner if a third hook is proposed, or if any non-test caller passes
+one. Until then, **do not copy the pattern.** A new hook needs a line here.

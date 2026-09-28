@@ -7,7 +7,7 @@
 - **Decisions needed** name the decider and the date asked; each closes within 2 working days.
 - **Demo ready** holds only workflows running against the real API on staging. Mock screens never go here.
 
-*Last updated: 2026-09-27 (M1-000e: ADR-0020 correction notices for migration 009; GAP-004 recorded; ADR-0025 pending for the auth login split).*
+*Last updated: 2026-09-27 (M1-000f: ADR-0025 Accepted, with the Database/Security seat signed; ADR-0023's conflict notice replaced by the permanent scope notice; TD-006 booked).*
 
 ---
 
@@ -46,7 +46,7 @@ Then **M2** accounting core · **M3** customers, service invoice, receipts · **
 | ~~M1-A — `/auth/login` emitting `Set-Cookie`~~ | ~~Cookie-prefix decision (ADR-0023 *Open*, a stated gate)~~ — **resolved 2026-09-27**: decided, see Decided | — |
 | ~~M1-D — migration 009 merge~~ | ~~README §4 notices on ADR-0020, required by the Database seat's review of 009~~. **Delivered 2026-09-27** (M1-000e): five correction notices at the end of the file, with a pointer on head-notice line 14. The offset stays +12 | — |
 | M1-D — **production** use of the audit chain | [GAP-004](COMPLIANCE_GAPS.md#gap-004--audit-chain-head-has-no-external-witness): the chain head has no external witness, so tail deletion or a full rewrite by the owner, a superuser or break-glass is undetectable (Security seat F1). Staging is not blocked | Before the first production release |
-| M1-A — auth login split | **ADR-0025 pending.** It will be drafted when M1-A resubmits. This is a different ADR-0025 from the one withdrawn with A4 above | M1-A resubmission |
+| M1-A — auth login split | ~~ADR-0025 signatures~~. **[ADR-0025](adr/ADR-0025-login-read-and-write-transactions.md) Accepted 2026-09-27** (M1-000f), superseding ADR-0023:191 only, with the Database/Security seat signed. Still open: the Architecture seat's merge conditions **C1**, a test that no connection is held while argon2id runs, and **C2**, a lint rule forbidding `tenant-context` imports in `packages/database/src/auth/login.ts` and `refresh.ts`. This is a different ADR-0025 from the one withdrawn with A4 above | C1 and C2 on `feature/M1-A-auth` |
 
 ## Decisions needed
 
@@ -65,6 +65,7 @@ Then **M2** accounting core · **M3** customers, service invoice, receipts · **
 | 2026-09-27 | **Product Owner** | **Weekly demo day: Monday.** The weekly status page (`docs/status/YYYY-Www.md`) is written the day before, Sunday |
 | 2026-09-27 | **Council — Architecture** | ADR-0023 addendum: **A1 widened** (every auth and RBAC query body in `packages/database`), **A4 withdrawn** (no ADR-0013 extension), **A5 delivered** (head notices on ADR-0009 and ADR-0004) |
 | 2026-09-27 | **Product Owner** | **Demo tenants: `bhatti1` and `bhatti2`** — tenant codes; staging demo data only. Stored as `BHATTI1` / `BHATTI2`: `tenants.code` is `^[A-Z][A-Z0-9_]{1,15}$` (`001_create_tenants.sql:43`) and the login form upper-cases input (ADR-0023 §5), so users may type either case |
+| 2026-09-27 | **Council — Architecture + Database/Security**, Security seat concurring | [ADR-0025](adr/ADR-0025-login-read-and-write-transactions.md) Accepted. Login read and write are separate transactions, both via `withResolvedTenant`, and the write re-asserts user status, the verified `password_hash`, tenant identity and tenant status. Supersedes ADR-0023:191 only. The test-only hooks are booked as [TD-006](TECH_DEBT.md) |
 | 2026-09-27 | **Council — Architecture** | [ADR-0023](adr/ADR-0023-pre-tenant-authentication-reads.md) approved with conditions A1–A5; Accepted. Security and Database Guardians signed the same day; Product Owner slot withdrawn by ADR-0024 |
 | 2026-09-26 | **Product Owner** | Migration numbering: 006 resolver · 007 `users` regrant + trigger · 008 RBAC · 009 `audit_log` |
 | 2026-09-27 | **Product Owner** | **PO-Q1 — cancelling a part-paid invoice: Option A.** Refuse until the receipt is reversed ([service-sale.md](posting-rules/service-sale.md) §8). |
