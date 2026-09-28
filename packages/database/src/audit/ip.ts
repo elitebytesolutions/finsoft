@@ -29,26 +29,37 @@ import { AuditCanonicalizationError } from './canonical.ts'
 const MIN_LENGTH = 3
 const MAX_LENGTH = 45
 
-/** Reject anything that is not a syntactically valid, unscoped IPv4 or IPv6 address. */
-export function normalizeIp(raw: string): string {
+/**
+ * Reject anything that is not a syntactically valid, unscoped IPv4 or IPv6
+ * address — EXCEPT a zone ID, which returns `null` rather than throwing.
+ *
+ * Zone IDs (RFC 4007), e.g. "fe80::1%eth0": `node:net`'s isIPv6 accepts them,
+ * and the naive expansion this file used to do would silently DROP the
+ * suffix rather than reject it — measured: `parseInt("1%eth0", 16)` stops at
+ * the first invalid character and returns 1, so "fe80::1%eth0" normalised to
+ * "fe80::1" with no error. A zone ID names a LOCAL interface and has no
+ * meaning once written into a record read back on a different host, so it
+ * cannot be represented — but `recordAudit` runs inside the caller's
+ * business transaction (a sale, a login), and a real, legitimately-scoped
+ * link-local address arriving from a proxy is far more likely in production
+ * than the deliberately-malformed inputs the other branches below reject.
+ * THROWING HERE WOULD ABORT THE BUSINESS OPERATION over an IP address
+ * formatting detail nobody who approved the sale can see or fix. `null`
+ * — "no meaningful client address for this event", the same outcome as an
+ * omitted `ip` — is the caller-safe answer; the other rejections below stay
+ * hard failures because they indicate a genuinely malformed value, not a
+ * legitimate address this format cannot carry.
+ */
+export function normalizeIp(raw: string): string | null {
   const trimmed = raw.trim()
 
-  /*
-   * Zone IDs (RFC 4007), e.g. "fe80::1%eth0": `node:net`'s isIPv6 accepts
-   * them, and the naive expansion below would silently DROP the suffix
-   * rather than reject it — measured: `parseInt("1%eth0", 16)` stops at the
-   * first invalid character and returns 1, so "fe80::1%eth0" normalised to
-   * "fe80::1" with no error. A zone ID names a LOCAL interface and has no
-   * meaning once written into a record read back on a different host; a
-   * silent drop hides that the input carried scope information this record
-   * cannot represent.
-   */
-  if (trimmed.includes('%')) {
-    throw new AuditCanonicalizationError(
-      `"${raw}" carries a zone ID (RFC 4007), which has no meaning outside the host that produced it ` +
-        'and cannot be normalised into a portable audit record. Resolve or strip it before calling ' +
-        'recordAudit, or pass null if no non-scoped address is available.',
-    )
+  // Only a genuine zone ID short-circuits to null: the part BEFORE the "%"
+  // must itself be a syntactically valid IPv6 address. `'%s%s%s%n'` and
+  // similar garbage also contain "%" and must still fall through to the
+  // ordinary rejection below, not be waved through as "maybe scoped".
+  const zoneIdSplit = trimmed.indexOf('%')
+  if (zoneIdSplit !== -1 && isIPv6(trimmed.slice(0, zoneIdSplit))) {
+    return null
   }
 
   const normalized = isIPv4(trimmed)

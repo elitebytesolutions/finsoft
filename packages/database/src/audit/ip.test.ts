@@ -71,13 +71,18 @@ describe('normalizeIp — rejects garbage rather than silently accepting it', ()
   )
 })
 
-describe('normalizeIp — findings from Database Guardian review', () => {
-  it('rejects a zone ID rather than silently dropping it', () => {
+describe('normalizeIp — findings from Database/Security review', () => {
+  it('returns null for a zone ID rather than throwing or silently dropping the scope', () => {
     // node:net's isIPv6 accepts "fe80::1%eth0"; the naive expander used to
     // call parseInt("1%eth0", 16), which stops at the first invalid
     // character and returns 1 — silently normalising to "fe80::1" with the
-    // scope information gone. Now rejected outright.
-    expect(() => normalizeIp('fe80::1%eth0')).toThrow(/zone ID/)
+    // scope information gone. First fixed by throwing; Security review
+    // pointed out that recordAudit runs inside the caller's business
+    // transaction, so throwing on a real-world address shape would abort a
+    // sale or a login over IP formatting. null — "no meaningful client
+    // address" — is the caller-safe answer.
+    expect(normalizeIp('fe80::1%eth0')).toBeNull()
+    expect(normalizeIp('::1%0')).toBeNull()
   })
 
   it('rejects the unspecified address "::" — shorter than audit_log_ip_bounded allows', () => {
