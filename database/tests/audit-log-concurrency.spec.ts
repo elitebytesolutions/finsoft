@@ -157,6 +157,7 @@ describe("the linkage trigger's FOR SHARE lock", () => {
           // finsoft_app, through the real writer. Its FOR SHARE read must
           // block on T_B's uncommitted row lock.
           let aSettled: 'pending' | 'resolved' | 'rejected' = 'pending'
+          let earlyRejectionReason: unknown
           const insertPromise = runAs({ tenantId: tenant.tenantId, userId: tenant.ownerId }, () =>
             withTenant((tx) =>
               recordAudit(tx, {
@@ -175,18 +176,36 @@ describe("the linkage trigger's FOR SHARE lock", () => {
             () => {
               aSettled = 'resolved'
             },
-            () => {
+            (reason: unknown) => {
               aSettled = 'rejected'
+              earlyRejectionReason = reason
             },
           )
 
           // T_A must still be blocked while T_B's transaction is open.
           await sleep(500)
-          expect(
-            aSettled,
-            'T_A resolved or rejected BEFORE T_B committed — FOR SHARE is not serialising it, and an ' +
-              'unlocked read would let this interleaving commit a false gap (ADR-0020 §5).',
-          ).toBe('pending')
+          // Read through a function: TS's control-flow narrowing does not
+          // (and cannot) account for `aSettled` having been reassigned by an
+          // async callback during the `await` above, so it otherwise infers
+          // the literal type 'pending' all the way down and flags the
+          // comparisons below as unreachable — which they are not.
+          const settledNow = aSettled as 'pending' | 'resolved' | 'rejected'
+          if (settledNow === 'resolved') {
+            expect.fail(
+              'T_A RESOLVED before T_B committed — FOR SHARE is not serialising it, and an unlocked ' +
+                'read would let this interleaving commit a false gap (ADR-0020 §5).',
+            )
+          } else if (settledNow === 'rejected') {
+            // A rejection this early is NOT itself evidence that FOR SHARE is
+            // working — it could equally be an unrelated bug (a connection
+            // error, a different constraint firing before the lock wait even
+            // begins). Fail loudly with the actual reason rather than let a
+            // misattributed pass through as "FOR SHARE serialised it".
+            expect.fail(
+              `T_A REJECTED before T_B committed, for a reason that needs its own diagnosis rather ` +
+                `than being read as "FOR SHARE worked": ${String(earlyRejectionReason)}`,
+            )
+          }
 
           await tB.query('COMMIT')
 
