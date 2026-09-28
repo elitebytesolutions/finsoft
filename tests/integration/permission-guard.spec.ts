@@ -218,7 +218,16 @@ describe('PermissionGuard', () => {
         next()
         return
       }
-      ;(req as Request & { auth: { userId: string; tenantId: string } }).auth = {
+      /*
+       * `unknown` first, not `Request & {...}`: Request.auth is declared as
+       * the full AuthContext (apps/api/src/common/tenant.guard.ts, landed
+       * after this file was first written against the narrower RequestAuth
+       * shape) — intersecting types the way this cast previously did makes
+       * TS require an object satisfying BOTH shapes. Going through
+       * `unknown` replaces the type for this expression instead of adding
+       * to it; `req` elsewhere in this handler is still the real `Request`.
+       */
+      ;(req as unknown as { auth: { userId: string; tenantId: string } }).auth = {
         userId,
         tenantId,
       }
