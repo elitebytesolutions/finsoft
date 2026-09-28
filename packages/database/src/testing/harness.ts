@@ -4,7 +4,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describeTarget, requireEnv } from '../env.ts'
 import { closeDatabase, openDatabase } from '../lifecycle.ts'
-import type { PoolTarget } from '../pool.ts'
+import { getPool, type PoolTarget } from '../pool.ts'
 import type { Database } from '../schema.ts'
 import { TenantContext, type TenantPrincipal } from '../tenant-context.ts'
 import { withGlobal, withTenant, type GlobalTx, type TenantTx } from '../transaction.ts'
@@ -88,11 +88,21 @@ function assertTestTarget(url: string): void {
  * Prepare the process: load .env, pin the pool, open it against the test
  * database. Idempotent, so every spec file can call it in `beforeAll`.
  *
- * `DATABASE_POOL_MAX=1` is not a performance choice. It makes connection
- * reuse deterministic, which is the only way to assert the thing ADR-0004:140
- * asks for: that the next borrower of *the same* connection does not inherit
- * the previous transaction's `app.tenant_id`. With a larger pool the test
- * would usually get a different backend and pass without testing anything.
+ * `DATABASE_POOL_MAX` defaults to `1`, which is not a performance choice. It
+ * makes connection reuse deterministic, which is the only way to assert the
+ * thing ADR-0004:140 asks for: that the next borrower of *the same*
+ * connection does not inherit the previous transaction's `app.tenant_id`.
+ * With a larger pool that test would usually get a different backend and
+ * pass without testing anything.
+ *
+ * The default only applies if a spec file has not already set the variable
+ * BEFORE calling this function (`??=`, not `=`). The one sanctioned reason
+ * to do that: a genuine multi-connection concurrency test — B1's row-lock
+ * race (security/database re-review N2) needs two REAL `spendRefreshToken`
+ * calls in flight on two separate backends at once, which a pool of 1
+ * cannot produce by construction (a second caller would queue for the
+ * connection rather than race for the row). Every other spec file gets the
+ * deterministic default exactly as before.
  */
 export async function prepareTestDatabase(): Promise<void> {
   if (prepared) return
@@ -102,7 +112,7 @@ export async function prepareTestDatabase(): Promise<void> {
   const url = requireEnv('TEST_DATABASE_URL', 'The isolation suite runs against the test cluster.')
   assertTestTarget(url)
 
-  process.env['DATABASE_POOL_MAX'] = '1'
+  process.env['DATABASE_POOL_MAX'] ??= '1'
 
   await migrateTestDatabase()
   await openDatabase(TEST_TARGET)
@@ -157,6 +167,24 @@ export async function migrateTestDatabase(): Promise<void> {
  */
 export function runAs<T>(principal: TenantPrincipal, fn: () => Promise<T>): Promise<T> {
   return TenantContext.run(principal, fn)
+}
+
+/**
+ * The live pool's checked-out/idle/waiting connection counts.
+ *
+ * C1, architecture re-review 2026-09-27: proving "no connection is held
+ * across argon2id" needs a way to observe the pool's own bookkeeping from
+ * outside `packages/database` — `getPool()` is deliberately not part of the
+ * package's public surface (index.ts's own header: "a connection outside a
+ * scoped transaction" is exactly the shape of bug ADR-0013 exists to rule
+ * out), so this is the one, narrow, test-only door to it, the same pattern
+ * `rawOn`/`scalarOn` already use for raw SQL. `total - idle` is the number
+ * of connections currently checked out for active work; a caller mid-`await`
+ * on argon2 while still holding a connection would show up here as > 0.
+ */
+export function poolStats(): { total: number; idle: number; waiting: number } {
+  const pool = getPool()
+  return { total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount }
 }
 
 /**

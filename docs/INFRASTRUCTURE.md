@@ -153,6 +153,9 @@ No shared passwords, no shared accounts.
 | `finsoft_readonly` | SELECT only, subject to RLS | Support queries, read replica |
 | `finsoft_migration` | DDL, `BYPASSRLS` | Migration job only, during deploy |
 | `finsoft_breakglass` | Superuser | Emergencies only |
+| `finsoft_refresh` | `NOLOGIN`, `NOBYPASSRLS`; owns `auth_lookup.resolve_refresh` (migration 006, ADR-0023 §2) and a column-scoped `SELECT (tenant_id, id, token_hash)` on `refresh_tokens`; a member of nothing, and `finsoft_migration` holds `SET` (not `INHERIT`) on it | Never connects directly — reached only via `SET ROLE` inside migration 006's own `SECURITY DEFINER` function body, so the refresh path can resolve a token's tenant before any session exists |
+
+`finsoft_refresh` is created by `infrastructure/docker/postgres/init/00-bootstrap.sh` on an empty data directory (`finsoft_migration` has no `CREATEROLE`, so a migration cannot create it). An **existing** cluster — including this table's own production and staging clusters at the time migration 006 first ships — needs it provisioned out of band, once: see `infrastructure/staging/RUNBOOK-finsoft-refresh-role.md`.
 
 Break-glass use is:
 
