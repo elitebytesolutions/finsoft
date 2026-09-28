@@ -475,9 +475,11 @@ CREATE INDEX audit_log_actor_idx
 -- Until that ADR exists, no partition of this table may be detached.
 --
 -- REVISIT AT: roughly 50 million rows, or 50 GB, or any single tenant
--- reaching 10 million rows — whichever comes first. Recorded as TD-004 in
+-- reaching 10 million rows — whichever comes first. Recorded as TD-007 in
 -- TECH_DEBT.md with these same thresholds, so the trigger condition lives
 -- somewhere a growth dashboard can cite it rather than only in this comment.
+-- (Renumbered from TD-006 during M1-INT-1: that number collided with
+-- develop's own TD-006 for the ADR-0025 test-only auth hooks.)
 -- ---------------------------------------------------------------------------
 
 -- ---------------------------------------------------------------------------

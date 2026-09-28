@@ -95,7 +95,9 @@ Both seats reviewed the branch above; decisions 1–4 and 6 were accepted as
 written. Fixes applied in response, by item:
 
 **R1 — partitioning text rewritten** in 009's own comment and a new
-`TD-006` in TECH_DEBT.md: NOT partitioned in 009; `RANGE (occurred_at)`
+`TD-006` in TECH_DEBT.md (renumbered to **TD-007** during M1-INT-1 — see
+TECH_DEBT.md's note on that entry — after the number collided with develop's
+unrelated ADR-0025 TD-006): NOT partitioned in 009; `RANGE (occurred_at)`
 withdrawn as the intended key (it would force `occurred_at` into
 `UNIQUE (tenant_id, seq)`, and `DETACH` manufactures the exact seq-gap
 signal §6 defines as tampering); `HASH (tenant_id)` is the future path and
