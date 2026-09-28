@@ -552,6 +552,10 @@ jobs:
     # an artifact for review.
     permissions:
       contents: read
+      # The analyze step reads its own workflow run (telemetry and run
+      # metadata) and fails with "Resource not accessible by integration"
+      # without this. Read-only; it grants nothing to write.
+      actions: read
 
     steps:
       - uses: actions/checkout@v4
@@ -561,26 +565,26 @@ jobs:
           languages: javascript-typescript
 
       - uses: github/codeql-action/analyze@v3
+        id: analyze
         with:
           upload: never
-          output: codeql-results
 
       - name: upload SARIF as an artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: codeql-sarif
-          path: codeql-results
+          path: ${{ steps.analyze.outputs.sarif-output }}
           if-no-files-found: warn
           retention-days: 14
 
       - name: fail on error-level findings
         run: |
           set -euo pipefail
-          count=$(jq -s '[.[].runs[].results[]? | select((.level // "warning") == "error")] | length' codeql-results/*.sarif)
-          total=$(jq -s '[.[].runs[].results[]?] | length' codeql-results/*.sarif)
+          count=$(jq -s '[.[].runs[].results[]? | select((.level // "warning") == "error")] | length' "${{ steps.analyze.outputs.sarif-output }}"/*.sarif)
+          total=$(jq -s '[.[].runs[].results[]?] | length' "${{ steps.analyze.outputs.sarif-output }}"/*.sarif)
           echo "CodeQL: ${total} result(s), ${count} at level error"
-          jq -r '.runs[].results[]? | select((.level // "warning") == "error") | "::error file=\(.locations[0].physicalLocation.artifactLocation.uri),line=\(.locations[0].physicalLocation.region.startLine)::\(.ruleId): \(.message.text)"' codeql-results/*.sarif
+          jq -r '.runs[].results[]? | select((.level // "warning") == "error") | "::error file=\(.locations[0].physicalLocation.artifactLocation.uri),line=\(.locations[0].physicalLocation.region.startLine)::\(.ruleId): \(.message.text)"' "${{ steps.analyze.outputs.sarif-output }}"/*.sarif
           test "$count" -eq 0
 
   # ------------------------------------------------------------------ #
