@@ -106,3 +106,55 @@ regexes = [
 # from a .env generated ON the host, which is not in the repository and never
 # passes through CI. There is nothing here to exempt, and that is the design
 # (INFRASTRUCTURE §6).
+
+# ---------------------------------------------------------------------------
+# Four false positives from M1 (2026-09-27), each exempted BY VALUE
+# ---------------------------------------------------------------------------
+#
+# Found by the develop run for PR #17. Each value below was read in full and
+# is provably not a credential. Every regex is anchored to the specific value
+# (or, for the golden idempotency keys, to their fixed naming shape) and is
+# scoped to the one rule that fired, so a real key of the same kind anywhere
+# in the repository still fails the scan. Measured: a freshly generated RSA
+# private key and a random 32-char API-key-shaped value, placed alongside
+# these values, were both still reported.
+
+[[allowlists]]
+description = """
+private-key: two PEM *placeholders*, not keys.
+(1) .env.example — a commented example whose body is the literal text
+    `\n...\n` (7 characters; a real 2048-bit PKCS8 body is ~1600).
+(2) infrastructure/staging/RUNBOOK-jwt-keys.md — prose naming the PEM header
+    marker ("genpkey writes PKCS8 (`-----BEGIN PRIVATE KEY-----`) directly").
+The rule matches from a BEGIN marker to the next END/marker, so these spans
+contain no key material at all.
+"""
+targetRules = ["private-key"]
+regexes = [
+  '''^-----BEGIN PRIVATE KEY-----\\n\.\.\.\\n-----END PRIVATE KEY-----"''',
+  '''^-----BEGIN PRIVATE KEY-----`\) directly — no''',
+]
+
+[[allowlists]]
+description = """
+generic-api-key: golden-scenario idempotency keys (tests/accounting/golden),
+e.g. "p06-rev-rct-again". They are human-readable scenario step labels of the
+fixed shape pNN-<lowercase-words>, with no entropy, and they authenticate to
+nothing — an idempotency key is a duplicate-detection handle, not a secret.
+"""
+targetRules = ["generic-api-key"]
+regexes = [
+  '''^p[0-9]{2}(-[a-z0-9]{1,16}){1,4}$''',
+]
+
+[[allowlists]]
+description = """
+generic-api-key: the integration-test fixture password
+"Correct-Horse-Battery-Staple-1" (tests/integration/helpers/auth-seed.ts),
+the well-known XKCD 936 phrase. It is hashed into a disposable test database
+that is destroyed after each run and exists on no deployed system.
+"""
+targetRules = ["generic-api-key"]
+regexes = [
+  '''^Correct-Horse-Battery-Staple-1$''',
+]
