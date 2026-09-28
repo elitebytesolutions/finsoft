@@ -16,11 +16,23 @@ import type { Client } from 'pg'
  *
  * This is a completely different lock from the audit chain's own terminal
  * advisory lock (LOCK_REGISTRY.md position 6, keyed on the folded tenant id)
- * — this one is TEST INFRASTRUCTURE, never taken by application code, keyed
- * on a fixed constant chosen far outside any real tenant-id-derived value's
- * range, and it exists so that no two things in this test suite can have
- * audit_log's triggers in a disabled state, or be asserting they are all
- * enabled, at the same instant.
+ * — this one is TEST INFRASTRUCTURE, never taken by application code, and it
+ * exists so that no two things in this test suite can have audit_log's
+ * triggers in a disabled state, or be asserting they are all enabled, at the
+ * same instant.
+ *
+ * THE KEY IS A FIXED CONSTANT, NOT "FAR OUTSIDE" THE REAL KEY SPACE — an
+ * earlier version of this comment claimed that, and it was wrong: position
+ * 6's fold produces a full 64-bit signed integer from ANY tenant uuid, so
+ * every value in that range — including this one — is a value SOME tenant
+ * could fold to. There is no subrange this constant can sit "outside" of.
+ * What actually makes a collision negligible is that this key occupies ONE
+ * point in a ~1.8×10^19-point space (2^64), so the chance any given
+ * tenant's folded key equals it by accident is about 1 in 2^64 — the same
+ * order of collision risk LOCK_REGISTRY.md's own position-6 fold accepts for
+ * real tenants colliding with EACH OTHER. Registered in LOCK_REGISTRY.md so
+ * it is a fact someone can check, not a claim in a comment only this file
+ * makes.
  */
 const TEST_TRIGGER_MUTATION_LOCK_KEY = 918_273_645
 

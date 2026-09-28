@@ -105,6 +105,43 @@ here because that is what this file is for.
 
 ---
 
+## Row locks on `audit_log`
+
+No application code takes an explicit row lock (`FOR UPDATE`, `FOR NO KEY
+UPDATE`, `FOR SHARE`, or `FOR KEY SHARE`) on `audit_log` outside migration 009
+itself. The ONE exception is `audit_log_enforce_linkage()`'s own `FOR SHARE`
+read inside the `audit_log_link` trigger (ADR-0020 §5, the 005:114-131
+doctrine) — every other row lock on this table is either the implicit `KEY
+SHARE` the table's own foreign keys take on `tenants`, `users` and on itself
+(named in the "position 6 is terminal" paragraph above), or forbidden. This is
+enforced by `tests/security/lock-registry.spec.ts`'s source scan, which
+rejects any of those four locking clauses appearing against `audit_log`
+outside `database/migrations/009_create_audit_log.sql`.
+
+Why this matters enough to register: a query construction bug — for example
+an `INSERT ... ON CONFLICT (...) DO UPDATE SET ip = ...` reaching for
+`FOR UPDATE`-shaped conflict resolution — would take a lock this table's
+append-only design never anticipated, in a place the terminal advisory lock
+(position 6) does not protect against, because it would not be recognised as
+part of the audit append path at all.
+
+### Test-only advisory lock — NOT a claimant of the numbered positions above
+
+`database/tests/trigger-mutation-lock.ts` uses a session-scoped
+`pg_advisory_lock(918273645)` / `pg_advisory_unlock(918273645)` pair to
+serialise tests that disable an `audit_log` trigger against tests asserting
+one is enabled. It is registered here for the same reason
+`tests/security/lock-registry.spec.ts` exists at all — an unregistered
+`pg_advisory` call is exactly the kind of thing that looks safe until a second
+claimant appears — but it does **not** take a position in the ordered list
+above: it is never held by application code, never taken on a request or job
+path, and the one-argument space's own size (2^64 possible keys) is what
+makes a collision with a real tenant's folded key negligible, not any claimed
+separation from that space — see the constant's own comment for the
+correction of an earlier, wrong claim to the contrary.
+
+---
+
 ## Adding an entry
 
 1. Name the key expression exactly as the code computes it.

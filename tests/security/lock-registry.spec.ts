@@ -79,10 +79,10 @@ const ALLOWLIST: readonly AllowlistEntry[] = [
     why:
       'A plain (one-argument, session-scoped) pg_advisory_lock/unlock pair used ONLY by this test ' +
       'suite to serialise tests that disable an audit_log trigger against tests asserting it is ' +
-      'enabled. Never imported by application code, never taken in a request or job path, and keyed ' +
-      "on a fixed constant chosen far outside any real folded-tenant-id value's practical range. Not " +
-      "a claimant of LOCK_REGISTRY.md's production ordering — that registry governs locks taken on " +
-      'the paths it orders against each other, which this is not.',
+      'enabled. Never imported by application code, never taken in a request or job path. Registered ' +
+      'in LOCK_REGISTRY.md\'s own "test-only advisory lock" section — not a claimant of that ' +
+      "registry's production ordering, but named there for the same reason this allowlist exists at " +
+      'all: an unregistered pg_advisory call looks safe right up until a second claimant appears.',
   },
   {
     path: 'database/tests/audit-log-concurrency.spec.ts',
@@ -129,6 +129,43 @@ describe('LOCK_REGISTRY.md enforcement: pg_advisory appears only where registere
         `${offenders.join(', ')}. Add a docs/LOCK_REGISTRY.md entry (Architecture Guardian approves ` +
         "the position, Database Guardian reviews the SQL) and an entry in this file's ALLOWLIST, " +
         'or remove the lock.',
+    ).toEqual([])
+  })
+
+  it('finds no explicit row lock on audit_log outside migration 009 (LOCK_REGISTRY.md "Row locks on audit_log")', () => {
+    // audit_log_enforce_linkage()'s own FOR SHARE (migration 009) is the ONE
+    // sanctioned application-visible row lock on this table — everything
+    // else is either the implicit KEY SHARE its own foreign keys take, or
+    // forbidden. Comments are stripped first (the same technique
+    // packages/database/src/migrate/migrations.ts's own destructive-statement
+    // scanner uses) because this repository's own documentation of the
+    // mechanism — this file's neighbours among them — legitimately says
+    // "FOR SHARE" and "audit_log" in the same paragraph without that being a
+    // query.
+    const rowLockNearAuditLog =
+      /\baudit_log\b[\s\S]{0,400}?\bFOR\s+(UPDATE|NO\s+KEY\s+UPDATE|SHARE|KEY\s+SHARE)\b/i
+    const sanctioned = 'database/migrations/009_create_audit_log.sql'
+
+    const offenders: string[] = []
+    for (const absolute of findSourceFiles(REPO_ROOT)) {
+      const normalised = relativePath(REPO_ROOT, absolute).replaceAll('\\', '/')
+      if (normalised === sanctioned || normalised === 'tests/security/lock-registry.spec.ts')
+        continue
+
+      const withoutComments = readFileSync(absolute, 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, ' ')
+        .replace(/\/\/[^\n]*/g, ' ')
+        .replace(/--[^\n]*/g, ' ')
+
+      if (rowLockNearAuditLog.test(withoutComments)) offenders.push(normalised)
+    }
+
+    expect(
+      offenders,
+      `a FOR UPDATE/NO KEY UPDATE/SHARE/KEY SHARE clause appears near "audit_log" in code (not a ` +
+        `comment) outside migration 009: ${offenders.join(', ')}. The only sanctioned application ` +
+        "row lock on this table is audit_log_enforce_linkage()'s FOR SHARE — see LOCK_REGISTRY.md " +
+        '"Row locks on audit_log".',
     ).toEqual([])
   })
 
