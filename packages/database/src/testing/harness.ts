@@ -4,7 +4,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describeTarget, requireEnv } from '../env.ts'
 import { closeDatabase, openDatabase } from '../lifecycle.ts'
-import type { PoolTarget } from '../pool.ts'
+import { getPool, type PoolTarget } from '../pool.ts'
 import type { Database } from '../schema.ts'
 import { TenantContext, type TenantPrincipal } from '../tenant-context.ts'
 import { withGlobal, withTenant, type GlobalTx, type TenantTx } from '../transaction.ts'
@@ -167,6 +167,24 @@ export async function migrateTestDatabase(): Promise<void> {
  */
 export function runAs<T>(principal: TenantPrincipal, fn: () => Promise<T>): Promise<T> {
   return TenantContext.run(principal, fn)
+}
+
+/**
+ * The live pool's checked-out/idle/waiting connection counts.
+ *
+ * C1, architecture re-review 2026-09-27: proving "no connection is held
+ * across argon2id" needs a way to observe the pool's own bookkeeping from
+ * outside `packages/database` — `getPool()` is deliberately not part of the
+ * package's public surface (index.ts's own header: "a connection outside a
+ * scoped transaction" is exactly the shape of bug ADR-0013 exists to rule
+ * out), so this is the one, narrow, test-only door to it, the same pattern
+ * `rawOn`/`scalarOn` already use for raw SQL. `total - idle` is the number
+ * of connections currently checked out for active work; a caller mid-`await`
+ * on argon2 while still holding a connection would show up here as > 0.
+ */
+export function poolStats(): { total: number; idle: number; waiting: number } {
+  const pool = getPool()
+  return { total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount }
 }
 
 /**
