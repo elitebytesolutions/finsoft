@@ -303,4 +303,228 @@ describe('structural controls — the production-reachable counterpart to the CI
       await admin.end()
     }
   })
+
+  it('fails closed and names the trigger if one is DROPPED entirely, not merely disabled', async () => {
+    // R2: a query that only inspects rows already present in pg_trigger
+    // cannot see a DROPPED trigger — it would report zero issues over an
+    // empty result set. The structural check compares against the closed,
+    // named REQUIRED_TRIGGERS list for exactly this reason.
+    const admin = migrationClient()
+    await admin.connect()
+    try {
+      await withTriggersLocked(admin, async () => {
+        await admin.query('DROP TRIGGER audit_log_no_truncate ON audit_log')
+        try {
+          const result = await verifyAuditChain(undefined, 'TEST_DATABASE_URL')
+          expect(result.ok).toBe(false)
+          expect(result.firstBreak?.reason).toMatch(/audit_log_no_truncate.*DROPPED/)
+        } finally {
+          await admin.query(`
+            CREATE TRIGGER audit_log_no_truncate
+              BEFORE TRUNCATE ON audit_log
+              FOR EACH STATEMENT EXECUTE FUNCTION audit_log_forbid_mutation()
+          `)
+        }
+      })
+    } finally {
+      await admin.end()
+    }
+  })
+
+  it('fails closed and names the constraint if one is DROPPED', async () => {
+    const admin = migrationClient()
+    await admin.connect()
+    try {
+      await withTriggersLocked(admin, async () => {
+        await admin.query('ALTER TABLE audit_log DROP CONSTRAINT audit_log_not_self')
+        try {
+          const result = await verifyAuditChain(undefined, 'TEST_DATABASE_URL')
+          expect(result.ok).toBe(false)
+          expect(result.firstBreak?.reason).toMatch(/audit_log_not_self.*DROPPED/)
+        } finally {
+          await admin.query(`
+            ALTER TABLE audit_log
+              ADD CONSTRAINT audit_log_not_self CHECK (previous_hash IS NULL OR previous_hash <> hash)
+          `)
+        }
+      })
+    } finally {
+      await admin.end()
+    }
+  })
+
+  it('checks every tenant and reports every break, not only the first (S3)', async () => {
+    const admin = migrationClient()
+    await admin.connect()
+    try {
+      // 3 events each, not 2: audit_log_genesis_ties pins seq=1's
+      // previous_hash to the genesis constant, so the row renumbered away
+      // must be seq 2 (as in audit-log-concurrency.spec.ts's own FOR SHARE
+      // test), not seq 1.
+      const a = await createTenantFixture('SBA')
+      const b = await createTenantFixture('SBB')
+      await appendN(a, 3)
+      await appendN(b, 3)
+
+      await withTriggersLocked(admin, async () => {
+        await admin.query('ALTER TABLE audit_log DISABLE TRIGGER audit_log_no_update')
+        try {
+          await admin.query('UPDATE audit_log SET seq = 99 WHERE tenant_id = $1 AND seq = 2', [
+            a.tenantId,
+          ])
+          await admin.query('UPDATE audit_log SET seq = 99 WHERE tenant_id = $1 AND seq = 2', [
+            b.tenantId,
+          ])
+        } finally {
+          await admin.query('ALTER TABLE audit_log ENABLE TRIGGER audit_log_no_update')
+        }
+      })
+
+      const resultA = await verifyLocked(a.tenantId)
+      const resultB = await verifyLocked(b.tenantId)
+      expect(resultA.ok).toBe(false)
+      expect(resultB.ok).toBe(false)
+
+      // The whole-cluster call must not stop at the first broken tenant: both
+      // a and b must appear among the reported breaks.
+      const wholeCluster = await verifyLocked(undefined)
+      const brokenTenantIds = new Set(wholeCluster.breaks.map((brk) => brk.tenantId))
+      expect(brokenTenantIds.has(a.tenantId), 'tenant a should be among the reported breaks').toBe(
+        true,
+      )
+      expect(brokenTenantIds.has(b.tenantId), 'tenant b should be among the reported breaks').toBe(
+        true,
+      )
+    } finally {
+      await admin.end()
+    }
+  })
+})
+
+describe('S1: adversarial cases the verifier must and must not claim to catch', () => {
+  it('fails rather than reporting OK for a tenant id that does not exist', async () => {
+    const result = await verifyLocked('00000000-0000-4000-8000-000000000000')
+    expect(result.ok).toBe(false)
+    expect(result.firstBreak?.reason).toMatch(/does not exist/)
+  })
+
+  it('fails rather than reporting OK for a tenant with no seq=0 anchor', async () => {
+    // A tenant created WITHOUT going through createAuditChainAnchor — exactly
+    // the state a future, buggy provisioning path could leave behind.
+    const admin = migrationClient()
+    await admin.connect()
+    try {
+      const { rows } = await admin.query<{ id: string }>(
+        `INSERT INTO tenants (code, name) VALUES ($1, $2) RETURNING id`,
+        [`TNOANCHOR${Date.now().toString(36)}`.slice(0, 16).toUpperCase(), 'No anchor'],
+      )
+      const tenantId = rows[0]!.id
+
+      const result = await verifyLocked(tenantId)
+      expect(result.ok).toBe(false)
+      expect(result.firstBreak?.reason).toMatch(/no seq=0 anchor/)
+    } finally {
+      await admin.end()
+    }
+  })
+
+  it('detects a cross-tenant splice (a forged row naming a hash from the wrong tenant)', async () => {
+    const victim = await createTenantFixture('SPV')
+    const attacker = await createTenantFixture('SPA')
+    const victimHead = await runAs({ tenantId: victim.tenantId, userId: victim.ownerId }, () =>
+      withTenant((tx) =>
+        recordAudit(tx, {
+          actorUserId: victim.ownerId,
+          action: 'VICTIM_EVENT',
+          entityType: 'probe',
+          entityId: null,
+          beforeJson: null,
+          afterJson: null,
+          ip: null,
+          requestId: null,
+        }),
+      ),
+    )
+    // The attacker's tenant needs its OWN real seq=1 first — audit_log_
+    // genesis_ties pins seq=1's previous_hash to the genesis constant
+    // unconditionally, so a splice attempt at seq=1 would be rejected by
+    // that CHECK regardless of whose hash it named, proving nothing about
+    // cross-tenant detection specifically.
+    await appendN(attacker, 1)
+
+    const admin = migrationClient()
+    await admin.connect()
+    try {
+      // Attempt to splice a row into the ATTACKER's tenant at seq=2, naming
+      // the VICTIM's hash as its previous_hash — audit_log_link (seq > 1)
+      // checks THIS tenant's own seq=1 row for a matching hash FOR SHARE,
+      // and the attacker's real seq=1 row does not have the victim's hash,
+      // so the linkage trigger rejects it before the FK is even reached
+      // (the same "trigger enabled" precedence as the orphan/bad-adjacency
+      // cases in audit-log.spec.ts). audit_log_prev_fkey is the backup that
+      // still catches this if the trigger is ever disabled — see "the
+      // orphan forgery under a disabled linkage trigger" in
+      // audit-log-concurrency.spec.ts.
+      await expect(
+        admin.query(
+          `INSERT INTO audit_log (tenant_id, seq, occurred_at, action, entity_type, hash_version, hash, previous_hash)
+           VALUES ($1, 2, now(), 'SPLICE_ATTEMPT', 'probe', 'v1', $2, $3)`,
+          [attacker.tenantId, 'a'.repeat(64), victimHead.hash],
+        ),
+      ).rejects.toThrow(/previous_hash does not match the hash at seq 1/)
+    } finally {
+      await admin.end()
+    }
+  })
+
+  it('DOCUMENTED LIMITATION: a TAIL deletion (the most recent row, deleted, with nothing appended after) is NOT detected', async () => {
+    // Stated plainly because it is a real limitation, not an oversight: the
+    // verifier walks seq 1..N and stops the moment it runs out of rows. If
+    // the CURRENT tail (the highest seq) is deleted and nothing is appended
+    // afterward, there is no gap for the verifier to find — "the chain ends
+    // at seq 2" is indistinguishable from "seq 3 existed and was deleted".
+    // A gap is only detectable when something ELSE still points past it (a
+    // later row's previous_hash, or an out-of-band expected-seq record this
+    // verifier does not keep). This is why rule 4's grants (no DELETE at
+    // all, for any role, ever) are the REAL control here — the trigger and
+    // grants prevent this from being reachable at all in the running
+    // system. This test exercises it anyway, as the owning role would have
+    // to (bypassing the trigger, which only a superuser-equivalent
+    // connection can do), to prove the verifier's boundary honestly rather
+    // than assert a guarantee it cannot give.
+    const tenant = await createTenantFixture('TAILDEL')
+    await appendN(tenant, 3)
+
+    const okBefore = await verifyLocked(tenant.tenantId)
+    expect(okBefore.ok).toBe(true)
+    expect(okBefore.rowsChecked).toBe(3)
+
+    const admin = migrationClient()
+    await admin.connect()
+    try {
+      await withTriggersLocked(admin, async () => {
+        await admin.query('ALTER TABLE audit_log DISABLE TRIGGER audit_log_no_delete')
+        try {
+          const deleted = await admin.query(
+            'DELETE FROM audit_log WHERE tenant_id = $1 AND seq = 3',
+            [tenant.tenantId],
+          )
+          expect(deleted.rowCount, 'the tail row must actually have been deleted').toBe(1)
+        } finally {
+          await admin.query('ALTER TABLE audit_log ENABLE TRIGGER audit_log_no_delete')
+        }
+      })
+
+      // The documented limitation, demonstrated rather than merely claimed:
+      // the verifier reports OK, having checked only the 2 rows that remain.
+      const afterTailDeletion = await verifyLocked(tenant.tenantId)
+      expect(
+        afterTailDeletion.ok,
+        'this assertion documents the limitation — it is EXPECTED to be true',
+      ).toBe(true)
+      expect(afterTailDeletion.rowsChecked).toBe(2)
+    } finally {
+      await admin.end()
+    }
+  })
 })
