@@ -94,6 +94,23 @@ const MANDATORY_COLUMNS = [
   'version',
 ]
 
+/**
+ * Tables exempt from the mandatory column set. ADR-0020 Compliance: "The
+ * mandatory column set — audit_log is exempt."
+ *
+ * `occurred_at` and `actor_user_id` already carry when/by-whom as HASHED
+ * columns, so `created_at`/`created_by` would duplicate them unhashed.
+ * `updated_at`/`updated_by`/`version` describe an UPDATE this table can never
+ * have (it is append-only, enforced by grants and a trigger rejecting
+ * UPDATE/DELETE for every role) — there is no optimistic lock and no last
+ * writer to record. Including any of the five, unhashed, on the one table
+ * whose entire purpose is that its contents cannot change without detection
+ * would be exactly backwards.
+ *
+ * Adding a name to this list is a Database Guardian decision, not a fix.
+ */
+const MANDATORY_COLUMN_SET_ALLOWLIST = new Set(['audit_log'])
+
 describe('schema', () => {
   beforeAll(prepareTestDatabase, 60_000)
   afterAll(teardownTestDatabase)
@@ -183,9 +200,22 @@ describe('schema', () => {
     ]
 
     for (const table of tenantOwned) {
+      if (MANDATORY_COLUMN_SET_ALLOWLIST.has(table)) continue
       const present = new Set(all.filter((c) => c.table_name === table).map((c) => c.column_name))
       const missing = MANDATORY_COLUMNS.filter((column) => !present.has(column))
       expect(missing, `${table} is missing IMPLEMENTATION §11 columns`).toEqual([])
+    }
+  })
+
+  it('carries no stale entry in MANDATORY_COLUMN_SET_ALLOWLIST', async () => {
+    // Same discipline as GLOBALLY_UNIQUE_INDEX_ALLOWLIST below: an exemption
+    // must not outlive the table it names.
+    const names = new Set((await tables()).map((t) => t.table_name))
+    for (const table of MANDATORY_COLUMN_SET_ALLOWLIST) {
+      expect(
+        names.has(table),
+        `MANDATORY_COLUMN_SET_ALLOWLIST names "${table}", which does not exist`,
+      ).toBe(true)
     }
   })
 

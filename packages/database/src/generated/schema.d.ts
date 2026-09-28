@@ -23,6 +23,42 @@ export type JsonValue = JsonArray | JsonObject | JsonPrimitive;
 
 export type Timestamp = ColumnType<Date, Date | string, Date | string>;
 
+export interface AuditLog {
+  action: string;
+  actor_user_id: string | null;
+  after_json: Json | null;
+  before_json: Json | null;
+  entity_id: string | null;
+  entity_type: string;
+  /**
+   * hex(SHA-256(previous_hash || 0x1F || hash_version || 0x1F || JCS(record))) — ADR-0020 §4. Computed by the application before insert.
+   */
+  hash: string;
+  /**
+   * The canonicalisation scheme that produced hash, hashed as part of its own input. A future v2 does not invalidate v1 rows; the verifier reads this column rather than the calendar.
+   */
+  hash_version: string;
+  id: Generated<string>;
+  /**
+   * text, not inet (ADR-0020 §4): inet renders with a /32 or /128 prefix and abbreviates IPv6, which would put an unstated normalisation rule between the writer and the verifier. The application renders addresses normatively (lowercase, RFC 5952) before hashing; this column stores exactly that.
+   */
+  ip: string | null;
+  /**
+   * Application-generated, never DEFAULT now(). Formatted to exactly six fractional digits before hashing (ADR-0020 §4) — Date.prototype.toISOString() yields three.
+   */
+  occurred_at: Timestamp;
+  /**
+   * The parent row's hash. NULL only for the seq=0 anchor. 64 zeros for the row at seq=1 (audit_log_genesis_ties).
+   */
+  previous_hash: string | null;
+  request_id: string | null;
+  /**
+   * Gapless per tenant, from 1, allocated by the application under the terminal advisory lock (LOCK_REGISTRY.md position 6). Never a PostgreSQL sequence: a seq gap is what the verifier reads as evidence of tampering, and a sequence would manufacture that on every rollback. 0 is the per-tenant anchor.
+   */
+  seq: ColumnType<string, string, string>;
+  tenant_id: string;
+}
+
 export interface Outbox {
   /**
    * A human has taken responsibility for this FAILED row. The ADR-0019 alert is defined over UNACKNOWLEDGED failed rows; without this it would fire forever from the first one and be muted.
@@ -221,6 +257,7 @@ export interface Users {
 }
 
 export interface DB {
+  audit_log: AuditLog;
   outbox: Outbox;
   refresh_token_families: RefreshTokenFamilies;
   refresh_tokens: RefreshTokens;

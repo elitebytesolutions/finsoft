@@ -94,7 +94,7 @@ namespace convention it replaces.
 
 ## One ordering fact that existed only in someone's head
 
-**Migration 007 creates each tenant's `seq = 0` anchor row while the migration
+**Migration 009 creates each tenant's `seq = 0` anchor row while the migration
 runner holds position 1**, and creating that row takes position 6. So a
 migration transaction holds the first lock and then the terminal one.
 
@@ -102,6 +102,43 @@ That is safe — no posting transaction ever wants the migration lock, so the
 edge cannot close into a cycle — but it is precisely the kind of fact that is
 obvious to whoever wrote it and invisible to everyone else. It is written down
 here because that is what this file is for.
+
+---
+
+## Row locks on `audit_log`
+
+No application code takes an explicit row lock (`FOR UPDATE`, `FOR NO KEY
+UPDATE`, `FOR SHARE`, or `FOR KEY SHARE`) on `audit_log` outside migration 009
+itself. The ONE exception is `audit_log_enforce_linkage()`'s own `FOR SHARE`
+read inside the `audit_log_link` trigger (ADR-0020 §5, the 005:114-131
+doctrine) — every other row lock on this table is either the implicit `KEY
+SHARE` the table's own foreign keys take on `tenants`, `users` and on itself
+(named in the "position 6 is terminal" paragraph above), or forbidden. This is
+enforced by `tests/security/lock-registry.spec.ts`'s source scan, which
+rejects any of those four locking clauses appearing against `audit_log`
+outside `database/migrations/009_create_audit_log.sql`.
+
+Why this matters enough to register: a query construction bug — for example
+an `INSERT ... ON CONFLICT (...) DO UPDATE SET ip = ...` reaching for
+`FOR UPDATE`-shaped conflict resolution — would take a lock this table's
+append-only design never anticipated, in a place the terminal advisory lock
+(position 6) does not protect against, because it would not be recognised as
+part of the audit append path at all.
+
+### Test-only advisory lock — NOT a claimant of the numbered positions above
+
+`database/tests/trigger-mutation-lock.ts` uses a session-scoped
+`pg_advisory_lock(918273645)` / `pg_advisory_unlock(918273645)` pair to
+serialise tests that disable an `audit_log` trigger against tests asserting
+one is enabled. It is registered here for the same reason
+`tests/security/lock-registry.spec.ts` exists at all — an unregistered
+`pg_advisory` call is exactly the kind of thing that looks safe until a second
+claimant appears — but it does **not** take a position in the ordered list
+above: it is never held by application code, never taken on a request or job
+path, and the one-argument space's own size (2^64 possible keys) is what
+makes a collision with a real tenant's folded key negligible, not any claimed
+separation from that space — see the constant's own comment for the
+correction of an earlier, wrong claim to the contrary.
 
 ---
 
@@ -120,7 +157,7 @@ here because that is what this file is for.
 register does not name. That is the same inbound allowlist posture the
 repository already uses for `observability-importers-are-allowlisted` — applied
 to the same class of problem, an edge that is legal only because nobody wrote a
-rule. Not yet built; it is a merge condition on migration 007.
+rule. Not yet built; it is a merge condition on migration 009.
 
 **There is deliberately no `packages/locks`.** Two claimants with different key
 shapes — a constant string hash and a folded uuid — do not share an

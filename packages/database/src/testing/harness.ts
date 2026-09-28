@@ -6,6 +6,7 @@ import { describeTarget, requireEnv } from '../env.ts'
 import { closeDatabase, openDatabase } from '../lifecycle.ts'
 import { getPool, type PoolTarget } from '../pool.ts'
 import type { Database } from '../schema.ts'
+import { createAuditChainAnchor } from '../audit/anchor.ts'
 import { TenantContext, type TenantPrincipal } from '../tenant-context.ts'
 import { withGlobal, withTenant, type GlobalTx, type TenantTx } from '../transaction.ts'
 
@@ -267,6 +268,19 @@ export async function createTenantFixture(label: string): Promise<TenantFixture>
       .values({ code, name: `Fixture ${code}` })
       .returning('id')
       .executeTakeFirstOrThrow()
+
+    /*
+     * ADR-0020 §5: the anchor is created in the SAME transaction as the
+     * tenants insert, before the tenant is generally visible. No production
+     * tenant-provisioning code exists in this repository yet (see the note
+     * at the top of database/migrations/009_create_audit_log.sql) — this
+     * fixture is the only thing that creates a tenant today, so it is
+     * updated to call the same helper real provisioning must call, rather
+     * than leaving every fixture tenant in this test suite unable to ever
+     * append an audit record.
+     */
+    await createAuditChainAnchor(tx, row.id)
+
     return row.id
   })
 

@@ -67,3 +67,38 @@ export type { ClaimedOutboxRow, FailureRecord, ReclaimResult } from './outbox.ts
 export { readSchemaHealth } from './health.ts'
 export type { SchemaHealth } from './health.ts'
 export { DatabaseConfigError } from './env.ts'
+
+/*
+ * The audit hash chain. ADR-0020, NON_NEGOTIABLES rule 9.
+ *
+ * `recordAudit` and `auditSink` run inside the CALLER's transaction — the
+ * caller passes its own TenantTx, exactly like inventoryKernel.postMovement
+ * and postingEngine.post. `verifyAuditChain` opens its own readonly_support
+ * connection and is not part of any request path — it is the CLI's
+ * (`npm run audit:verify`).
+ *
+ * `createAuditChainAnchor` is deliberately NOT exported here. It is
+ * provisioning-only, imported from `@finsoft/database/provisioning` — see
+ * that file's own comment for why it does not belong on the same surface as
+ * `recordAudit`.
+ */
+export {
+  AuditCanonicalizationError,
+  assertJcsSafe,
+  computeAuditHash,
+  GENESIS_HASH,
+  HASH_VERSION,
+  jcsSerialize,
+} from './audit/canonical.ts'
+export type { CanonicalAuditRecord, JsonObject, JsonValue } from './audit/canonical.ts'
+export { normalizeIp } from './audit/ip.ts'
+export { buildCanonicalRecord, toMicrosecondIso } from './audit/record.ts'
+export { AuditChainError, auditSink, recordAudit } from './audit/writer.ts'
+export type { AuditAppendResult, AuditEventInput, AuditSink } from './audit/writer.ts'
+export { verifyAuditChain } from './audit/verify.ts'
+export type { ChainBreak, StructuralIssue, VerifyResult } from './audit/verify.ts'
+export { SupportConnectionRoleError } from './audit/support-connection.ts'
+export { AuditSecretKeyError, assertNoSecretLikeKeys } from './audit/secret-keys.ts'
+export { AuditLockTimeoutError } from './audit/writer.ts'
+export { listAuditEvents } from './audit/query.ts'
+export type { AuditEventFilter, AuditEventPage, AuditEventRow } from './audit/query.ts'
