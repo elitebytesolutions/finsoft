@@ -64,6 +64,17 @@ services:
       # infrastructure/staging/RUNBOOK-finsoft-refresh-role.md.
       AUTH_REFRESH_COOKIE_NAME: __Host-finsoft_rt
       AUTH_REFRESH_COOKIE_PATH: /
+      # packages/auth/src/jwt.ts refuses to boot under NODE_ENV=production
+      # unless a real RSA key pair is supplied — the ephemeral in-process key
+      # path is an allowlist of exactly "development"/"test", not a denylist
+      # of "production", so this is not optional here. All three come from
+      # /opt/finsoft/.env on the host, never from this repo or from CI: see
+      # infrastructure/staging/RUNBOOK-jwt-keys.md for one-time generation.
+      # The `:?` guard makes a missing variable fail `docker compose config`
+      # itself, before the container ever starts, rather than crash-looping.
+      AUTH_JWT_PRIVATE_KEY: ${AUTH_JWT_PRIVATE_KEY:?see infrastructure/staging/RUNBOOK-jwt-keys.md}
+      AUTH_JWT_KID: ${AUTH_JWT_KID:?see infrastructure/staging/RUNBOOK-jwt-keys.md}
+      AUTH_JWT_PUBLIC_KEYS: ${AUTH_JWT_PUBLIC_KEYS:?see infrastructure/staging/RUNBOOK-jwt-keys.md}
       # finsoft_app ONLY. An earlier version of this file also passed
       # MIGRATION_DATABASE_URL here, which handed finsoft_migration's
       # BYPASSRLS credential to the long-running, web-facing process — the one

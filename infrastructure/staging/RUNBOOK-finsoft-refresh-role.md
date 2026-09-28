@@ -52,6 +52,12 @@ commands below.
   `POSTGRES_BOOTSTRAP_USER`, `POSTGRES_BOOTSTRAP_PASSWORD`, `POSTGRES_DB`,
   which `infrastructure/staging/compose.yaml` uses to configure the
   `postgres` service.
+- **Also required before this same PR's deploy reaches staging, and unrelated
+  to this role:** [`RUNBOOK-jwt-keys.md`](RUNBOOK-jwt-keys.md) — the `api`
+  service will not boot under `NODE_ENV=production` without
+  `AUTH_JWT_PRIVATE_KEY`/`AUTH_JWT_KID`/`AUTH_JWT_PUBLIC_KEYS` set in the same
+  `/opt/finsoft/.env`. Two independent one-time host steps, two independent
+  runbooks — do both before merging.
 
 ## Step 1 — confirm the container name and load the env
 
