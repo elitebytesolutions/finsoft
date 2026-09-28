@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { describeCliError } from './cli-error.ts'
 import { verifyAuditChain } from './verify.ts'
 
 /*
@@ -51,6 +52,6 @@ async function main(): Promise<number> {
 main()
   .then((code) => process.exit(code))
   .catch((error: unknown) => {
-    console.error(error)
+    console.error(describeCliError(error))
     process.exit(1)
   })

@@ -73,12 +73,15 @@ export { DatabaseConfigError } from './env.ts'
  *
  * `recordAudit` and `auditSink` run inside the CALLER's transaction — the
  * caller passes its own TenantTx, exactly like inventoryKernel.postMovement
- * and postingEngine.post. `createAuditChainAnchor` is for tenant
- * provisioning only (see packages/database/src/audit/anchor.ts).
- * `verifyAuditChain` opens its own readonly_support connection and is not
- * part of any request path — it is the CLI's (`npm run audit:verify`).
+ * and postingEngine.post. `verifyAuditChain` opens its own readonly_support
+ * connection and is not part of any request path — it is the CLI's
+ * (`npm run audit:verify`).
+ *
+ * `createAuditChainAnchor` is deliberately NOT exported here. It is
+ * provisioning-only, imported from `@finsoft/database/provisioning` — see
+ * that file's own comment for why it does not belong on the same surface as
+ * `recordAudit`.
  */
-export { createAuditChainAnchor } from './audit/anchor.ts'
 export {
   AuditCanonicalizationError,
   assertJcsSafe,
@@ -94,6 +97,8 @@ export { AuditChainError, auditSink, recordAudit } from './audit/writer.ts'
 export type { AuditAppendResult, AuditEventInput, AuditSink } from './audit/writer.ts'
 export { verifyAuditChain } from './audit/verify.ts'
 export type { ChainBreak, StructuralIssue, VerifyResult } from './audit/verify.ts'
+export { SupportConnectionRoleError } from './audit/support-connection.ts'
+export { AuditSecretKeyError, assertNoSecretLikeKeys } from './audit/secret-keys.ts'
 export { AuditLockTimeoutError } from './audit/writer.ts'
 export { listAuditEvents } from './audit/query.ts'
 export type { AuditEventFilter, AuditEventPage, AuditEventRow } from './audit/query.ts'
