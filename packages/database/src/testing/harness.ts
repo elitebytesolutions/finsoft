@@ -88,11 +88,21 @@ function assertTestTarget(url: string): void {
  * Prepare the process: load .env, pin the pool, open it against the test
  * database. Idempotent, so every spec file can call it in `beforeAll`.
  *
- * `DATABASE_POOL_MAX=1` is not a performance choice. It makes connection
- * reuse deterministic, which is the only way to assert the thing ADR-0004:140
- * asks for: that the next borrower of *the same* connection does not inherit
- * the previous transaction's `app.tenant_id`. With a larger pool the test
- * would usually get a different backend and pass without testing anything.
+ * `DATABASE_POOL_MAX` defaults to `1`, which is not a performance choice. It
+ * makes connection reuse deterministic, which is the only way to assert the
+ * thing ADR-0004:140 asks for: that the next borrower of *the same*
+ * connection does not inherit the previous transaction's `app.tenant_id`.
+ * With a larger pool that test would usually get a different backend and
+ * pass without testing anything.
+ *
+ * The default only applies if a spec file has not already set the variable
+ * BEFORE calling this function (`??=`, not `=`). The one sanctioned reason
+ * to do that: a genuine multi-connection concurrency test — B1's row-lock
+ * race (security/database re-review N2) needs two REAL `spendRefreshToken`
+ * calls in flight on two separate backends at once, which a pool of 1
+ * cannot produce by construction (a second caller would queue for the
+ * connection rather than race for the row). Every other spec file gets the
+ * deterministic default exactly as before.
  */
 export async function prepareTestDatabase(): Promise<void> {
   if (prepared) return
@@ -102,7 +112,7 @@ export async function prepareTestDatabase(): Promise<void> {
   const url = requireEnv('TEST_DATABASE_URL', 'The isolation suite runs against the test cluster.')
   assertTestTarget(url)
 
-  process.env['DATABASE_POOL_MAX'] = '1'
+  process.env['DATABASE_POOL_MAX'] ??= '1'
 
   await migrateTestDatabase()
   await openDatabase(TEST_TARGET)

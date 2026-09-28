@@ -47,6 +47,16 @@ export interface SpendRefreshTokenParams {
   readonly deviceId: string | null
 }
 
+export interface RefreshTestHooks {
+  /**
+   * TEST ONLY. Called after the candidate row is read and before the atomic
+   * spend UPDATE is attempted — the exact window a concurrent logout (or a
+   * concurrent reuse-triggered revocation) races against. Production code
+   * never sets this.
+   */
+  readonly beforeSpend?: () => Promise<void>
+}
+
 /**
  * Revokes a family AND its session in the SAME transaction (B2). Migration
  * 005's `sessions_cascade_revocation` trigger only fires the other
@@ -90,7 +100,10 @@ async function revokeFamilyAndSession(
     .execute()
 }
 
-export async function spendRefreshToken(params: SpendRefreshTokenParams): Promise<RefreshOutcome> {
+export async function spendRefreshToken(
+  params: SpendRefreshTokenParams,
+  testHooks?: RefreshTestHooks,
+): Promise<RefreshOutcome> {
   const result = await withResolvedTenant(
     refreshTokenResolver(params.presentedTokenHash),
     async (tx, { tokenId }, tenantId) => {
@@ -174,6 +187,8 @@ export async function spendRefreshToken(params: SpendRefreshTokenParams): Promis
         return { outcome: 'inactive' } satisfies RefreshOutcome
       }
 
+      if (testHooks?.beforeSpend) await testHooks.beforeSpend()
+
       // The atomic spend. `used_at IS NULL AND expires_at > now()` re-checked
       // in the WHERE even though both were just read: this is the fence that
       // actually matters under concurrency — a second caller racing on the
@@ -183,7 +198,21 @@ export async function spendRefreshToken(params: SpendRefreshTokenParams): Promis
       // migration 005's `refresh_tokens_enforce_transition` additionally
       // takes a FOR SHARE lock on the family and RAISES (23514) if it was
       // revoked between our read above and this statement.
+      //
+      // DB F2 / N3, security/database re-review: a RAISE from a trigger
+      // aborts the CURRENT transaction in Postgres, not just the statement —
+      // every statement issued afterward on the same transaction fails with
+      // 25P02 ("current transaction is aborted") until a ROLLBACK. The
+      // earlier version of this catch block called revokeFamilyAndSession
+      // immediately after catching the 23514, inside the now-aborted
+      // transaction, which raised 25P02 and surfaced as an uncaught 500 —
+      // exactly when a logout races a refresh on the same family. A
+      // SAVEPOINT taken before the attempt gives this one statement its own
+      // rollback boundary: ROLLBACK TO SAVEPOINT undoes only the failed
+      // UPDATE and returns the transaction to a usable state, so the revoke
+      // that follows runs normally.
       let spend: { numUpdatedRows: bigint }
+      await sql`SAVEPOINT spend_attempt`.execute(tx)
       try {
         spend = await tx
           .updateTable('refresh_tokens')
@@ -193,8 +222,10 @@ export async function spendRefreshToken(params: SpendRefreshTokenParams): Promis
           .where('used_at', 'is', null)
           .where(sql<boolean>`expires_at > now()`)
           .executeTakeFirst()
+        await sql`RELEASE SAVEPOINT spend_attempt`.execute(tx)
       } catch (error) {
         if ((error as { code?: string }).code === '23514') {
+          await sql`ROLLBACK TO SAVEPOINT spend_attempt`.execute(tx)
           await revokeFamilyAndSession(
             tx,
             tenantId,
