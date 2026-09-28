@@ -2,7 +2,12 @@ import { Client } from 'pg'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { hashRefreshToken, login, mintRefreshToken } from '@finsoft/auth'
 import { spendRefreshToken } from '@finsoft/database/auth'
-import { prepareTestDatabase, teardownTestDatabase, unique } from '@finsoft/database/testing'
+import {
+  prepareTestDatabase,
+  teardownTestDatabase,
+  TEST_TARGET,
+  unique,
+} from '@finsoft/database/testing'
 import { createActiveUserFixture } from './helpers/auth-seed.ts'
 
 /*
@@ -20,6 +25,38 @@ function migrationClient(): Client {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * C1-sec, security re-review 2026-09-27: poll `pg_locks` for the real number
+ * of backends actually blocked waiting for the row lock, instead of a fixed
+ * `delay(300)` and hoping both calls got there in time (or that CI is never
+ * slower than 300ms). `NOT granted` on a `finsoft-test`-attributed backend is
+ * exactly "this connection issued a statement that is blocked behind another
+ * session's lock" — which is what committing the locker is supposed to wait
+ * for, not a guess at how long that takes.
+ */
+async function waitForBlockedWaiters(
+  client: Client,
+  expected: number,
+  timeoutMs = 15_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const { rows } = await client.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM pg_locks l
+         JOIN pg_stat_activity a ON a.pid = l.pid
+        WHERE NOT l.granted AND a.application_name = $1`,
+      [TEST_TARGET.applicationName],
+    )
+    if (Number(rows[0]?.n ?? '0') >= expected) return
+    if (Date.now() > deadline) {
+      throw new Error(
+        `timed out after ${timeoutMs}ms waiting for ${expected} blocked waiter(s) in pg_locks`,
+      )
+    }
+    await delay(15)
+  }
 }
 
 describe('refresh concurrency, through spendRefreshToken itself', () => {
@@ -82,6 +119,27 @@ describe('refresh concurrency, through spendRefreshToken itself', () => {
     )
 
     expect(outcome.outcome, 'must be a clean outcome, never a thrown 25P02').toBe('reused')
+
+    // C4-sec, security re-review 2026-09-27: the savepoint fix must not just
+    // avoid the 500 — it must still run the REAL consequence of a reuse,
+    // revokeFamilyAndSession, to completion. The family was already revoked
+    // by the simulated logout above; the session it owns must be too.
+    const check = migrationClient()
+    await check.connect()
+    try {
+      const session = await check.query<{ revoked_at: string | null }>(
+        `SELECT s.revoked_at FROM sessions s
+           JOIN refresh_token_families f ON f.session_id = s.id
+          WHERE f.id = (SELECT family_id FROM refresh_tokens WHERE token_hash = $1)`,
+        [token.hash],
+      )
+      expect(
+        session.rows[0]?.revoked_at,
+        'the session must be revoked too, not just reported as reused',
+      ).not.toBeNull()
+    } finally {
+      await check.end()
+    }
   })
 
   it('N2: two real spendRefreshToken calls racing the SAME token — exactly one success, one reused, family+session revoked, successor also rejected', async () => {
@@ -112,11 +170,9 @@ describe('refresh concurrency, through spendRefreshToken itself', () => {
       deviceId: null,
     })
 
-    // Give both calls time to reach and block on the UPDATE before releasing
-    // the lock. Best-effort rather than a synchronisation primitive — this
-    // is exercising real network/DB timing, and the assertions below hold
-    // regardless of exactly how long each call took to reach the block.
-    await delay(300)
+    // Wait until pg_locks itself reports both calls genuinely blocked on the
+    // row lock, rather than guessing how long that takes.
+    await waitForBlockedWaiters(locker, 2)
     await locker.query('COMMIT')
     await locker.end()
 

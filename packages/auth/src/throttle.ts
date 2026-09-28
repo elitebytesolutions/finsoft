@@ -196,6 +196,30 @@ export async function checkLayers(layers: readonly ThrottleLayer[]): Promise<Thr
   }
 }
 
+/*
+ * C3-sec, security re-review 2026-09-27: a bare `DECR` is not safe here.
+ * `DECR` on a key that does not exist (already expired, or never
+ * incremented on this exact key due to a Redis failover/reconnect) CREATES
+ * it at -1, with NO TTL — a permanently negative counter that never expires
+ * and never cleans itself up, the opposite of every other counter in this
+ * file. A concurrent refund of the same layer (two requests failing with
+ * HashingQueueFullError for the same account close together) could also
+ * walk a legitimately-1 counter to -1 the same way a double-decrement
+ * always can. This script only decrements a key that EXISTS and is
+ * currently positive — the only two states an increment could plausibly
+ * have left it in — and does nothing otherwise, atomically.
+ */
+const REFUND_IF_POSITIVE = `
+  local exists = redis.call('EXISTS', KEYS[1])
+  if exists == 1 then
+    local current = tonumber(redis.call('GET', KEYS[1]))
+    if current and current > 0 then
+      redis.call('DECR', KEYS[1])
+    end
+  end
+  return 1
+`
+
 /**
  * Item 1d, security re-review: `HashingQueueFullError` is a capacity
  * problem, not something the account did, so the account-keyed layers this
@@ -210,7 +234,7 @@ export async function refundLayers(layers: readonly ThrottleLayer[]): Promise<vo
   await Promise.all(
     toRefund.map((l) =>
       client()
-        .decr(`throttle:${l.key}`)
+        .eval(REFUND_IF_POSITIVE, 1, `throttle:${l.key}`)
         .catch(() => undefined),
     ),
   )

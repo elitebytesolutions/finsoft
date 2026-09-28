@@ -100,4 +100,41 @@ describe('refundLayers (item 1d)', () => {
       0,
     )
   })
+
+  /*
+   * C3-sec, security re-review 2026-09-27: a bare DECR on a key that does
+   * not exist CREATES it at -1 with no TTL — a permanently negative,
+   * never-expiring counter. These two prove the Lua-scripted refund cannot
+   * do that, for the two ways it could be reached: a refund racing a key
+   * that already expired (or was never incremented), and a double refund.
+   */
+  it('refunding a layer that was never incremented leaves no key behind at all (never creates a -1)', async () => {
+    const layer = uniqueLayer({ limit: 100, accountKeyed: true })
+    const redis = new Redis(process.env['REDIS_URL'] as string)
+    try {
+      expect(await redis.exists(`throttle:${layer.key}`), 'nothing has touched this key yet').toBe(
+        0,
+      )
+
+      await refundLayers([layer])
+
+      expect(
+        await redis.exists(`throttle:${layer.key}`),
+        'a refund of an absent key must not create one',
+      ).toBe(0)
+    } finally {
+      await redis.quit()
+    }
+  })
+
+  it('refunding twice never drives the counter negative', async () => {
+    const layer = uniqueLayer({ limit: 100, accountKeyed: true })
+    await checkLayers([layer]) // -> 1
+    expect(await counterValue(layer.key)).toBe(1)
+
+    await refundLayers([layer]) // -> 0
+    await refundLayers([layer]) // must stay at 0, never -1
+
+    expect(await counterValue(layer.key), 'a second refund must not go negative').toBe(0)
+  })
 })

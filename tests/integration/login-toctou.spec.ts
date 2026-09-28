@@ -2,7 +2,14 @@ import { sql } from 'kysely'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { HashingQueueFullError, hashPassword, login, verifyCredential } from '@finsoft/auth'
 import { withTenant } from '@finsoft/database'
-import { prepareTestDatabase, runAs, teardownTestDatabase, unique } from '@finsoft/database/testing'
+import {
+  prepareTestDatabase,
+  runAs,
+  sqlstate,
+  teardownTestDatabase,
+  unique,
+  type PostgresError,
+} from '@finsoft/database/testing'
 import { Redis } from 'ioredis'
 import { createActiveUserFixture, type ActiveUserFixture } from './helpers/auth-seed.ts'
 
@@ -137,6 +144,16 @@ describe('login TOCTOU: a state change between read and write must produce ident
       error,
       'a version-unchanged update must be rejected by the trigger itself',
     ).not.toBeNull()
+
+    // C2-sec, security re-review 2026-09-27: not just "some error" — THIS
+    // specific trigger, raising its own named check_violation, not a
+    // coincidental failure (an RLS denial, a connectivity blip) that would
+    // also make `error` non-null without proving anything about the trigger.
+    expect(sqlstate(error), 'must be check_violation (23514), not some other failure').toBe('23514')
+    expect(
+      (error as PostgresError).message,
+      "must be the version trigger's own message, not a different check",
+    ).toContain('version must increase on every update')
   })
 
   it('tenant suspended between verification and the write', async () => {
