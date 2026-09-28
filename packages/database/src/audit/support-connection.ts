@@ -33,6 +33,21 @@ function asReadonlySupport(baseUrl: string): string {
   return url.toString()
 }
 
+export class SupportConnectionRoleError extends Error {
+  constructor(actual: string) {
+    super(
+      `The audit verifier's connection reports current_user = "${actual}", not "readonly_support". ` +
+        'Refusing to run any query on it. libpq honours a `user` (or `PGUSER`) query parameter in a ' +
+        'connection string as an OVERRIDE of the URL userinfo — a connection string carrying one, ' +
+        'accidentally or otherwise, would silently reconnect as a different role (potentially ' +
+        'finsoft_migration, which holds BYPASSRLS) despite this code setting url.username to ' +
+        '"readonly_support". This check is the backstop: it asks PostgreSQL who the connection ' +
+        'actually is, rather than trusting the string that asked for it.',
+    )
+    this.name = 'SupportConnectionRoleError'
+  }
+}
+
 export interface SupportConnection {
   query<T extends object>(text: string, params?: readonly unknown[]): Promise<T[]>
   close(): Promise<void>
@@ -41,6 +56,10 @@ export interface SupportConnection {
 /**
  * Open a connection as readonly_support, derived from the connection string
  * in `baseUrlVar` (default DATABASE_URL; tests pass TEST_DATABASE_URL).
+ *
+ * Verifies `current_user` immediately after connecting and aborts otherwise
+ * — see SupportConnectionRoleError for why the connection string's own
+ * claimed username cannot be trusted on its own.
  */
 export async function openSupportConnection(
   baseUrlVar = 'DATABASE_URL',
@@ -51,6 +70,17 @@ export async function openSupportConnection(
   )
   const client = new Client({ connectionString: asReadonlySupport(base) })
   await client.connect()
+
+  try {
+    const { rows } = await client.query<{ current_user: string }>('SELECT current_user')
+    const actual = rows[0]?.current_user
+    if (actual !== 'readonly_support') {
+      throw new SupportConnectionRoleError(actual ?? '(unknown)')
+    }
+  } catch (error) {
+    await client.end().catch(() => undefined)
+    throw error
+  }
 
   return {
     async query<T extends object>(text: string, params: readonly unknown[] = []) {
