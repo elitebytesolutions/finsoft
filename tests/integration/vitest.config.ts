@@ -21,7 +21,12 @@ export default defineConfig({
      * '**' glob here discovered every spec in the repo — 165 tests, the whole
      * suite run twice under the wrong config — and looked like a pass.
      */
-    include: ['tests/integration/**/*.spec.ts', 'packages/*/src/**/*.integration.spec.ts'],
+    include: [
+      'tests/integration/**/*.spec.ts',
+      'packages/*/src/**/*.integration.spec.ts',
+      'apps/*/src/**/*.integration.spec.ts',
+      'modules/**/*.integration.spec.ts',
+    ],
     environment: 'node',
     /*
      * One file at a time. These suites share a single PostgreSQL database and
