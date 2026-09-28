@@ -468,6 +468,62 @@ export default tseslint.config(
   },
 
   /* ---------------------------------------------------------------- *
+   * packages/database/src/auth/{login,refresh}.ts — TenantContext is
+   * forbidden here. C2, architecture re-review 2026-09-27.
+   *
+   * ADR-0023 A2: the tenant for every transaction these two files open
+   * enters through `withResolvedTenant(tenantByCodeResolver(...))`
+   * exclusively — resolved and branded fresh, every time, never carried
+   * forward as a bare string. `TenantContext.run` is exactly the shape of
+   * the bug items 1a/1b/N1 (security/database/architecture re-review,
+   * 2026-09-27) fixed once already in login.ts: a plain string principal
+   * that compiles wherever a `ResolvedTenantId` is expected, with nothing
+   * to stop a future edit from threading transaction one's tenant id into
+   * transaction two through it instead of re-resolving. Importing
+   * `TenantContext` — from the relative path or from the package's own
+   * public surface — in either file is the shape of that regression, not
+   * merely a style preference.
+   *
+   * Restates DECIMAL_LIBS from the repo-wide block above: flat config
+   * REPLACES a rule's options per matching file rather than merging them,
+   * and neither login.ts nor refresh.ts has any legitimate reason to import
+   * a decimal library either.
+   * ---------------------------------------------------------------- */
+  {
+    files: ['packages/database/src/auth/login.ts', 'packages/database/src/auth/refresh.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            ...DECIMAL_LIBS.map((name) => ({
+              name,
+              message:
+                'ADR-0011/ADR-0014: import Money from @finsoft/validation. The decimal library ' +
+                'lives there and nowhere else.',
+            })),
+            {
+              name: '../tenant-context.ts',
+              message:
+                'ADR-0023 A2 / architecture re-review C2, 2026-09-27: the tenant for this file ' +
+                'enters ONLY through withResolvedTenant(tenantByCodeResolver(...)) — never ' +
+                'TenantContext, which carries a bare, unbranded tenant id across the read/write ' +
+                'boundary and was the exact shape of the login TOCTOU this file already fixed once.',
+            },
+            {
+              name: '@finsoft/database',
+              importNames: ['TenantContext'],
+              message:
+                'ADR-0023 A2 / architecture re-review C2, 2026-09-27: TenantContext is forbidden ' +
+                "in this file by any import path — see this block's own comment.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+
+  /* ---------------------------------------------------------------- *
    * apps/** build no queries. ADR-0013's "two import boundaries".
    *
    * dependency-cruiser watches the module graph, and a transaction handle

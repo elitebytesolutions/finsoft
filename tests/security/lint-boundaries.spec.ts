@@ -128,6 +128,69 @@ describe('packages/auth may not construct queries either (ADR-0023, M1-A)', () =
   })
 })
 
+describe('TenantContext is forbidden in login.ts and refresh.ts (architecture re-review C2, 2026-09-27)', () => {
+  /*
+   * ADR-0023 A2: the tenant for every transaction these two files open
+   * enters through withResolvedTenant(tenantByCodeResolver(...)) — never
+   * TenantContext, which carries a bare, unbranded id and was the exact
+   * shape of the login TOCTOU items 1a/1b/N1 fixed once already. This rule
+   * has never been observed to fire; these fixtures fire it.
+   */
+  it('catches the relative import in login.ts', async () => {
+    const messages = await messagesFor(
+      'packages/database/src/auth/login.ts',
+      `import { TenantContext } from '../tenant-context.ts'
+       export function use() { return TenantContext.run }`,
+    )
+    expect(
+      matching(messages, 'architecture re-review C2, 2026-09-27'),
+      'importing TenantContext by its relative path in login.ts must be caught',
+    ).toHaveLength(1)
+  })
+
+  it('catches the relative import in refresh.ts', async () => {
+    const messages = await messagesFor(
+      'packages/database/src/auth/refresh.ts',
+      `import { TenantContext } from '../tenant-context.ts'
+       export function use() { return TenantContext.run }`,
+    )
+    expect(
+      matching(messages, 'architecture re-review C2, 2026-09-27'),
+      'importing TenantContext by its relative path in refresh.ts must be caught',
+    ).toHaveLength(1)
+  })
+
+  it('catches TenantContext named off the package surface too, not just the relative path', async () => {
+    const messages = await messagesFor(
+      'packages/database/src/auth/login.ts',
+      `import { TenantContext } from '@finsoft/database'
+       export function use() { return TenantContext.run }`,
+    )
+    expect(
+      matching(messages, 'architecture re-review C2, 2026-09-27'),
+      'importing the named export from the package surface must be caught too, not only the relative path',
+    ).toHaveLength(1)
+  })
+
+  it('leaves every OTHER import from that surface alone (withTenant is not TenantContext)', async () => {
+    const messages = await messagesFor(
+      'packages/database/src/auth/login.ts',
+      `import { withTenant } from '@finsoft/database'
+       export function use() { return withTenant }`,
+    )
+    expect(matching(messages, 'architecture re-review C2, 2026-09-27')).toEqual([])
+  })
+
+  it('does not fire on a sibling file in the same directory (session.ts), which is not in scope', async () => {
+    const messages = await messagesFor(
+      'packages/database/src/auth/session.ts',
+      `import { TenantContext } from '../tenant-context.ts'
+       export function use() { return TenantContext.run }`,
+    )
+    expect(matching(messages, 'architecture re-review C2, 2026-09-27')).toEqual([])
+  })
+})
+
 describe('auth_lookup is restricted to packages/database (Architecture seat A1)', () => {
   it('catches the identifier in a string literal outside packages/database', async () => {
     const messages = await messagesFor(
