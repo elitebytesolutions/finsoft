@@ -149,6 +149,32 @@ describe('database roles', () => {
     ])
   })
 
+  it('item 4, security/database re-review: the exact membership allowlist for every role', async () => {
+    // pg_auth_members over ALL FOUR roles, not just finsoft_refresh — a
+    // future `GRANT some_role TO finsoft_app` would let finsoft_app assume
+    // whatever privilege that role carries, and nothing before this test
+    // would have caught it.
+    const memberships = await withGlobal((tx) =>
+      rawOn<{ member: string; role: string }>(
+        tx,
+        `select m.rolname as member, r.rolname as role
+           from pg_auth_members am
+           join pg_roles r on r.oid = am.roleid
+           join pg_roles m on m.oid = am.member`,
+      ),
+    )
+    const membershipsOf = (member: string) =>
+      memberships.filter((m) => m.member === member).map((m) => m.role)
+
+    expect(membershipsOf('finsoft_app'), 'finsoft_app is a member of nothing').toEqual([])
+    expect(membershipsOf('readonly_support'), 'readonly_support is a member of nothing').toEqual([])
+    expect(
+      membershipsOf('finsoft_migration'),
+      'finsoft_migration is a member of exactly finsoft_refresh',
+    ).toEqual(['finsoft_refresh'])
+    expect(membershipsOf('finsoft_refresh'), 'finsoft_refresh is a member of nothing').toEqual([])
+  })
+
   it('grants DELETE to nobody (rule 4)', async () => {
     const all = await tables()
     // Derived from pg_roles, not hardcoded (ADR-0023 §2 Compliance): every

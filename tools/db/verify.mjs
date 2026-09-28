@@ -195,6 +195,46 @@ for (const [service, db] of [
     },
   )
 
+  /*
+   * Item 4, database re-review 2026-09-27: the checks above pin
+   * finsoft_migration's INHERIT/SET/ADMIN options on finsoft_refresh, and
+   * that finsoft_refresh itself is a member of nothing — but neither one
+   * closes off finsoft_app or readonly_support silently picking up a
+   * membership grant later (a `GRANT finsoft_refresh TO finsoft_app`, say,
+   * would fail no existing check), nor confirms finsoft_migration's own
+   * membership set is EXACTLY {finsoft_refresh} and not that plus something
+   * else. This is the exact allowlist, one row per role, checked against
+   * the full member list rather than a single named row.
+   */
+  for (const [role, expected] of [
+    ['finsoft_app', []],
+    ['readonly_support', []],
+    ['finsoft_migration', ['finsoft_refresh']],
+    ['finsoft_refresh', []],
+  ]) {
+    check(
+      `${service}: ${role} membership allowlist is exact`,
+      'item 4, database re-review 2026-09-27',
+      () => {
+        const rows = psql(
+          service,
+          db,
+          `SELECT r.rolname FROM pg_auth_members m
+         JOIN pg_roles r ON r.oid = m.roleid
+         JOIN pg_roles g ON g.oid = m.member
+         WHERE g.rolname = '${role}'
+         ORDER BY r.rolname`,
+        )
+        const actual = rows === '' ? [] : rows.split('\n')
+        const wanted = [...expected].sort()
+        const match = actual.length === wanted.length && actual.every((v, i) => v === wanted[i])
+        return match
+          ? true
+          : `memberships = [${actual.join(', ')}], expected [${wanted.join(', ')}]`
+      },
+    )
+  }
+
   check(`${service}: finsoft_app owns nothing and cannot create`, 'ADR-0004:59', () => {
     const canCreate = psql(
       service,
