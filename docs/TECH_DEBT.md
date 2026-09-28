@@ -175,3 +175,47 @@ barrier at the `packages/database` boundary, or a test-build-only export.
 Either can reach the window without widening a production signature. Also
 forced sooner if a third hook is proposed, or if any non-test caller passes
 one. Until then, **do not copy the pattern.** A new hook needs a line here.
+
+---
+
+## TD-007 · `audit_log` is not partitioned
+
+**What.** [Migration 009](../database/migrations/009_create_audit_log.sql)
+creates `audit_log` as a single, unpartitioned table. Rule 4 forbids `DELETE`
+and this table grants none, so the only rule-4-compatible retention mechanism
+is `DETACH PARTITION` — and `DETACH` removes rows, which is exactly what §6 of
+[ADR-0020](adr/ADR-0020-audit-hash-chain-canonicalisation.md) defines as
+tampering evidence ("a seq gap is what the verifier reads as evidence of a
+deleted row"). Partitioning this table for retention and verifying its chain
+are in tension until a further ADR resolves it.
+
+**Why it is accepted.** `RANGE (occurred_at)` — the key ADR-0020 §5's own
+deferred-fallback text names — is measured incompatible with this table's own
+gap-freedom guarantee: PostgreSQL requires the partition key in every unique
+index of a partitioned table, which would force `occurred_at` into
+`audit_log_tenant_seq_key` and admit two rows at the same `seq` with different
+`occurred_at` values as "not a duplicate." `HASH (tenant_id)` avoids that, but
+needs the primary key to become `(tenant_id, id)` — an ADR-0021 §1 amendment,
+since that section currently grants this table's surrogate-key exemption on
+the footing of `(tenant_id, id)` UNIQUE existing ALONGSIDE a single-column
+`id` PRIMARY KEY, not instead of it. And retention specifically needs a further
+ADR defining SEALED CHAIN SEGMENTS — a closing manifest (final hash, row count,
+detachment record) a segment-aware verifier checks instead of reading a
+detached range's absence as a gap. None of that exists yet, so no partition of
+this table may be detached even after `HASH (tenant_id)` lands.
+
+**Owner.** Database Guardian, with the Architecture Guardian on the
+ADR-0021 §1 amendment and the sealed-chain-segment ADR.
+
+**What would force it.** Whichever of these is reached first: roughly 50
+million rows in `audit_log`, roughly 50 GB of table size, or any single
+tenant reaching 10 million rows. Recorded with the same thresholds in
+migration 009's own partitioning comment, so the trigger condition is not
+only here.
+
+_Renumbered from TD-006 to TD-007: the audit lane's original TD-006 entry for
+this item was silently dropped when develop's own TD-006 (test-only auth
+hooks, ADR-0025) was merged into the audit branch — both lanes claimed TD-006
+independently and only one survived. Recovered from the audit branch's
+pre-merge history (commit c65615e) rather than re-derived, so the wording
+matches what the Database Guardian originally reviewed._

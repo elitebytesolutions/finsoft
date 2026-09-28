@@ -15,7 +15,7 @@ import { AuthModule } from './auth/auth.module'
  * protected unless it explicitly opts out with @Public().
  */
 @Module({
-  imports: [HealthModule, AuthModule],
+  imports: [HealthModule, AuthModule, AuditModule],
   providers: [{ provide: APP_GUARD, useClass: TenantGuard }],
 })
 export class AppModule {}

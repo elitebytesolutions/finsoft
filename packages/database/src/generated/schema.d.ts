@@ -162,6 +162,43 @@ export interface RefreshTokens {
   version: Generated<number>;
 }
 
+export interface RolePermissions {
+  created_at: Generated<Timestamp>;
+  created_by: string;
+  id: Generated<string>;
+  /**
+   * Shape-checked only (namespace.action). packages/permissions is the catalogue of which codes exist.
+   */
+  permission_code: string;
+  revoked_at: Timestamp | null;
+  revoked_by: string | null;
+  role_id: string;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+  updated_by: string;
+  version: Generated<number>;
+}
+
+export interface Roles {
+  code: string;
+  created_at: Generated<Timestamp>;
+  created_by: string;
+  id: Generated<string>;
+  /**
+   * Seeded by seedSystemRoles() at provisioning (Owner/Accountant/Viewer). Immutable once set.
+   */
+  is_system: Generated<boolean>;
+  name: string;
+  /**
+   * ACTIVE | INACTIVE. A retired role keeps its role_permissions and user_roles history.
+   */
+  status: Generated<string>;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+  updated_by: string;
+  version: Generated<number>;
+}
+
 export interface SchemaMigrations {
   applied_at: Generated<Timestamp>;
   checksum: string;
@@ -226,6 +263,20 @@ export interface Tenants {
   updated_at: Generated<Timestamp>;
 }
 
+export interface UserRoles {
+  created_at: Generated<Timestamp>;
+  created_by: string;
+  id: Generated<string>;
+  revoked_at: Timestamp | null;
+  revoked_by: string | null;
+  role_id: string;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+  updated_by: string;
+  user_id: string;
+  version: Generated<number>;
+}
+
 export interface Users {
   created_at: Generated<Timestamp>;
   /**
@@ -251,7 +302,7 @@ export interface Users {
   updated_at: Generated<Timestamp>;
   updated_by: string | null;
   /**
-   * Optimistic lock. Incremented by the application in the UPDATE predicate, never by a trigger.
+   * Optimistic lock, incremented by the application in the UPDATE predicate (migration 002). ALSO bumped by 008_create_rbac.sql's permission_version cascade whenever this user's effective permissions change — a role grant/revocation, a change to a role's permission set, or a change to a held role's status. Both uses share one counter deliberately: any change to what this row means is a legitimate reason for a concurrent writer to re-read before it writes again. See 008's header for why this is not a dedicated column.
    */
   version: Generated<number>;
 }
@@ -261,8 +312,11 @@ export interface DB {
   outbox: Outbox;
   refresh_token_families: RefreshTokenFamilies;
   refresh_tokens: RefreshTokens;
+  role_permissions: RolePermissions;
+  roles: Roles;
   schema_migrations: SchemaMigrations;
   sessions: Sessions;
   tenants: Tenants;
+  user_roles: UserRoles;
   users: Users;
 }

@@ -218,6 +218,40 @@ describe('auth_lookup is restricted to packages/database (Architecture seat A1)'
   })
 })
 
+describe('packages/permissions may not construct queries either (Architecture seat ruling, M1-R)', () => {
+  /*
+   * packages/permissions is not on depcruise's kysely-is-allowlisted list
+   * (docs/briefs/M1-R-rbac.md) — the RBAC query bodies live in
+   * packages/database/src/rbac/*.ts, and packages/permissions calls them. A
+   * transaction handle arriving through a callback is invisible to
+   * dependency-cruiser's module graph exactly the way apps/**'s was, so this
+   * is the same rule, extended to a second directory.
+   */
+  it('catches a query built on a transaction handle received through a callback', async () => {
+    const messages = await messagesFor(
+      'packages/permissions/src/resolve.ts',
+      `import { withTenant } from '@finsoft/database'
+       export function resolve(userId: string) {
+         return withTenant(async (tx) => {
+           return tx.selectFrom('role_permissions').select('permission_code').execute()
+         })
+       }`,
+    )
+    expect(
+      matching(messages, 'apps/** contains no query construction'),
+      'packages/permissions must call packages/database/src/rbac, never build the query itself',
+    ).toHaveLength(1)
+  })
+
+  it('leaves packages/database alone, which is where the query body actually lives', async () => {
+    const messages = await messagesFor(
+      'packages/database/src/rbac/resolve-permissions.ts',
+      `export function read(tx: any) { return tx.selectFrom('role_permissions').select('permission_code').execute() }`,
+    )
+    expect(matching(messages, 'apps/** contains no query construction')).toEqual([])
+  })
+})
+
 describe('connection ownership (ADR-0013, ADR-0004)', () => {
   it('catches a transaction opened outside packages/database', async () => {
     const messages = await messagesFor(
