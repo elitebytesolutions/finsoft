@@ -2,8 +2,9 @@ import { Controller, Get, Query } from '@nestjs/common'
 import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
 import type { ZodSchema } from 'zod'
 import { listAuditEvents, withTenant } from '@finsoft/database'
-import { ZodValidationPipe } from '../common/zod-validation.pipe.ts'
-import { auditQuerySchema, type AuditQuery } from './audit-query.dto.ts'
+import { RequirePermission } from '../common/permission.decorator'
+import { ZodValidationPipe } from '../common/zod-validation.pipe'
+import { auditQuerySchema, type AuditQuery } from './audit-query.dto'
 
 /*
  * ZodValidationPipe<T> is declared over `ZodSchema<T>`, which defaults to
@@ -24,22 +25,25 @@ function auditQueryPipe(): ZodValidationPipe<AuditQuery> {
  * GET /api/audit. ADR-0020 §6 / rule 9: read access to the tamper-evident
  * chain, filtered and paginated, scoped to the caller's own tenant.
  *
- * Permission checkpoint, not yet wired: this route sits behind the global
- * TenantGuard only (apps/api/src/common/tenant.guard.ts), which today fails
- * closed for every non-@Public() route because Wave 1 authentication has not
- * landed on this branch. ARCHITECTURE §12 catalogues `audit.view` as the
- * permission this endpoint needs; packages/permissions (the RBAC lane,
- * M1-X) is what defines `@RequirePermission`. Nothing here should be read as
- * "this endpoint has no access control" — it has none of its OWN, by
- * design, because this module does not build a second permission system.
- * The integration note for whoever wires RBAC: add
- * `@RequirePermission('audit.view')` to `list()` below; nothing else in this
- * file needs to change for that to take effect.
+ * M1-INT-1 (Database seat condition, migration 009): now that migration 008
+ * (RBAC) is present, this route carries `@RequirePermission('audit.view')` —
+ * ARCHITECTURE §12 catalogues that code as the one this endpoint needs.
+ *
+ * The decorator alone does not yet enforce anything: `PermissionGuard` is
+ * not registered as a global guard (see the BLOCKED note in M1-INT-1's
+ * report — TenantGuard does not establish `TenantContext` for the guard
+ * chain, only within each handler's own `TenantContext.run(...)`, so
+ * `PermissionGuard`'s SEC-C6 check would 401 every real request today, not
+ * just unauthorized ones). Wiring PermissionGuard in globally needs that gap
+ * closed first; until then this decorator documents intent and is ready to
+ * take effect the moment the guard is registered, per PermissionGuard's own
+ * contract of being a no-op for undecorated routes and vice versa.
  */
 @ApiTags('audit')
 @Controller('audit')
 export class AuditController {
   @Get()
+  @RequirePermission('audit.view')
   @ApiOperation({
     summary: "List the caller's tenant's audit events, newest first.",
     description:

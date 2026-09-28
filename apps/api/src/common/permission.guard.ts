@@ -8,7 +8,7 @@ import {
 import { Reflector } from '@nestjs/core'
 import { TenantContext, withTenant } from '@finsoft/database'
 import { resolvePermissions, type PermissionCode, type RequestAuth } from '@finsoft/permissions'
-import { REQUIRE_PERMISSION } from './permission.decorator.ts'
+import { REQUIRE_PERMISSION } from './permission.decorator'
 
 /**
  * Enforces `@RequirePermission(...)`. Rule 18: every permission is checked
