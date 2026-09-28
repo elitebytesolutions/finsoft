@@ -96,7 +96,7 @@ Neither command above prints the key material to the terminal.
 ## Step 2 — append to `.env` without ever echoing the private key
 
 ```sh
-PUB_JSON=$(jq -n --rawfile pem "$TMP_PUB" --arg kid "$KID" '[{kid: $kid, pem: $pem}]')
+PUB_JSON=$(jq -c -n --rawfile pem "$TMP_PUB" --arg kid "$KID" '[{kid: $kid, pem: $pem}]')
 
 {
   printf '\n# AUTH_JWT_* added by RUNBOOK-jwt-keys.md, %s, kid=%s\n' "$(date -u +%FT%TZ)" "$KID"
@@ -111,13 +111,19 @@ chmod 600 .env
 ```
 
 `jq -n --rawfile` reads the public PEM as a raw string and builds JSON safely
-(no manual escaping, no risk of breaking on the PEM's own newlines). The
-private key line is written by piping the temp file's bytes directly between
-two literal double-quotes in the `printf`/`cat` sequence — never assigned to
-a shell variable, never passed through `$(...)` (which would strip its
-trailing newline and truncate the key by one line ending — see above),
-and never displayed. `chmod 600` is reasserted every run in case a prior
-edit loosened it.
+(no manual escaping, no risk of breaking on the PEM's own newlines). **`-c`
+(compact output) is not optional here**: `jq`'s default is pretty-printed,
+multi-line JSON, and `PUB_JSON` is written into `.env` unquoted
+(`printf 'AUTH_JWT_PUBLIC_KEYS=%s\n' "$PUB_JSON"`) — a multi-line value
+there breaks `.env` parsing (every line after the first is read as its own,
+malformed `KEY=value` line, or as no `=` at all). `-c` keeps the whole array
+on one line, which is what a bare `KEY=value` line requires. The private key
+line is written by piping the temp file's bytes directly between two literal
+double-quotes in the `printf`/`cat` sequence — never assigned to a shell
+variable, never passed through `$(...)` (which would strip its trailing
+newline and truncate the key by one line ending — see above), and never
+displayed. `chmod 600` is reasserted every run in case a prior edit loosened
+it.
 
 Rerunning Step 1 and Step 2 for the same `KID` value would append a
 duplicate, contradictory line — pick a new `KID` per rotation (see below) or
@@ -144,7 +150,21 @@ the public-keys list.
 
 **b. The key actually imports and signs/verifies, using the exact bytes the
 running `api` service would see** — run inside the same image, never on the
-bare host:
+bare host.
+
+If the deployed image cannot resolve `jose` from `/app` (a slim/production
+image that pruned dev dependencies, or `node_modules` not laid out the way
+`--entrypoint node /verify-jwt.mjs` expects), the script below fails on the
+`import` line before it reaches the key material — that is a module
+resolution failure, not a verification failure, and must not be read as "the
+key is bad." In that case use the `node:crypto`-only variant further down:
+it needs no package resolution at all (builtin only) and checks the
+equivalent property directly — `createPrivateKey`/`createPublicKey` parse
+both PEMs without throwing, the public key's SPKI DER derived FROM the
+private key matches the SPKI DER of the PEM written into
+`AUTH_JWT_PUBLIC_KEYS` byte-for-byte (proving they are the same key pair,
+which is what a `jose` sign→verify round trip is ultimately standing in
+for), and a raw `sign`/`verify` with `RSA-SHA256` succeeds.
 
 ```sh
 cat > .verify-jwt.mjs <<'JS'
@@ -180,6 +200,52 @@ rm -f .verify-jwt.mjs
 
 This prints only the `kid` and a public-key fingerprint — never the private
 key, never the full public PEM. Expect `sign -> verify round trip: OK`.
+
+**b (fallback, `node:crypto` only — use if the check above fails to resolve
+`jose`):**
+
+```sh
+cat > .verify-jwt-crypto.mjs <<'JS'
+import { createPrivateKey, createPublicKey, sign, verify } from 'node:crypto'
+
+const kid = process.env.AUTH_JWT_KID
+const priv = createPrivateKey(process.env.AUTH_JWT_PRIVATE_KEY)
+const entries = JSON.parse(process.env.AUTH_JWT_PUBLIC_KEYS)
+const signingEntry = entries.find((e) => e.kid === kid)
+if (!signingEntry) {
+  console.error(`FAIL: AUTH_JWT_KID "${kid}" is not present in AUTH_JWT_PUBLIC_KEYS`)
+  process.exit(1)
+}
+const pubFromEntry = createPublicKey(signingEntry.pem)
+const pubFromPriv = createPublicKey(priv)
+
+// The public key derived FROM the private key must be byte-identical (as
+// DER) to the public key written into AUTH_JWT_PUBLIC_KEYS for this kid —
+// this is the same "signing and verification keys actually pair up" claim
+// the jose round trip above makes, checked without importing jose at all.
+const derA = pubFromEntry.export({ type: 'spki', format: 'der' })
+const derB = pubFromPriv.export({ type: 'spki', format: 'der' })
+const keysMatch = Buffer.compare(derA, derB) === 0
+
+const message = Buffer.from('verify-jwt-keys')
+const signature = sign('sha256', message, priv)
+const verified = verify('sha256', message, pubFromEntry, signature)
+
+console.log('kid:', kid)
+console.log('public key SPKI matches private key:', keysMatch ? 'OK' : 'FAIL')
+console.log('sign -> verify round trip:', verified ? 'OK' : 'FAIL')
+if (!keysMatch || !verified) process.exit(1)
+JS
+
+docker compose --env-file .env --env-file .env.images run --rm -T --no-deps \
+  -v "$(pwd)/.verify-jwt-crypto.mjs:/verify-jwt-crypto.mjs:ro" \
+  --entrypoint node api /verify-jwt-crypto.mjs
+
+rm -f .verify-jwt-crypto.mjs
+```
+
+Same guarantee as 3b, no package resolution required. Expect both lines to
+print `OK`.
 
 If either check fails, **do not** bring up `api`/`worker` — fix `.env` and
 re-verify. An import failure here is the same failure `buildKeySet()` would

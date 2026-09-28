@@ -23,12 +23,21 @@ up` itself refusing to start `api` at all).
       existing (non-empty) staging Postgres volume, which the updated
       bootstrap script cannot reach because it only runs against an empty
       data directory.
-- [ ] **[`RUNBOOK-jwt-keys.md`](RUNBOOK-jwt-keys.md)** — required before
+- [x] **[`RUNBOOK-jwt-keys.md`](RUNBOOK-jwt-keys.md)** — required before
       merging any PR that ships `packages/auth` to `main` (same PR, as of
       this writing). Generates the RSA key pair staging's `api`/`worker`
       need to boot under `NODE_ENV=production`, and appends
       `AUTH_JWT_PRIVATE_KEY` / `AUTH_JWT_KID` / `AUTH_JWT_PUBLIC_KEYS` to
       `/opt/finsoft/.env`.
+
+      **DONE on staging, 2026-09-27** — run with the corrected `jq -c`
+      (Step 2; the uncorrected pretty-printed `jq` output would have written
+      a multi-line value into `.env` and broken its parsing). `kid =
+      staging-2026-09`. Both Step 3 checks passed: **3a** (`docker compose
+      config` parses the file and all three `AUTH_JWT_*` `:?` guards are
+      satisfied) and **3b** (RS256 sign → verify round trip OK inside the
+      `api` image, using the exact `AUTH_JWT_PRIVATE_KEY`/
+      `AUTH_JWT_PUBLIC_KEYS` bytes it would boot with).
 
 Both are one-time (until the JWT keys are rotated, or the volume is rebuilt
 from empty) and both are run by a human operator with SSH access to the
