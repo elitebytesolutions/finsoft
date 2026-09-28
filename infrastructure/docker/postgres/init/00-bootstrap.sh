@@ -24,7 +24,10 @@ echo "FinSoft bootstrap: creating roles and database '${FINSOFT_DB}'"
 # ---------------------------------------------------------------------------
 # Roles
 #
-# Exactly three. finsoft_breakglass is NOT created locally: it is a production
+# Exactly four (item 6, database re-review 2026-09-27: this comment said
+# "three" after finsoft_refresh — ADR-0023 §2's pre-tenant refresh resolver
+# owner — was added below). finsoft_breakglass is NOT created locally: it is
+# a production
 # emergency superuser, NON_NEGOTIABLES rule 21 scopes agents to local and CI,
 # and a local superuser would muddy database/tests/roles.spec.ts, which
 # asserts the migration role's bypass is the only one in the cluster.

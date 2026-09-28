@@ -17,6 +17,31 @@
 -- aborts. Do not "simplify" this file; read the ADR before touching it.
 --
 -- ---------------------------------------------------------------------------
+-- Locks and rollback (item 5, database re-review 2026-09-27)
+--
+-- CREATE POLICY refresh_lookup ON refresh_tokens takes ACCESS EXCLUSIVE on
+-- refresh_tokens for the statement's duration — the strongest lock
+-- PostgreSQL has, blocking every concurrent reader and writer of that
+-- table, including every in-flight /auth/refresh. No data is moved by this
+-- migration (it creates a role's function and grants; it inserts, updates
+-- or deletes no rows), so the lock is held only for the milliseconds the
+-- DDL itself takes to apply, not for any data-dependent duration.
+-- CREATE SCHEMA, GRANT, REVOKE and CREATE FUNCTION take ordinary
+-- catalog-level locks (on pg_namespace, pg_proc and the grantee rows) that
+-- do not conflict with reads or writes of application tables at all —
+-- refresh_tokens is only locked by the one CREATE POLICY statement.
+--
+-- Reversal, per ADR-0013 (forward-only; this file has no `down` section and
+-- never will): undoing this is a LATER, numbered migration that (in order,
+-- the reverse of this file) drops the `refresh_lookup` policy, revokes the
+-- column-scoped SELECT grant on refresh_tokens from finsoft_refresh, drops
+-- `auth_lookup.resolve_refresh`, and drops the `auth_lookup` schema. It
+-- does not drop or alter `finsoft_refresh` itself, which is provisioned by
+-- `00-bootstrap.sh` outside the migration chain and is not this migration's
+-- to reverse.
+-- ---------------------------------------------------------------------------
+--
+-- ---------------------------------------------------------------------------
 -- The role this migration depends on lives OUTSIDE the migration chain
 --
 -- `finsoft_migration` has no CREATEROLE (measured: `CREATE ROLE` raises
