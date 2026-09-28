@@ -9,6 +9,13 @@
     ".": "./src/index.ts"
   },
   "scripts": {
+    "test": "vitest run",
     "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@finsoft/database": "*"
+  },
+  "devDependencies": {
+    "vitest": "4.1.11"
   }
 }
