@@ -5,7 +5,13 @@ import { assertIssuedTenantTx, type TenantTx } from '../transaction.ts'
 import { auditChainLockKeyExpr } from './anchor.ts'
 import { assertJcsSafe, computeAuditHash, HASH_VERSION, type JsonObject } from './canonical.ts'
 import { normalizeIp } from './ip.ts'
+import {
+  AUDIT_LOCK_TIMEOUT_SQL,
+  AuditLockTimeoutError,
+  LOCK_NOT_AVAILABLE_SQLSTATE,
+} from './lock-timeout.ts'
 import { buildCanonicalRecord } from './record.ts'
+import { assertNoSecretLikeKeys } from './secret-keys.ts'
 
 /*
  * The writer: recordAudit(tx, event). ADR-0020, NON_NEGOTIABLES rule 9.
@@ -53,29 +59,23 @@ export class AuditChainError extends Error {
   }
 }
 
-/**
- * The terminal advisory lock (LOCK_REGISTRY.md position 6) could not be
- * acquired within `lock_timeout` (TD-001). Retryable: another append for the
- * same tenant is in flight and will release it shortly. Distinct from
- * AuditChainError, which means the chain itself is in a state recordAudit
- * cannot proceed from.
- */
-export class AuditLockTimeoutError extends Error {
-  readonly tenantId: string
-
-  constructor(tenantId: string) {
-    super(
-      `audit_log: could not acquire the per-tenant chain lock for tenant ${tenantId} within the ` +
-        'configured lock_timeout. Another append for this tenant is in flight; retry.',
-    )
-    this.name = 'AuditLockTimeoutError'
-    this.tenantId = tenantId
-  }
-}
+export { AuditLockTimeoutError } from './lock-timeout.ts'
 
 interface HeadRow {
   seq: string
   hash: string
+}
+
+/** Run `fn`, converting a PostgreSQL lock-timeout (55P03) into AuditLockTimeoutError. */
+async function withLockTimeoutMapped<T>(tenantId: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn()
+  } catch (error) {
+    if ((error as { code?: string }).code === LOCK_NOT_AVAILABLE_SQLSTATE) {
+      throw new AuditLockTimeoutError(tenantId)
+    }
+    throw error
+  }
 }
 
 /**
@@ -97,27 +97,31 @@ export async function recordAudit(
   if (event.beforeJson !== null) assertJcsSafe(event.beforeJson)
   if (event.afterJson !== null) assertJcsSafe(event.afterJson)
 
-  /*
-   * TD-001. `lock_timeout` is unset everywhere else in the repository, and
-   * this is the first code path that takes the terminal advisory lock — the
-   * decision TD-001 names as forcing it. Transaction-scoped (not pool-wide):
-   * this bounds the wait for the lock itself, and 005:127-131's doctrine — a
-   * revoke that gives up is worse than one that waits — governs OTHER waits
-   * this transaction takes (the FK's KEY SHARE), not this one. 2000ms is
-   * 2.5x the ARCHITECTURE §11 800ms posting P95 budget and well under the
-   * 15000ms statement_timeout; Database/Architecture Guardian value pending
-   * final sign-off (see the delivery report).
-   */
-  await sql`select set_config('lock_timeout', '2000ms', true)`.execute(tx)
+  // S2 (Security review), rule 20. Checked before anything is hashed or
+  // locked: audit_log cannot be redacted after the fact (append-only) or
+  // purged (no DELETE), so a secret-shaped key is rejected outright rather
+  // than written and regretted.
+  if (event.beforeJson !== null) assertNoSecretLikeKeys(event.beforeJson)
+  if (event.afterJson !== null) assertNoSecretLikeKeys(event.afterJson)
 
-  try {
-    await sql`select pg_advisory_xact_lock(${auditChainLockKeyExpr(tenantId)})`.execute(tx)
-  } catch (error) {
-    if ((error as { code?: string }).code === '55P03') {
-      throw new AuditLockTimeoutError(tenantId)
-    }
-    throw error
-  }
+  /*
+   * TD-001, RESOLVED. `SET LOCAL lock_timeout` — scoped to the REST OF THIS
+   * TRANSACTION, not to the single advisory-lock statement that follows it.
+   * That is deliberate, and it is the correction to an earlier version of
+   * this comment, which claimed the scope stopped at the lock acquisition:
+   * after the lock is acquired, audit_log_link's own FOR SHARE read and the
+   * self-referential FK's KEY SHARE wait both still happen, inside the
+   * INSERT below, before this transaction commits — and this bound applies
+   * to those waits too, which is why the INSERT is ALSO wrapped in
+   * withLockTimeoutMapped. 005:127-131's doctrine ("a revoke that gives up
+   * is worse than one that waits") governs a different table's different
+   * lock; it does not except this one from having a bound at all.
+   */
+  await sql`select set_config('lock_timeout', ${AUDIT_LOCK_TIMEOUT_SQL}, true)`.execute(tx)
+
+  await withLockTimeoutMapped(tenantId, () =>
+    sql`select pg_advisory_xact_lock(${auditChainLockKeyExpr(tenantId)})`.execute(tx),
+  )
 
   /*
    * `seq` is NOT aliased. PostgreSQL resolves an ORDER BY name against the
@@ -169,18 +173,23 @@ export async function recordAudit(
 
   const { hash } = computeAuditHash(head.hash, record)
 
-  await sql`
-    INSERT INTO audit_log (
-      id, tenant_id, seq, occurred_at, actor_user_id, action, entity_type, entity_id,
-      before_json, after_json, ip, request_id, hash_version, hash, previous_hash
-    ) VALUES (
-      ${record.id}, ${record.tenant_id}, ${record.seq}, ${record.occurred_at}::timestamptz,
-      ${record.actor_user_id}, ${record.action}, ${record.entity_type}, ${record.entity_id},
-      ${record.before_json === null ? null : JSON.stringify(record.before_json)}::jsonb,
-      ${record.after_json === null ? null : JSON.stringify(record.after_json)}::jsonb,
-      ${record.ip}, ${record.request_id}, ${HASH_VERSION}, ${hash}, ${head.hash}
-    )
-  `.execute(tx)
+  // Wrapped the same way as the advisory-lock acquisition above: the
+  // linkage trigger's FOR SHARE read happens INSIDE this statement, so a
+  // 55P03 from waiting on it surfaces here, not at the lock acquisition.
+  await withLockTimeoutMapped(tenantId, () =>
+    sql`
+      INSERT INTO audit_log (
+        id, tenant_id, seq, occurred_at, actor_user_id, action, entity_type, entity_id,
+        before_json, after_json, ip, request_id, hash_version, hash, previous_hash
+      ) VALUES (
+        ${record.id}, ${record.tenant_id}, ${record.seq}, ${record.occurred_at}::timestamptz,
+        ${record.actor_user_id}, ${record.action}, ${record.entity_type}, ${record.entity_id},
+        ${record.before_json === null ? null : JSON.stringify(record.before_json)}::jsonb,
+        ${record.after_json === null ? null : JSON.stringify(record.after_json)}::jsonb,
+        ${record.ip}, ${record.request_id}, ${HASH_VERSION}, ${hash}, ${head.hash}
+      )
+    `.execute(tx),
+  )
 
   return { id, tenantId, seq, hash, previousHash: head.hash }
 }
