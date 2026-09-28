@@ -211,4 +211,85 @@ describe('GET /api/audit', () => {
     const actions = res.body.items.map((i: { action: string }) => i.action)
     expect(actions).not.toContain('BETA_ONE')
   })
+
+  describe('S5: bounded inputs — 400, never 500', () => {
+    it('rejects a cursor longer than 19 digits', async () => {
+      await request(app.getHttpServer())
+        .get('/api/audit')
+        .query({ cursor: '1'.repeat(20) })
+        .set(TEST_TENANT_HEADER, alpha.tenantId)
+        .set(TEST_USER_HEADER, alpha.ownerId)
+        .expect(400)
+    })
+
+    it('rejects a 19-digit cursor that exceeds int8 max', async () => {
+      // 2^63 - 1 = 9223372036854775807 (19 digits). One higher, still 19
+      // digits, is not representable as a PostgreSQL bigint.
+      await request(app.getHttpServer())
+        .get('/api/audit')
+        .query({ cursor: '9223372036854775808' })
+        .set(TEST_TENANT_HEADER, alpha.tenantId)
+        .set(TEST_USER_HEADER, alpha.ownerId)
+        .expect(400)
+    })
+
+    it('accepts a cursor exactly at int8 max', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/api/audit')
+        .query({ cursor: '9223372036854775807' })
+        .set(TEST_TENANT_HEADER, alpha.tenantId)
+        .set(TEST_USER_HEADER, alpha.ownerId)
+      expect(res.status).toBe(200)
+    })
+
+    it('rejects a date far outside the bounded range', async () => {
+      await request(app.getHttpServer())
+        .get('/api/audit')
+        .query({ from: '0001-01-01T00:00:00.000Z' })
+        .set(TEST_TENANT_HEADER, alpha.tenantId)
+        .set(TEST_USER_HEADER, alpha.ownerId)
+        .expect(400)
+
+      await request(app.getHttpServer())
+        .get('/api/audit')
+        .query({ to: '9999-12-31T23:59:59.999Z' })
+        .set(TEST_TENANT_HEADER, alpha.tenantId)
+        .set(TEST_USER_HEADER, alpha.ownerId)
+        .expect(400)
+    })
+  })
+})
+
+describe('GET /api/audit, through the REAL AppModule — S4', () => {
+  /*
+   * Not the TestAppModule above: this boots apps/api/src/app.module.ts
+   * exactly as main.ts does, so the assertion is about the actual
+   * TenantGuard wiring, not a test harness's approximation of it.
+   */
+  let realApp: INestApplication
+
+  beforeAll(async () => {
+    const { AppModule } = await import('../../apps/api/src/app.module.ts')
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile()
+    realApp = moduleRef.createNestApplication()
+    realApp.setGlobalPrefix('api')
+    realApp.useGlobalFilters(new AllExceptionsFilter())
+    await realApp.init()
+  }, 60_000)
+
+  afterAll(async () => {
+    await realApp?.close()
+  })
+
+  it('refuses GET /api/audit with no credentials at all', async () => {
+    // Today's stub TenantGuard fails closed with 403 for every non-@Public()
+    // route, because Wave 1 authentication has not landed on this branch —
+    // see apps/api/src/common/tenant.guard.ts. Once it does (M1-A), the
+    // same request becomes 401 (no credentials) rather than 403 (credentials
+    // present but insufficient); this test's job is only "not 200", which
+    // holds under both.
+    const res = await request(realApp.getHttpServer()).get('/api/audit')
+    expect([401, 403]).toContain(res.status)
+    expect(res.body.items).toBeUndefined()
+  })
 })
