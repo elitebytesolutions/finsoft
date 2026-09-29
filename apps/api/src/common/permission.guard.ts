@@ -6,7 +6,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common'
 import { Reflector } from '@nestjs/core'
-import { withTenantAsPrincipal } from '@finsoft/database'
+import { withTenantAsPrincipal } from '@finsoft/database/request-scope'
 import { resolvePermissions, type PermissionCode, type RequestAuth } from '@finsoft/permissions'
 import { REQUIRE_PERMISSION } from './permission.decorator'
 

@@ -18,6 +18,51 @@ import prettier from 'eslint-config-prettier'
 /** Decimal libraries. ADR-0011 / ADR-0014: exactly one, only in packages/validation. */
 const DECIMAL_LIBS = ['decimal.js', 'decimal.js-light', 'big.js', 'bignumber.js']
 
+const DECIMAL_LIB_IMPORT_PATHS = DECIMAL_LIBS.map((name) => ({
+  name,
+  message:
+    'ADR-0011/ADR-0014: import Money from @finsoft/validation. The decimal library lives there and nowhere else.',
+}))
+
+/*
+ * M1-X, Council T1 (Architecture R1 / Security 1 / Database C1).
+ * withTenantAsPrincipal lives at its own narrow subpath,
+ * @finsoft/database/request-scope, and is importable ONLY from
+ * apps/api/src/common/permission.guard.ts — the one caller it exists for
+ * (a NestJS GUARD, which runs strictly before any interceptor and so cannot
+ * rely on the request-wide TenantContextInterceptor having run yet).
+ */
+const REQUEST_SCOPE_IMPORT_BAN = {
+  name: '@finsoft/database/request-scope',
+  message:
+    'M1-X T1: withTenantAsPrincipal may be imported only from ' +
+    'apps/api/src/common/permission.guard.ts.',
+}
+
+/*
+ * M1-X, Council T2 (Architecture R2 / Security 1). Replaces the earlier
+ * call-pattern rule (`TenantContext.run(...)`), which an aliased import
+ * (`import { TenantContext as T }`), a namespace access
+ * (`TenantContext['run']`) or a destructure (`const { run } = TenantContext`)
+ * all walk straight past — every one of those still requires the IMPORT,
+ * which this rule catches regardless of how the code goes on to use it.
+ * `importNames` matches the imported name, not the local binding, so
+ * aliasing does not evade it either.
+ *
+ * Confined to the request-scoping interceptor, apps/worker (the job
+ * runner), packages/database and packages/auth — everywhere else establishes
+ * tenant scope through one of those instead of importing TenantContext to do
+ * it locally.
+ */
+const TENANT_CONTEXT_IMPORT_BAN = {
+  name: '@finsoft/database',
+  importNames: ['TenantContext'],
+  message:
+    'M1-X T2: TenantContext may be imported only by the request-scoping interceptor ' +
+    '(apps/api/src/common/tenant-context.interceptor.ts), apps/worker, packages/database and ' +
+    'packages/auth. Establish tenant scope through one of those instead of importing it here.',
+}
+
 /** Network clients. ADR-0001: the kernels have no network. */
 const HTTP_CLIENTS = ['axios', 'node-fetch', 'undici', 'got', 'superagent', 'ky']
 
@@ -272,27 +317,6 @@ const connectionOwnershipSyntax = [
  * be ABLE to reference the schema by name, whether in a raw SQL string or a
  * comment that later gets copy-pasted into real code.
  */
-/*
- * M1-X, Council condition C5: TenantContext.run establishes the
- * AsyncLocalStorage tenant scope, and is confined to the request-wide
- * interceptor (apps/api/src/common/tenant-context.interceptor.ts),
- * packages/auth, packages/database, tenant provisioning and the job runner
- * (apps/worker). `apps/api` guards and services call `withTenantAsPrincipal`
- * (packages/database) instead of `TenantContext.run` directly — see
- * `permission.guard.ts`'s own header for why PermissionGuard in particular
- * needs this (it runs as a GUARD, strictly before any interceptor, so it
- * cannot depend on the interceptor having run yet).
- */
-const tenantContextRunSyntax = [
-  {
-    selector: "CallExpression[callee.object.name='TenantContext'][callee.property.name='run']",
-    message:
-      'M1-X C5: TenantContext.run is confined to the request-scoping interceptor, packages/auth, ' +
-      'packages/database, tenant provisioning and the job runner. Call withTenantAsPrincipal ' +
-      '(packages/database) instead of establishing a context directly here.',
-  },
-]
-
 const authLookupIdentifierSyntax = [
   {
     selector: 'Literal[value=/auth_lookup/]',
@@ -334,13 +358,7 @@ export default tseslint.config(
       'no-restricted-syntax': ['error', ...invariantSyntax],
       'no-restricted-imports': [
         'error',
-        {
-          paths: DECIMAL_LIBS.map((name) => ({
-            name,
-            message:
-              'ADR-0011/ADR-0014: import Money from @finsoft/validation. The decimal library lives there and nowhere else.',
-          })),
-        },
+        { paths: [...DECIMAL_LIB_IMPORT_PATHS, REQUEST_SCOPE_IMPORT_BAN] },
       ],
       eqeqeq: ['error', 'always', { null: 'ignore' }],
       'no-console': ['warn', { allow: ['warn', 'error'] }],
@@ -567,28 +585,47 @@ export default tseslint.config(
         ...connectionOwnershipSyntax,
         ...authLookupIdentifierSyntax,
         ...appsQuerySyntax,
-        ...tenantContextRunSyntax,
       ],
     },
   },
 
   /* ---------------------------------------------------------------- *
-   * The one apps/api file allowed to call TenantContext.run: the
-   * request-wide interceptor itself (M1-X C5). A later, more specific
-   * block — flat config REPLACES no-restricted-syntax per matching file
-   * rather than merging it, so this restates the full apps/** set minus
-   * tenantContextRunSyntax, the same pattern used elsewhere in this file
-   * for a narrower carve-out from a broader rule.
+   * M1-X T2: TenantContext is importable in apps/** only by the
+   * request-scoping interceptor (and, below, apps/worker — the job
+   * runner). Everywhere else in apps/** — including
+   * PermissionGuard, which gets its OWN, more specific block next
+   * (it may import withTenantAsPrincipal from request-scope, and nothing
+   * else here permits) — is banned from importing it at all.
    * ---------------------------------------------------------------- */
   {
-    files: ['apps/api/src/common/tenant-context.interceptor.ts'],
+    files: ['apps/**/*.ts', 'apps/**/*.tsx'],
+    ignores: [
+      'apps/**/*.spec.ts',
+      'apps/**/*.test.ts',
+      'apps/worker/**',
+      'apps/api/src/common/tenant-context.interceptor.ts',
+      'apps/api/src/common/permission.guard.ts',
+    ],
     rules: {
-      'no-restricted-syntax': [
+      'no-restricted-imports': [
         'error',
-        ...invariantSyntax,
-        ...connectionOwnershipSyntax,
-        ...authLookupIdentifierSyntax,
-        ...appsQuerySyntax,
+        { paths: [...DECIMAL_LIB_IMPORT_PATHS, REQUEST_SCOPE_IMPORT_BAN, TENANT_CONTEXT_IMPORT_BAN] },
+      ],
+    },
+  },
+
+  /* ---------------------------------------------------------------- *
+   * The one file allowed to import withTenantAsPrincipal from
+   * request-scope (M1-X T1) — and, per T2, ALSO banned from importing
+   * TenantContext directly: PermissionGuard establishes its tenant scope
+   * through withTenantAsPrincipal, never TenantContext.run itself.
+   * ---------------------------------------------------------------- */
+  {
+    files: ['apps/api/src/common/permission.guard.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        { paths: [...DECIMAL_LIB_IMPORT_PATHS, TENANT_CONTEXT_IMPORT_BAN] },
       ],
     },
   },
@@ -627,6 +664,25 @@ export default tseslint.config(
   },
 
   /* ---------------------------------------------------------------- *
+   * M1-X T2: TenantContext is importable only in packages/database and
+   * packages/auth. Every other package — permissions, reporting,
+   * shared-types, observability, ui, and the kernels/validation (which get
+   * their own more specific blocks, above and below) — establishes a
+   * tenant scope through withTenant/withGlobal (received via callback),
+   * never by importing TenantContext to do it locally.
+   * ---------------------------------------------------------------- */
+  {
+    files: ['packages/*/src/**/*.ts', 'packages/*/src/**/*.tsx'],
+    ignores: ['packages/database/**', 'packages/auth/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        { paths: [...DECIMAL_LIB_IMPORT_PATHS, REQUEST_SCOPE_IMPORT_BAN, TENANT_CONTEXT_IMPORT_BAN] },
+      ],
+    },
+  },
+
+  /* ---------------------------------------------------------------- *
    * packages/permissions builds no queries either. Architecture seat
    * ruling, M1-R (docs/briefs/M1-R-rbac.md): it is not on depcruise's
    * kysely-is-allowlisted list, so a `tx.selectFrom(...)` reached through a
@@ -660,7 +716,16 @@ export default tseslint.config(
    * ---------------------------------------------------------------- */
   {
     files: ['packages/validation/**/*.ts'],
-    rules: { 'no-restricted-imports': 'off' },
+    rules: {
+      // Decimal libraries are deliberately NOT restricted here — this is
+      // the one package allowed to import them. M1-X T2 still bans
+      // TenantContext and request-scope — validation never legitimately
+      // needs a tenant scope.
+      'no-restricted-imports': [
+        'error',
+        { paths: [TENANT_CONTEXT_IMPORT_BAN, REQUEST_SCOPE_IMPORT_BAN] },
+      ],
+    },
   },
 
   /* ---------------------------------------------------------------- *
@@ -690,6 +755,9 @@ export default tseslint.config(
               name: '@nestjs/common',
               message: 'ARCHITECTURE §3: the kernels know nothing about HTTP or NestJS.',
             },
+            // M1-X T2: kernels import withTenant/withGlobal, never TenantContext directly.
+            TENANT_CONTEXT_IMPORT_BAN,
+            REQUEST_SCOPE_IMPORT_BAN,
           ],
           patterns: [
             {
@@ -709,8 +777,33 @@ export default tseslint.config(
   },
 
   /* ---------------------------------------------------------------- *
+   * M1-X T2: TenantContext is never imported anywhere in modules/** —
+   * application, infrastructure and api layers scope a tenant through
+   * withTenant/withGlobal (received via a callback, or their own repository
+   * base class), never by establishing their own AsyncLocalStorage scope.
+   * domain/ already bans the whole @finsoft/database package (below, and
+   * stricter than this); this covers the layers that legitimately import
+   * OTHER things from it.
+   * ---------------------------------------------------------------- */
+  {
+    files: ['modules/**/*.ts', 'modules/**/*.tsx'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        { paths: [...DECIMAL_LIB_IMPORT_PATHS, REQUEST_SCOPE_IMPORT_BAN, TENANT_CONTEXT_IMPORT_BAN] },
+      ],
+    },
+  },
+
+  /* ---------------------------------------------------------------- *
    * Module domain layers — pure TypeScript
    * ARCHITECTURE.md §2: "no NestJS, no ORM, no HTTP"
+   *
+   * A LATER, more specific block than the one just above — flat config
+   * replaces no-restricted-imports per matching file, so domain/ needs its
+   * own full list rather than relying on the broader modules/** block. Its
+   * blanket @finsoft/database ban (below) is already stricter than M1-X
+   * T2's TenantContext-only ban, so it is not repeated here.
    * ---------------------------------------------------------------- */
   {
     files: ['modules/*/domain/**/*.ts'],

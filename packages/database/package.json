@@ -9,7 +9,8 @@
     ".": "./src/index.ts",
     "./testing": "./src/testing/harness.ts",
     "./auth": "./src/auth/index.ts",
-    "./provisioning": "./src/provisioning.ts"
+    "./provisioning": "./src/provisioning.ts",
+    "./request-scope": "./src/request-scope.ts"
   },
   "dependencies": {
     "@finsoft/observability": "*",

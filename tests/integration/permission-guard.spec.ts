@@ -364,8 +364,7 @@ describe('PermissionGuard', () => {
      * can never depend on it having already run (see permission.guard.ts's own
      * header). It establishes its OWN scoped context instead, via
      * withTenantAsPrincipal, sourced only from req.auth — so it now resolves
-     * correctly with NO ambient context at all, and is immune to an ambient
-     * context that (however it got there) disagrees with req.auth.
+     * correctly with NO ambient context at all.
      */
     it('resolves correctly with no ambient TenantContext at all', async () => {
       const res = await request(app.getHttpServer())
@@ -374,24 +373,33 @@ describe('PermissionGuard', () => {
       expect(res.status).toBe(200)
     })
 
-    it('ignores an ambient TenantContext naming a different tenant than req.auth', async () => {
+    /*
+     * M1-X, Council T1: withTenantAsPrincipal now THROWS rather than silently
+     * ignoring a DIFFERENT principal already in scope — this test's own
+     * middleware is the only thing that can construct that scenario (nothing
+     * in the real guard chain establishes an ambient TenantContext before
+     * PermissionGuard runs), and it is exactly the invariant violation the
+     * throw exists to surface loudly rather than paper over. A 500 here is
+     * correct: an internal contradiction, not an authorization outcome.
+     */
+    it('throws (500) rather than silently ignoring an ambient TenantContext naming a different tenant', async () => {
       const res = await request(app.getHttpServer())
         .get('/probe/vouchers')
         .set({
           ...asAuth(viewerUserId, tenant.tenantId),
           'x-test-context-tenant-id': otherTenant.tenantId,
         })
-      expect(res.status).toBe(200)
+      expect(res.status).toBe(500)
     })
 
-    it('ignores an ambient TenantContext naming a different user than req.auth', async () => {
+    it('throws (500) rather than silently ignoring an ambient TenantContext naming a different user', async () => {
       const res = await request(app.getHttpServer())
         .get('/probe/vouchers')
         .set({
           ...asAuth(viewerUserId, tenant.tenantId),
           'x-test-context-user-id': tenant.ownerId,
         })
-      expect(res.status).toBe(200)
+      expect(res.status).toBe(500)
     })
 
     it('still 401s with no req.auth at all — there is no context to fall back to', async () => {

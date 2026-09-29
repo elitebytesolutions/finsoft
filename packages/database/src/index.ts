@@ -12,14 +12,15 @@
  *   getPool / fullDb / globalDb   a connection outside a scoped transaction
  *   the migration runner          a separate CLI entrypoint, never imported
  *                                 by application code (ADR-0013:51)
+ *   withTenantAsPrincipal         @finsoft/database/request-scope, its own
+ *                                 narrow subpath, importable only from
+ *                                 apps/api/src/common/permission.guard.ts
+ *                                 (M1-X, Council T1). Exporting it from this
+ *                                 same surface as withTenant would invite it
+ *                                 to be reached from anywhere in apps/api.
  */
 
-export {
-  withGlobal,
-  withTenant,
-  withTenantAsPrincipal,
-  TransactionScopeError,
-} from './transaction.ts'
+export { withGlobal, withTenant, TransactionScopeError } from './transaction.ts'
 export type { GlobalTx, TenantTx } from './transaction.ts'
 
 /*
