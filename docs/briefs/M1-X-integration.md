@@ -45,9 +45,11 @@ PATHS         ALLOWED   apps/api/src/common/** (tenant.guard.ts,
                         the one named exception it forces), package.json (depcruise
                         target, seed script), docs/TECH_DEBT.md,
                         docs/LOCK_REGISTRY.md, docs/briefs/M1-X-integration.md (this
-                        file), docs/BOARD.md — for the single demo-cadence row only,
-                        with provenance: "Product Owner decision 2026-09-28, relayed
-                        in session by the orchestrator"
+                        file), docs/BOARD.md — for the demo-cadence decision only (the
+                        M1-X exit row, the decision-log row, and the supersession
+                        strike through the superseded "Weekly demo day: Monday" row —
+                        three edits, not one), with provenance: "Product Owner
+                        decision 2026-09-28, relayed in session by the orchestrator"
               FORBIDDEN packages/accounting-kernel/**, packages/inventory-kernel/**,
                         modules/**, database/migrations/** (010–016 are reserved for
                         M2/M3; no new migration in this task — see the permission-
@@ -214,7 +216,8 @@ found). All conditions below are applied; delta re-review only.
   database-constraint concern, not the JWT's own `exp`) and a logged-out-access-token
   case proving the session-cache flush is immediate, not merely eventual.
 - **R7** — this brief, written and committed, naming the Council conditions above and
-  `docs/BOARD.md`'s single ALLOWED row with its provenance.
+  `docs/BOARD.md`'s ALLOWED demo-cadence decision — the M1-X exit row, the decision-log
+  row, and the supersession strike — with its provenance.
 
 ## Deferred (explicitly not done here)
 
