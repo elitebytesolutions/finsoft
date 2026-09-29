@@ -82,8 +82,12 @@ export function previewInvoiceLines(rawLines: readonly InvoiceLineInput[]): Invo
     const lineNo = index + 1
     const quantity = parseQuantity(raw.quantity, `lines[${index}].quantity`)
     const unitPrice = parseUnitCost(raw.unitPrice, `lines[${index}].unitPrice`)
-    if (Quantity.isZero(quantity) || Quantity.isNegative(quantity) || UnitCost.isZero(unitPrice) ||
-        UnitCost.isNegative(unitPrice)) {
+    if (
+      Quantity.isZero(quantity) ||
+      Quantity.isNegative(quantity) ||
+      UnitCost.isZero(unitPrice) ||
+      UnitCost.isNegative(unitPrice)
+    ) {
       problems.push({ code: 'SALE_LINE_NON_POSITIVE', lineNo })
     }
     const lineNet = lineNetOf(quantity, unitPrice)

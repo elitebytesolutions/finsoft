@@ -1,6 +1,11 @@
 import { recordAudit, withTenant } from '@finsoft/database'
 import type { CustomerDirectory } from '@finsoft/customers/published'
-import { computeInvoiceLines, normalizeNarration, type Invoice, type InvoiceLineInput } from '../domain/invoice.ts'
+import {
+  computeInvoiceLines,
+  normalizeNarration,
+  type Invoice,
+  type InvoiceLineInput,
+} from '../domain/invoice.ts'
 import { ReceivablesError } from '../domain/errors.ts'
 import type { Actor } from './actor.ts'
 import type { InvoicesRepository } from './ports.ts'

@@ -31,7 +31,9 @@ export function createReverseReceipt(
   receiptsRepo: ReceiptsRepository,
   invoicesRepo: InvoicesRepository,
 ) {
-  return async function reverseReceipt(command: ReverseReceiptCommand): Promise<ReverseReceiptResult> {
+  return async function reverseReceipt(
+    command: ReverseReceiptCommand,
+  ): Promise<ReverseReceiptResult> {
     return withTenant(async (tx) => {
       const receipt = await receiptsRepo.lockForUpdate(tx, command.id)
       if (!receipt) {

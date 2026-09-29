@@ -138,11 +138,9 @@ export function assertComplete(row: {
   if (row.method === null) missing.push('method')
   if (row.amount === null) missing.push('amount')
   if (missing.length > 0) {
-    throw new ReceivablesError(
-      'RECEIPT_INCOMPLETE',
-      `receipt is missing: ${missing.join(', ')}.`,
-      { missing },
-    )
+    throw new ReceivablesError('RECEIPT_INCOMPLETE', `receipt is missing: ${missing.join(', ')}.`, {
+      missing,
+    })
   }
   const method = row.method as ReceiptMethod
   const amount = row.amount as string

@@ -44,7 +44,9 @@ export const UpdateInvoiceSchema = CreateInvoiceSchema.extend({
 }).strict()
 export type UpdateInvoiceDto = z.infer<typeof UpdateInvoiceSchema>
 
-export const CalculateInvoiceSchema = z.object({ lines: z.array(InvoiceLineSchema).max(1000) }).strict()
+export const CalculateInvoiceSchema = z
+  .object({ lines: z.array(InvoiceLineSchema).max(1000) })
+  .strict()
 export type CalculateInvoiceDto = z.infer<typeof CalculateInvoiceSchema>
 
 export const InvoiceVersionOnlySchema = z
@@ -81,7 +83,10 @@ export const CreateReceiptSchema = z
   .object({
     customerId: z.string().uuid(),
     receiptDate: dateString.optional(),
-    method: z.enum(['CASH', 'BANK']).nullish().transform((v) => v ?? null),
+    method: z
+      .enum(['CASH', 'BANK'])
+      .nullish()
+      .transform((v) => v ?? null),
     amount: nullableAmountString,
     reference: nullableString,
     narration: nullableString,

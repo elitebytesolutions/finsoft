@@ -93,7 +93,11 @@ export function createPostInvoice(repo: InvoicesRepository, customerDirectory: C
         // ORIGINAL entry — no new number, no new lines, no new audit.
         const lines = await repo.currentLines(tx, invoice.id)
         const calculation = computeInvoiceLines(
-          lines.map((l) => ({ description: l.description, quantity: l.quantity, unitPrice: l.unitPrice })),
+          lines.map((l) => ({
+            description: l.description,
+            quantity: l.quantity,
+            unitPrice: l.unitPrice,
+          })),
           { requireAtLeastOne: true },
         )
         const entry = await postingEngine.post(
@@ -130,11 +134,18 @@ export function createPostInvoice(repo: InvoicesRepository, customerDirectory: C
 
       const lines = await repo.currentLines(tx, invoice.id)
       const calculation = computeInvoiceLines(
-        lines.map((l) => ({ description: l.description, quantity: l.quantity, unitPrice: l.unitPrice })),
+        lines.map((l) => ({
+          description: l.description,
+          quantity: l.quantity,
+          unitPrice: l.unitPrice,
+        })),
         { requireAtLeastOne: true },
       )
 
-      const number = await documentNumbers.next(tx, { series: 'INV', occurredAt: invoice.invoiceDate })
+      const number = await documentNumbers.next(tx, {
+        series: 'INV',
+        occurredAt: invoice.invoiceDate,
+      })
 
       const posted = await repo.markPosted(
         tx,

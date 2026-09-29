@@ -1,6 +1,11 @@
 import type { TenantTx } from '@finsoft/database'
 import type { ComputedInvoiceLine, Invoice, InvoiceStatus } from '../domain/invoice.ts'
-import type { AllocatableInvoice, AllocationInput, Receipt, ReceiptStatus } from '../domain/receipt.ts'
+import type {
+  AllocatableInvoice,
+  AllocationInput,
+  Receipt,
+  ReceiptStatus,
+} from '../domain/receipt.ts'
 
 /*
  * Repository interfaces. ADR-0028 statement 5: a repository method takes a
@@ -110,7 +115,12 @@ export interface InvoicesRepository {
     expectedVersion: number,
   ): Promise<Invoice>
 
-  markCancelled(tx: TenantTx, id: string, cancelledBy: string, expectedVersion: number): Promise<Invoice>
+  markCancelled(
+    tx: TenantTx,
+    id: string,
+    cancelledBy: string,
+    expectedVersion: number,
+  ): Promise<Invoice>
 
   markPosted(
     tx: TenantTx,
@@ -234,7 +244,12 @@ export interface ReceiptsRepository {
     expectedVersion: number,
   ): Promise<Receipt>
 
-  markCancelled(tx: TenantTx, id: string, cancelledBy: string, expectedVersion: number): Promise<Receipt>
+  markCancelled(
+    tx: TenantTx,
+    id: string,
+    cancelledBy: string,
+    expectedVersion: number,
+  ): Promise<Receipt>
 
   markPosted(
     tx: TenantTx,

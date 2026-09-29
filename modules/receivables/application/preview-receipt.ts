@@ -46,7 +46,9 @@ export function createPreviewReceipt(
   receiptsRepo: ReceiptsRepository,
   invoicesRepo: InvoicesRepository,
 ) {
-  return async function previewReceipt(command: PreviewReceiptCommand): Promise<ReceiptPreviewResult> {
+  return async function previewReceipt(
+    command: PreviewReceiptCommand,
+  ): Promise<ReceiptPreviewResult> {
     return withTenant(async (tx) => {
       let customerId = command.customerId
       let receiptDate = command.receiptDate
@@ -108,7 +110,9 @@ export function createPreviewReceipt(
       let finalAllocations: readonly AllocationInput[]
       let unallocated: string
       if (suggested) {
-        const oldestFirst = [...byId.values()].sort((a, b) => (a.invoiceDate < b.invoiceDate ? -1 : 1))
+        const oldestFirst = [...byId.values()].sort((a, b) =>
+          a.invoiceDate < b.invoiceDate ? -1 : 1,
+        )
         const result = suggestAllocations(oldestFirst, resolvedAmount)
         finalAllocations = result.allocations
         unallocated = result.unallocated
@@ -118,11 +122,18 @@ export function createPreviewReceipt(
         unallocated = Money.serialize(Money.subtract(Money.from(resolvedAmount), allocatedTotal), 4)
       }
 
-      const problems = previewAllocationProblems(customerId, resolvedDate, finalAllocations, byId).map(
-        (p) => ({ code: p.code, invoiceId: p.invoiceId, details: p.details }),
-      )
+      const problems = previewAllocationProblems(
+        customerId,
+        resolvedDate,
+        finalAllocations,
+        byId,
+      ).map((p) => ({ code: p.code, invoiceId: p.invoiceId, details: p.details }))
       if (!suggested && !Money.isZero(Money.from(unallocated))) {
-        problems.push({ code: 'RECEIPT_UNALLOCATED_AMOUNT', invoiceId: null, details: { unallocated } })
+        problems.push({
+          code: 'RECEIPT_UNALLOCATED_AMOUNT',
+          invoiceId: null,
+          details: { unallocated },
+        })
       }
 
       const allocatedTotal = Money.serialize(

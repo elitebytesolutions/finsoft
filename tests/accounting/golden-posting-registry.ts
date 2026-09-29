@@ -61,7 +61,8 @@ export const EXECUTED_IN_M2: readonly ExecutedScenario[] = [
 ]
 
 const M3_TABLES = 'requires customers/sales_invoice/customer_receipt module tables (M3)'
-const M3_RUNNER = 'requires the M3-Q golden-posting-runner.ts update (module-routed execution) — see header'
+const M3_RUNNER =
+  'requires the M3-Q golden-posting-runner.ts update (module-routed execution) — see header'
 
 export const PENDING: readonly PendingScenario[] = [
   { file: 'posting-p04-service-invoice.json', steps: 'all', reason: M3_RUNNER },

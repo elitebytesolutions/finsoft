@@ -51,7 +51,8 @@ export function createUpdateReceiptDraft(
         command.narration !== undefined ? normalizeNarration(command.narration) : existing.narration
       const allocations = command.allocations ?? null
       if (allocations !== null) assertAllocationAmountsShapeValid(allocations)
-      const amount = command.amount !== undefined ? normalizeAmountShape(command.amount) : existing.amount
+      const amount =
+        command.amount !== undefined ? normalizeAmountShape(command.amount) : existing.amount
 
       const before = {
         customerId: existing.customerId,
@@ -90,7 +91,8 @@ export function createUpdateReceiptDraft(
           amount: updated.amount,
           reference: updated.reference,
           narration: updated.narration,
-          allocations: allocations?.map((a) => ({ invoiceId: a.invoiceId, amount: a.amount })) ?? null,
+          allocations:
+            allocations?.map((a) => ({ invoiceId: a.invoiceId, amount: a.amount })) ?? null,
         },
       })
 

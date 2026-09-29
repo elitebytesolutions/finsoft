@@ -32,7 +32,9 @@ export interface ReverseInvoiceResult {
 }
 
 export function createReverseInvoice(repo: InvoicesRepository) {
-  return async function reverseInvoice(command: ReverseInvoiceCommand): Promise<ReverseInvoiceResult> {
+  return async function reverseInvoice(
+    command: ReverseInvoiceCommand,
+  ): Promise<ReverseInvoiceResult> {
     return withTenant(async (tx) => {
       const invoice = await repo.lockForUpdate(tx, command.id)
       if (!invoice) {

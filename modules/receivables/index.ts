@@ -112,7 +112,12 @@ export type {
 // ---------------------------------------------------------------------------
 // Domain types a controller needs to READ a result.
 // ---------------------------------------------------------------------------
-export type { ComputedInvoiceLine, Invoice, InvoiceStatus, InvoiceSettlement } from './domain/invoice.ts'
+export type {
+  ComputedInvoiceLine,
+  Invoice,
+  InvoiceStatus,
+  InvoiceSettlement,
+} from './domain/invoice.ts'
 export { deriveSettlement } from './domain/invoice.ts'
 export type { AllocationInput, Receipt, ReceiptMethod, ReceiptStatus } from './domain/receipt.ts'
 export { ReceivablesError, type ReceivablesErrorCode } from './domain/errors.ts'
@@ -124,7 +129,10 @@ export { ReceivablesError, type ReceivablesErrorCode } from './domain/errors.ts'
  * CreateInvoiceDraft/etc. can all surface a CustomerDirectoryError, so
  * mapping it is legitimately this module's api/ concern too.
  */
-export { CustomerDirectoryError, type CustomerDirectoryErrorCode } from '@finsoft/customers/published'
+export {
+  CustomerDirectoryError,
+  type CustomerDirectoryErrorCode,
+} from '@finsoft/customers/published'
 
 // ---------------------------------------------------------------------------
 // The api/ contract: framework-free zod schemas, response mappers, and the

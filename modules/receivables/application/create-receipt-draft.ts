@@ -105,7 +105,10 @@ export function createCreateReceiptDraft(
           amount: receipt.amount,
           reference: receipt.reference,
           narration: receipt.narration,
-          allocations: command.allocations.map((a) => ({ invoiceId: a.invoiceId, amount: a.amount })),
+          allocations: command.allocations.map((a) => ({
+            invoiceId: a.invoiceId,
+            amount: a.amount,
+          })),
         },
       })
 

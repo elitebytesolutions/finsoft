@@ -39,7 +39,9 @@ function encodeCursor(value: unknown): string {
   return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url')
 }
 
-export function decodeInvoiceCursor(cursor: string | undefined): { invoiceDate: string; id: string } | null {
+export function decodeInvoiceCursor(
+  cursor: string | undefined,
+): { invoiceDate: string; id: string } | null {
   if (!cursor) return null
   try {
     const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as unknown
@@ -59,7 +61,9 @@ export function decodeInvoiceCursor(cursor: string | undefined): { invoiceDate: 
   }
 }
 
-export function decodeReceiptCursor(cursor: string | undefined): { receiptDate: string; id: string } | null {
+export function decodeReceiptCursor(
+  cursor: string | undefined,
+): { receiptDate: string; id: string } | null {
   if (!cursor) return null
   try {
     const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as unknown
@@ -134,7 +138,8 @@ export function toInvoiceDto(
           }
         : null,
     reversalBlockedBy: reversalBlockedBy.map((r) => ({ id: r.receiptId, number: r.receiptNumber })),
-    posted: invoice.postedAt && invoice.postedBy ? { at: invoice.postedAt, by: invoice.postedBy } : null,
+    posted:
+      invoice.postedAt && invoice.postedBy ? { at: invoice.postedAt, by: invoice.postedBy } : null,
     version: invoice.version,
     createdAt: invoice.createdAt,
     createdBy: invoice.createdBy,
@@ -222,7 +227,8 @@ export function toReceiptDto(
             reversedBy: receipt.reversedBy ?? '',
           }
         : null,
-    posted: receipt.postedAt && receipt.postedBy ? { at: receipt.postedAt, by: receipt.postedBy } : null,
+    posted:
+      receipt.postedAt && receipt.postedBy ? { at: receipt.postedAt, by: receipt.postedBy } : null,
     version: receipt.version,
     createdAt: receipt.createdAt,
     createdBy: receipt.createdBy,

@@ -449,7 +449,8 @@ export class InvoicesRepository
     let query = this.scopedSelect(tx).selectAll()
 
     if (filter.customerId) query = query.where('customer_id', '=', filter.customerId)
-    if (filter.status && filter.status.length > 0) query = query.where('status', 'in', [...filter.status])
+    if (filter.status && filter.status.length > 0)
+      query = query.where('status', 'in', [...filter.status])
     if (filter.from) query = query.where('invoice_date', '>=', sqlDate(filter.from))
     if (filter.to) query = query.where('invoice_date', '<=', sqlDate(filter.to))
     if (filter.q && filter.q.trim().length > 0) {

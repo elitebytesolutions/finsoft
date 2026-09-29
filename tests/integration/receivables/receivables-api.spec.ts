@@ -96,7 +96,9 @@ describe('P04/P05/P06 journey: draft, post, receipt, ledger, reversal', () => {
     expect(invoice.settlement).toBe('OPEN')
     expect((invoice.lines as unknown[])[0]).toMatchObject({ lineNet: '7500.0000' })
     expect((invoice.lines as unknown[])[1]).toMatchObject({ lineNet: '2500.0000' })
-    expect(invoice.journalEntry).toMatchObject({ number: expect.stringMatching(/^JE-\d{4}-\d{6}$/) })
+    expect(invoice.journalEntry).toMatchObject({
+      number: expect.stringMatching(/^JE-\d{4}-\d{6}$/),
+    })
   })
 
   it('partially pays an invoice: 6,000.0000 against 10,000.0000, outstanding 4,000.0000 (P05)', async () => {
@@ -314,7 +316,7 @@ describe('RBAC', () => {
 })
 
 describe('tenant isolation', () => {
-  it('returns the identical 404 body for an unknown id and another tenant\'s invoice id', async () => {
+  it("returns the identical 404 body for an unknown id and another tenant's invoice id", async () => {
     const customerA = await createCustomer(app, alpha)
     const invoiceA = await createPostedInvoice(app, alpha, customerA.id)
 
@@ -613,7 +615,7 @@ describe('ruling R-2: inactive stops new receivables, never their settlement (P1
 })
 
 describe('over-allocation is refused', () => {
-  it('refuses an allocation greater than the invoice\'s outstanding', async () => {
+  it("refuses an allocation greater than the invoice's outstanding", async () => {
     const customer = await createCustomer(app, alpha)
     const invoice = await createPostedInvoice(app, alpha, customer.id)
 

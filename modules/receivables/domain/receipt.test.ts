@@ -29,9 +29,9 @@ function invoice(overrides: Partial<AllocatableInvoice> = {}): AllocatableInvoic
 
 describe('assertComplete (customer-receipt.md §3 rows 1-4)', () => {
   it('rejects a receipt missing method or amount, naming what is missing', () => {
-    expect(() =>
-      assertComplete({ method: null, amount: null, allocations: [] }),
-    ).toThrowError(expect.objectContaining({ code: 'RECEIPT_INCOMPLETE' }))
+    expect(() => assertComplete({ method: null, amount: null, allocations: [] })).toThrowError(
+      expect.objectContaining({ code: 'RECEIPT_INCOMPLETE' }),
+    )
   })
 
   it('rejects a non-positive amount', () => {
@@ -83,35 +83,60 @@ describe('assertComplete (customer-receipt.md §3 rows 1-4)', () => {
 describe('assertAllocatable (customer-receipt.md §3 rows 5-7 — re-validated at post, under lock)', () => {
   it('rejects an allocation to an invoice not found under the lock', () => {
     expect(() =>
-      assertAllocatable(CUSTOMER, '2026-09-20', [{ invoiceId: INV_A, amount: '100.0000' }], new Map()),
+      assertAllocatable(
+        CUSTOMER,
+        '2026-09-20',
+        [{ invoiceId: INV_A, amount: '100.0000' }],
+        new Map(),
+      ),
     ).toThrowError(expect.objectContaining({ code: 'INVOICE_NOT_FOUND' }))
   })
 
   it('rejects an invoice belonging to a different customer', () => {
     const invoices = new Map([[INV_A, invoice({ customerId: OTHER_CUSTOMER })]])
     expect(() =>
-      assertAllocatable(CUSTOMER, '2026-09-20', [{ invoiceId: INV_A, amount: '100.0000' }], invoices),
+      assertAllocatable(
+        CUSTOMER,
+        '2026-09-20',
+        [{ invoiceId: INV_A, amount: '100.0000' }],
+        invoices,
+      ),
     ).toThrowError(expect.objectContaining({ code: 'ALLOCATION_PARTY_MISMATCH' }))
   })
 
   it('rejects an invoice that is not POSTED', () => {
     const invoices = new Map([[INV_A, invoice({ status: 'DRAFT' })]])
     expect(() =>
-      assertAllocatable(CUSTOMER, '2026-09-20', [{ invoiceId: INV_A, amount: '100.0000' }], invoices),
+      assertAllocatable(
+        CUSTOMER,
+        '2026-09-20',
+        [{ invoiceId: INV_A, amount: '100.0000' }],
+        invoices,
+      ),
     ).toThrowError(expect.objectContaining({ code: 'INVOICE_NOT_OPEN' }))
   })
 
   it('rejects a receipt dated before its invoice', () => {
     const invoices = new Map([[INV_A, invoice({ invoiceDate: '2026-09-25' })]])
     expect(() =>
-      assertAllocatable(CUSTOMER, '2026-09-20', [{ invoiceId: INV_A, amount: '100.0000' }], invoices),
+      assertAllocatable(
+        CUSTOMER,
+        '2026-09-20',
+        [{ invoiceId: INV_A, amount: '100.0000' }],
+        invoices,
+      ),
     ).toThrowError(expect.objectContaining({ code: 'ALLOCATION_INVOICE_AFTER_RECEIPT' }))
   })
 
   it('rejects an allocation exceeding outstanding, naming the invoice and the figures (a stale proposal)', () => {
     const invoices = new Map([[INV_A, invoice({ outstanding: '4000.0000' })]])
     expect(() =>
-      assertAllocatable(CUSTOMER, '2026-09-20', [{ invoiceId: INV_A, amount: '6000.0000' }], invoices),
+      assertAllocatable(
+        CUSTOMER,
+        '2026-09-20',
+        [{ invoiceId: INV_A, amount: '6000.0000' }],
+        invoices,
+      ),
     ).toThrowError(
       expect.objectContaining({
         code: 'ALLOCATION_EXCEEDS_OUTSTANDING',
@@ -123,7 +148,12 @@ describe('assertAllocatable (customer-receipt.md §3 rows 5-7 — re-validated a
   it('accepts an allocation exactly equal to outstanding (full payment)', () => {
     const invoices = new Map([[INV_A, invoice({ outstanding: '10000.0000' })]])
     expect(() =>
-      assertAllocatable(CUSTOMER, '2026-09-20', [{ invoiceId: INV_A, amount: '10000.0000' }], invoices),
+      assertAllocatable(
+        CUSTOMER,
+        '2026-09-20',
+        [{ invoiceId: INV_A, amount: '10000.0000' }],
+        invoices,
+      ),
     ).not.toThrow()
   })
 })

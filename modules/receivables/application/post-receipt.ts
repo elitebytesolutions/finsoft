@@ -32,7 +32,13 @@ export interface PostReceiptResult {
   readonly replayed: boolean
 }
 
-function toAllocatableMap(invoices: ReadonlyMap<string, { id: string; number: string | null; customerId: string; status: string; invoiceDate: string }>, outstanding: ReadonlyMap<string, string>): Map<string, AllocatableInvoice> {
+function toAllocatableMap(
+  invoices: ReadonlyMap<
+    string,
+    { id: string; number: string | null; customerId: string; status: string; invoiceDate: string }
+  >,
+  outstanding: ReadonlyMap<string, string>,
+): Map<string, AllocatableInvoice> {
   const map = new Map<string, AllocatableInvoice>()
   for (const [id, invoice] of invoices) {
     map.set(id, {
@@ -165,7 +171,12 @@ export function createPostReceipt(
         },
         command.expectedVersion,
       )
-      await receiptsRepo.insertAllocations(tx, receipt.id, complete.allocations, command.actor.userId)
+      await receiptsRepo.insertAllocations(
+        tx,
+        receipt.id,
+        complete.allocations,
+        command.actor.userId,
+      )
 
       const entry = await postingEngine.post(
         {
@@ -192,7 +203,10 @@ export function createPostReceipt(
           customerId: receipt.customerId,
           method: complete.method,
           amount: complete.amount,
-          allocations: complete.allocations.map((a) => ({ invoiceId: a.invoiceId, amount: a.amount })),
+          allocations: complete.allocations.map((a) => ({
+            invoiceId: a.invoiceId,
+            amount: a.amount,
+          })),
           journalEntryId: entry.journalEntryId,
         },
       })

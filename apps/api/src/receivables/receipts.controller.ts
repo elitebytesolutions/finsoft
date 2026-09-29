@@ -1,4 +1,15 @@
-import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query, Req, UnauthorizedException } from '@nestjs/common'
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Req,
+  UnauthorizedException,
+} from '@nestjs/common'
 import { ApiOperation, ApiTags } from '@nestjs/swagger'
 import type { Request } from 'express'
 import {
@@ -95,7 +106,9 @@ export class ReceiptsController {
   @Post('preview')
   @HttpCode(200)
   @RequirePermission('payment.receive')
-  @ApiOperation({ summary: 'Preview allocation of a receipt against open invoices. Writes nothing.' })
+  @ApiOperation({
+    summary: 'Preview allocation of a receipt against open invoices. Writes nothing.',
+  })
   async preview(@Body(new ZodValidationPipe(PreviewReceiptSchema)) body: PreviewReceiptDto) {
     try {
       const result = await receivables.previewReceipt({
@@ -155,7 +168,9 @@ export class ReceiptsController {
 
   @Patch(':id')
   @RequirePermission('payment.receive')
-  @ApiOperation({ summary: 'Edit a receipt draft. `allocations`, if present, replaces all proposals.' })
+  @ApiOperation({
+    summary: 'Edit a receipt draft. `allocations`, if present, replaces all proposals.',
+  })
   async update(
     @Param('id') id: string,
     @Body(new ZodValidationPipe(UpdateReceiptSchema)) body: UpdateReceiptDto,
@@ -186,7 +201,10 @@ export class ReceiptsController {
   @Post(':id/post')
   @HttpCode(200)
   @RequirePermission('payment.receive')
-  @ApiOperation({ summary: 'Post the receipt: CUSTOMER_PAYMENT_RECEIVED@1. Assigns RCT-… and applies allocations.' })
+  @ApiOperation({
+    summary:
+      'Post the receipt: CUSTOMER_PAYMENT_RECEIVED@1. Assigns RCT-… and applies allocations.',
+  })
   async post(
     @Param('id') id: string,
     @Body(new ZodValidationPipe(ReceiptVersionOnlySchema)) body: ReceiptVersionOnlyDto,
@@ -236,7 +254,9 @@ export class ReceiptsController {
   @Post(':id/reverse')
   @HttpCode(200)
   @RequirePermission('payment.receive', 'voucher.reverse')
-  @ApiOperation({ summary: 'Reverse a posted receipt. Voids its allocations, restores invoice outstanding.' })
+  @ApiOperation({
+    summary: 'Reverse a posted receipt. Voids its allocations, restores invoice outstanding.',
+  })
   async reverse(
     @Param('id') id: string,
     @Body(new ZodValidationPipe(ReasonSchema)) body: ReasonDto,

@@ -1,6 +1,11 @@
 import { sql, type RawBuilder } from 'kysely'
 import { BaseRepository, findTenantTimezone, type TenantTx } from '@finsoft/database'
-import { Receipt, type ReceiptMethod, type ReceiptRow, type ReceiptStatus } from '../domain/receipt.ts'
+import {
+  Receipt,
+  type ReceiptMethod,
+  type ReceiptRow,
+  type ReceiptStatus,
+} from '../domain/receipt.ts'
 import type {
   NewReceiptDraft,
   ReceiptAllocationRow,
@@ -223,7 +228,11 @@ export class ReceiptsRepository
       .innerJoin('sales_invoices as si', (join) =>
         join.onRef('si.id', '=', 'cda.invoice_id').on('si.tenant_id', '=', this.tenantId),
       )
-      .select(['cda.invoice_id as invoice_id', 'si.number as invoice_number', 'cda.amount as amount'])
+      .select([
+        'cda.invoice_id as invoice_id',
+        'si.number as invoice_number',
+        'cda.amount as amount',
+      ])
       .where('cda.tenant_id', '=', this.tenantId)
       .where('cda.receipt_id', '=', id)
       .where('cda.revision', '=', receipt.proposals_revision)
@@ -425,7 +434,8 @@ export class ReceiptsRepository
     let query = this.scopedSelect(tx).selectAll()
 
     if (filter.customerId) query = query.where('customer_id', '=', filter.customerId)
-    if (filter.status && filter.status.length > 0) query = query.where('status', 'in', [...filter.status])
+    if (filter.status && filter.status.length > 0)
+      query = query.where('status', 'in', [...filter.status])
     if (filter.method) query = query.where('method', '=', filter.method)
     if (filter.from) query = query.where('receipt_date', '>=', sqlDate(filter.from))
     if (filter.to) query = query.where('receipt_date', '<=', sqlDate(filter.to))

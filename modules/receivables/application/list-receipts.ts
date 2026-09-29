@@ -39,10 +39,9 @@ export function createListReceipts(repo: ReceiptsRepository, customerDirectory: 
         },
         { limit: query.limit, after: query.cursor },
       )
-      const refs = await customerDirectory.getRefs(
-        tx,
-        [...new Set(page.items.map((r) => r.customerId))],
-      )
+      const refs = await customerDirectory.getRefs(tx, [
+        ...new Set(page.items.map((r) => r.customerId)),
+      ])
       return {
         items: page.items.map((receipt) => ({
           receipt,

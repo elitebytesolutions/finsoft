@@ -3,7 +3,12 @@ import type { CustomerDirectory, CustomerRef } from '@finsoft/customers/publishe
 import type { Receipt } from '../domain/receipt.ts'
 import { previewAllocationProblems, type AllocatableInvoice } from '../domain/receipt.ts'
 import { ReceivablesError } from '../domain/errors.ts'
-import type { ReceiptAllocationRow, ReceiptProposalRow, ReceiptsRepository, InvoicesRepository } from './ports.ts'
+import type {
+  ReceiptAllocationRow,
+  ReceiptProposalRow,
+  ReceiptsRepository,
+  InvoicesRepository,
+} from './ports.ts'
 
 export interface GetReceiptResult {
   readonly receipt: Receipt
@@ -46,7 +51,14 @@ export function createGetReceipt(
         // Advisory only, computed at read, no lock (api-contract.md §4.3).
         const page = await invoicesRepo.list(
           tx,
-          { customerId: receipt.customerId, status: null, openOnly: false, from: null, to: null, q: null },
+          {
+            customerId: receipt.customerId,
+            status: null,
+            openOnly: false,
+            from: null,
+            to: null,
+            q: null,
+          },
           { limit: 200, after: null },
         )
         const outstanding = await invoicesRepo.outstandingOf(tx, invoiceIds)

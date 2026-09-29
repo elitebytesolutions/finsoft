@@ -30,11 +30,9 @@ export function createListInvoices(repo: InvoicesRepository, customerDirectory: 
     // api-contract.md §4.2: open=true requires customerId — it is the
     // allocation picker's source, never a tenant-wide scan.
     if (query.open && !query.customerId) {
-      throw new ReceivablesError(
-        'VALIDATION_FAILED',
-        'open=true requires customerId.',
-        { path: 'customerId' },
-      )
+      throw new ReceivablesError('VALIDATION_FAILED', 'open=true requires customerId.', {
+        path: 'customerId',
+      })
     }
     return withTenant(async (tx) => {
       const page = await repo.list(
@@ -49,10 +47,9 @@ export function createListInvoices(repo: InvoicesRepository, customerDirectory: 
         },
         { limit: query.limit, after: query.cursor },
       )
-      const refs = await customerDirectory.getRefs(
-        tx,
-        [...new Set(page.items.map((i) => i.invoice.customerId))],
-      )
+      const refs = await customerDirectory.getRefs(tx, [
+        ...new Set(page.items.map((i) => i.invoice.customerId)),
+      ])
       return {
         items: page.items.map((item) => ({
           item,

@@ -1,4 +1,8 @@
-import { previewInvoiceLines, type InvoiceLineInput, type InvoicePreview } from '../domain/invoice.ts'
+import {
+  previewInvoiceLines,
+  type InvoiceLineInput,
+  type InvoicePreview,
+} from '../domain/invoice.ts'
 
 /** I6. Stateless: writes nothing, opens no transaction (api-contract.md §2). */
 export interface CalculateInvoiceCommand {

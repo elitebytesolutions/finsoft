@@ -56,44 +56,41 @@ describe('computeInvoiceLines (service-sale.md §4, §6)', () => {
 
   it('rejects a zero or negative quantity', () => {
     expect(() =>
-      computeInvoiceLines(
-        [{ description: 'Bad', quantity: '0.000000', unitPrice: '1.000000' }],
-        { requireAtLeastOne: true },
-      ),
-    ).toThrowError(expect.objectContaining({ code: 'SALE_LINE_NON_POSITIVE', details: { lineNo: 1 } }))
+      computeInvoiceLines([{ description: 'Bad', quantity: '0.000000', unitPrice: '1.000000' }], {
+        requireAtLeastOne: true,
+      }),
+    ).toThrowError(
+      expect.objectContaining({ code: 'SALE_LINE_NON_POSITIVE', details: { lineNo: 1 } }),
+    )
 
     expect(() =>
-      computeInvoiceLines(
-        [{ description: 'Bad', quantity: '-1.000000', unitPrice: '1.000000' }],
-        { requireAtLeastOne: true },
-      ),
+      computeInvoiceLines([{ description: 'Bad', quantity: '-1.000000', unitPrice: '1.000000' }], {
+        requireAtLeastOne: true,
+      }),
     ).toThrowError(expect.objectContaining({ code: 'SALE_LINE_NON_POSITIVE' }))
   })
 
   it('rejects a zero or negative unit price', () => {
     expect(() =>
-      computeInvoiceLines(
-        [{ description: 'Bad', quantity: '1.000000', unitPrice: '0.000000' }],
-        { requireAtLeastOne: true },
-      ),
+      computeInvoiceLines([{ description: 'Bad', quantity: '1.000000', unitPrice: '0.000000' }], {
+        requireAtLeastOne: true,
+      }),
     ).toThrowError(expect.objectContaining({ code: 'SALE_LINE_NON_POSITIVE' }))
   })
 
   it('rejects a malformed amount string, never coercing a JSON number', () => {
     expect(() =>
-      computeInvoiceLines(
-        [{ description: 'Bad', quantity: '1.0000001', unitPrice: '1.000000' }],
-        { requireAtLeastOne: true },
-      ),
+      computeInvoiceLines([{ description: 'Bad', quantity: '1.0000001', unitPrice: '1.000000' }], {
+        requireAtLeastOne: true,
+      }),
     ).toThrowError(expect.objectContaining({ code: 'AMOUNT_SCALE' }))
   })
 
   it('rejects an empty description', () => {
     expect(() =>
-      computeInvoiceLines(
-        [{ description: '   ', quantity: '1.000000', unitPrice: '1.000000' }],
-        { requireAtLeastOne: true },
-      ),
+      computeInvoiceLines([{ description: '   ', quantity: '1.000000', unitPrice: '1.000000' }], {
+        requireAtLeastOne: true,
+      }),
     ).toThrowError(expect.objectContaining({ code: 'VALIDATION_FAILED' }))
   })
 
@@ -139,7 +136,13 @@ describe('buildSalePostedPayload (service-sale.md §3)', () => {
       settlement: 'CREDIT',
       customerId: '11111111-1111-1111-1111-111111111111',
       lines: [
-        { kind: 'SERVICE', description: 'A', quantity: '1.000000', unitPrice: '100.000000', lineNet: '100.0000' },
+        {
+          kind: 'SERVICE',
+          description: 'A',
+          quantity: '1.000000',
+          unitPrice: '100.000000',
+          lineNet: '100.0000',
+        },
       ],
       netAmount: '100.0000',
     })
