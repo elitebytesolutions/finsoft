@@ -16,6 +16,8 @@ import { seedSystemRoles } from '@finsoft/permissions'
  */
 export interface AccountingTenantFixture extends TenantFixture {
   readonly viewerId: string
+  /** account.view, period.view, period.close — not period.reopen. */
+  readonly accountantId: string
   /** ACTIVE, but assigned NO role at all — holds zero permissions. */
   readonly noRoleId: string
   readonly accountsByCode: ReadonlyMap<string, AccountRow>
@@ -24,7 +26,7 @@ export interface AccountingTenantFixture extends TenantFixture {
 export async function createAccountingTenant(label: string): Promise<AccountingTenantFixture> {
   const tenant = await createTenantFixture(label)
 
-  const { viewerId, noRoleId, accounts } = await runAs(
+  const { viewerId, accountantId, noRoleId, accounts } = await runAs(
     { tenantId: tenant.tenantId, userId: tenant.ownerId },
     () =>
       withTenant(async (tx) => {
@@ -89,6 +91,38 @@ export async function createAccountingTenant(label: string): Promise<AccountingT
           })
           .execute()
 
+        const accountantRole = await tx
+          .selectFrom('roles')
+          .select('id')
+          .where('tenant_id', '=', tenant.tenantId)
+          .where('code', '=', 'accountant')
+          .executeTakeFirstOrThrow()
+
+        const accountant = await tx
+          .insertInto('users')
+          .values({
+            tenant_id: tenant.tenantId,
+            email: `accountant.${unique()}@example.test`,
+            full_name: 'Accountant User',
+            status: 'ACTIVE',
+            password_hash: 'test-hash-not-real',
+            created_by: tenant.ownerId,
+            updated_by: tenant.ownerId,
+          })
+          .returning('id')
+          .executeTakeFirstOrThrow()
+
+        await tx
+          .insertInto('user_roles')
+          .values({
+            tenant_id: tenant.tenantId,
+            user_id: accountant.id,
+            role_id: accountantRole.id,
+            created_by: tenant.ownerId,
+            updated_by: tenant.ownerId,
+          })
+          .execute()
+
         // No role assigned at all — the negative RBAC case: an ACTIVE user
         // who nonetheless holds zero permissions.
         const noRole = await tx
@@ -126,13 +160,19 @@ export async function createAccountingTenant(label: string): Promise<AccountingT
               role: row.role,
               restricted: row.restricted,
               isActive: row.is_active,
+              parentId: row.parent_id,
             },
           ]),
         )
 
-        return { viewerId: viewer.id, noRoleId: noRole.id, accounts: accountsByCode }
+        return {
+          viewerId: viewer.id,
+          accountantId: accountant.id,
+          noRoleId: noRole.id,
+          accounts: accountsByCode,
+        }
       }),
   )
 
-  return { ...tenant, viewerId, noRoleId, accountsByCode: accounts }
+  return { ...tenant, viewerId, accountantId, noRoleId, accountsByCode: accounts }
 }

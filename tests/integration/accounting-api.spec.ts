@@ -383,6 +383,71 @@ describe('GET /api/journals', () => {
       .set(authHeaders(alpha.tenantId, alpha.noRoleId))
       .expect(403)
   })
+
+  it('rejects an unknown query key with 400', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/api/journals')
+      .query({ bogus: 'x' })
+      .set(authHeaders(alpha.tenantId, alpha.ownerId))
+      .expect(400)
+    expect(res.body.error).toBe('validation_failed')
+  })
+
+  it('rejects a forged cursor with 400, never 500', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/api/journals')
+      .query({ cursor: 'not-valid-base64url-json-at-all!!' })
+      .set(authHeaders(alpha.tenantId, alpha.ownerId))
+      .expect(400)
+    expect(res.body.error).toBe('invalid_cursor')
+
+    // Well-formed base64url JSON, but the wrong shape (id is not a uuid).
+    const forged = Buffer.from(
+      JSON.stringify({ occurredAt: '2026-09-01', createdAt: 'not-a-timestamp', id: 'not-a-uuid' }),
+      'utf8',
+    ).toString('base64url')
+    await request(app.getHttpServer())
+      .get('/api/journals')
+      .query({ cursor: forged })
+      .set(authHeaders(alpha.tenantId, alpha.ownerId))
+      .expect(400)
+  })
+
+  it('walks the whole register in small pages with no skips or duplicates', async () => {
+    const zeta = await createAccountingTenant('MAPZW')
+    const total = 7
+    for (let i = 0; i < total; i++) {
+      await request(app.getHttpServer())
+        .post('/api/journals')
+        .set(authHeaders(zeta.tenantId, zeta.ownerId))
+        .set('Idempotency-Key', `register-walk-${i}`)
+        .send(
+          jvBody({
+            occurredAt: '2026-08-01',
+            lines: [
+              { accountId: bankId(zeta), debit: `${i + 1}.0000` },
+              { accountId: capitalId(zeta), credit: `${i + 1}.0000` },
+            ],
+          }),
+        )
+        .expect(200)
+    }
+
+    const seen: string[] = []
+    let cursor: string | null | undefined
+    do {
+      const res = await request(app.getHttpServer())
+        .get('/api/journals')
+        .query({ limit: 2, ...(cursor ? { cursor } : {}) })
+        .set(authHeaders(zeta.tenantId, zeta.ownerId))
+        .expect(200)
+      for (const item of res.body.items) seen.push(item.id)
+      cursor = res.body.nextCursor
+    } while (cursor)
+
+    expect(seen).toHaveLength(total)
+    expect(new Set(seen).size).toBe(total)
+  })
 })
 
 describe('GET /api/journals/:id', () => {
@@ -418,6 +483,46 @@ describe('GET /api/journals/:id', () => {
       .set(authHeaders(beta.tenantId, beta.ownerId))
       .expect(404)
     expect(crossTenant.body.error).toBe('entry_not_found')
+  })
+
+  it('403s a caller with no role at all', async () => {
+    const posted = await request(app.getHttpServer())
+      .post('/api/journals')
+      .set(authHeaders(alpha.tenantId, alpha.ownerId))
+      .set('Idempotency-Key', 'jv-for-detail-403')
+      .send(
+        jvBody({
+          lines: [
+            { accountId: bankId(alpha), debit: '5.0000' },
+            { accountId: capitalId(alpha), credit: '5.0000' },
+          ],
+        }),
+      )
+      .expect(200)
+
+    await request(app.getHttpServer())
+      .get(`/api/journals/${posted.body.id}`)
+      .set(authHeaders(alpha.tenantId, alpha.noRoleId))
+      .expect(403)
+  })
+})
+
+describe('POST /api/journals — cross-tenant references inside the body', () => {
+  it("a line naming another tenant's account is ACCOUNT_NOT_FOUND, not a leak of its existence", async () => {
+    const res = await request(app.getHttpServer())
+      .post('/api/journals')
+      .set(authHeaders(alpha.tenantId, alpha.ownerId))
+      .set('Idempotency-Key', 'jv-cross-tenant-account')
+      .send(
+        jvBody({
+          lines: [
+            { accountId: bankId(beta), debit: '10.0000' },
+            { accountId: capitalId(alpha), credit: '10.0000' },
+          ],
+        }),
+      )
+      .expect(400)
+    expect(res.body.error).toBe('account_not_found')
   })
 })
 
@@ -510,6 +615,45 @@ describe('POST /api/journals/:id/reverse', () => {
       .send({ reason: 'Should not be allowed' })
       .expect(403)
   })
+
+  it('rejects an unknown body key with 400', async () => {
+    const posted = await request(app.getHttpServer())
+      .post('/api/journals')
+      .set(authHeaders(alpha.tenantId, alpha.ownerId))
+      .set('Idempotency-Key', 'jv-reverse-unknown-key')
+      .send(
+        jvBody({
+          lines: [
+            { accountId: bankId(alpha), debit: '9.0000' },
+            { accountId: capitalId(alpha), credit: '9.0000' },
+          ],
+        }),
+      )
+      .expect(200)
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/journals/${posted.body.id}/reverse`)
+      .set(authHeaders(alpha.tenantId, alpha.ownerId))
+      .set('Idempotency-Key', 'rv-unknown-key')
+      .send({ reason: 'A reason', notAField: true })
+      .expect(400)
+    expect(res.body.error).toBe('validation_failed')
+  })
+
+  /*
+   * REVERSAL_VIA_SOURCE_REQUIRED (409) is mapped in posting-error.mapper.ts
+   * and specified in the contract (§7), but is NOT exercised here by HTTP.
+   * Proving it needs a document-sourced entry, which in M2 (no module posts
+   * sales_invoice/customer_receipt yet) can only be created by inserting
+   * journal_entries/journal_lines directly — and eslint.config.mjs's
+   * ADR-0005 Compliance rule confines that literal pattern to exactly
+   * tests/accounting/posting-invariants.ts (the one named exemption,
+   * covering this identical case at the kernel level already). This lane's
+   * ALLOWED paths do not include eslint.config.mjs or tests/accounting/**,
+   * so this HTTP-level case is not addable without widening either — raised
+   * as OBSERVED in the final report rather than worked around by weakening
+   * or routing past the lint fence.
+   */
 })
 
 describe('GET /api/ledgers/:accountId', () => {
@@ -580,6 +724,251 @@ describe('GET /api/ledgers/:accountId', () => {
       .set(authHeaders(alpha.tenantId, alpha.noRoleId))
       .expect(403)
   })
+
+  it('rejects an unknown query key with 400', async () => {
+    const res = await request(app.getHttpServer())
+      .get(`/api/ledgers/${bankId(alpha)}`)
+      .query({ from: '2026-07-01', to: '2026-08-31', bogus: 'x' })
+      .set(authHeaders(alpha.tenantId, alpha.ownerId))
+      .expect(400)
+    expect(res.body.error).toBe('validation_failed')
+  })
+
+  it('a non-zero opening balance: a line dated before `from` carries forward', async () => {
+    const theta = await createAccountingTenant('MAPTHETA')
+    await request(app.getHttpServer())
+      .post('/api/journals')
+      .set(authHeaders(theta.tenantId, theta.ownerId))
+      .set('Idempotency-Key', 'opening-balance-seed')
+      .send(
+        jvBody({
+          occurredAt: '2026-07-10',
+          lines: [
+            { accountId: bankId(theta), debit: '4000.0000' },
+            { accountId: capitalId(theta), credit: '4000.0000' },
+          ],
+        }),
+      )
+      .expect(200)
+    await request(app.getHttpServer())
+      .post('/api/journals')
+      .set(authHeaders(theta.tenantId, theta.ownerId))
+      .set('Idempotency-Key', 'opening-balance-in-range')
+      .send(
+        jvBody({
+          occurredAt: '2026-08-05',
+          lines: [
+            { accountId: rentId(theta), debit: '150.0000' },
+            { accountId: bankId(theta), credit: '150.0000' },
+          ],
+        }),
+      )
+      .expect(200)
+
+    const res = await request(app.getHttpServer())
+      .get(`/api/ledgers/${bankId(theta)}`)
+      .query({ from: '2026-08-01', to: '2026-08-31' })
+      .set(authHeaders(theta.tenantId, theta.ownerId))
+      .expect(200)
+
+    expect(res.body.openingBalance).toBe('4000.0000')
+    expect(res.body.closingBalance).toBe('3850.0000')
+    expect(res.body.lines).toHaveLength(1)
+    expect(res.body.lines[0].runningBalance).toBe('3850.0000')
+  })
+
+  it('two pages together equal one full page, running balances included', async () => {
+    const iota = await createAccountingTenant('MAPIOTA')
+    const amounts = ['10.0000', '20.0000', '30.0000', '40.0000']
+    for (const [i, amount] of amounts.entries()) {
+      await request(app.getHttpServer())
+        .post('/api/journals')
+        .set(authHeaders(iota.tenantId, iota.ownerId))
+        .set('Idempotency-Key', `ledger-page-seed-${i}`)
+        .send(
+          jvBody({
+            occurredAt: '2026-08-01',
+            lines: [
+              { accountId: bankId(iota), debit: amount },
+              { accountId: capitalId(iota), credit: amount },
+            ],
+          }),
+        )
+        .expect(200)
+    }
+
+    const full = await request(app.getHttpServer())
+      .get(`/api/ledgers/${bankId(iota)}`)
+      .query({ from: '2026-08-01', to: '2026-08-31', limit: 10 })
+      .set(authHeaders(iota.tenantId, iota.ownerId))
+      .expect(200)
+    expect(full.body.lines).toHaveLength(4)
+    expect(full.body.nextCursor).toBeNull()
+
+    const page1 = await request(app.getHttpServer())
+      .get(`/api/ledgers/${bankId(iota)}`)
+      .query({ from: '2026-08-01', to: '2026-08-31', limit: 2 })
+      .set(authHeaders(iota.tenantId, iota.ownerId))
+      .expect(200)
+    expect(page1.body.lines).toHaveLength(2)
+    expect(page1.body.nextCursor).not.toBeNull()
+
+    const page2 = await request(app.getHttpServer())
+      .get(`/api/ledgers/${bankId(iota)}`)
+      .query({ from: '2026-08-01', to: '2026-08-31', limit: 2, cursor: page1.body.nextCursor })
+      .set(authHeaders(iota.tenantId, iota.ownerId))
+      .expect(200)
+    expect(page2.body.lines).toHaveLength(2)
+    expect(page2.body.nextCursor).toBeNull()
+
+    const combined = [...page1.body.lines, ...page2.body.lines]
+    expect(combined).toEqual(full.body.lines)
+    expect(page2.body.closingBalance).toBe(full.body.closingBalance)
+  })
+
+  it('a non-zero opening balance survives multiple resumed pages exactly (regression, Accounting seat re-review)', async () => {
+    /*
+     * Pins the defect the Accounting seat's re-review of f3c4f48 found:
+     * accountLedgerBalanceThrough's own lower bound is `from`, not account
+     * inception, so a resumed page's carry-forward is opening + through —
+     * NOT through alone. With opening balance zero (the previous version
+     * of this describe block's only multi-page case), the missing addend
+     * is zero and the bug is invisible. This tenant seeds a line dated
+     * BEFORE `from` specifically so the opening balance is non-zero, and
+     * walks the ledger one row at a time (limit: 1) so every one of four
+     * pages must recompute the carry-forward, not just the second.
+     */
+    const sigma = await createAccountingTenant('MAPSIGMA')
+    await request(app.getHttpServer())
+      .post('/api/journals')
+      .set(authHeaders(sigma.tenantId, sigma.ownerId))
+      .set('Idempotency-Key', 'sigma-opening-balance')
+      .send(
+        jvBody({
+          occurredAt: '2026-07-10',
+          lines: [
+            { accountId: bankId(sigma), debit: '5000.0000' },
+            { accountId: capitalId(sigma), credit: '5000.0000' },
+          ],
+        }),
+      )
+      .expect(200)
+
+    const amounts = ['10.0000', '20.0000', '30.0000', '40.0000']
+    for (const [i, amount] of amounts.entries()) {
+      await request(app.getHttpServer())
+        .post('/api/journals')
+        .set(authHeaders(sigma.tenantId, sigma.ownerId))
+        .set('Idempotency-Key', `sigma-page-seed-${i}`)
+        .send(
+          jvBody({
+            occurredAt: '2026-08-01',
+            lines: [
+              { accountId: bankId(sigma), debit: amount },
+              { accountId: capitalId(sigma), credit: amount },
+            ],
+          }),
+        )
+        .expect(200)
+    }
+
+    const full = await request(app.getHttpServer())
+      .get(`/api/ledgers/${bankId(sigma)}`)
+      .query({ from: '2026-08-01', to: '2026-08-31', limit: 10 })
+      .set(authHeaders(sigma.tenantId, sigma.ownerId))
+      .expect(200)
+    expect(full.body.openingBalance).toBe('5000.0000')
+    expect(full.body.lines).toHaveLength(4)
+
+    const walked: unknown[] = []
+    let cursor: string | null | undefined
+    let lastClosing: string
+    do {
+      const page = await request(app.getHttpServer())
+        .get(`/api/ledgers/${bankId(sigma)}`)
+        .query({ from: '2026-08-01', to: '2026-08-31', limit: 1, ...(cursor ? { cursor } : {}) })
+        .set(authHeaders(sigma.tenantId, sigma.ownerId))
+        .expect(200)
+      for (const line of page.body.lines) walked.push(line)
+      cursor = page.body.nextCursor
+      lastClosing = page.body.closingBalance
+    } while (cursor)
+
+    expect(walked).toEqual(full.body.lines)
+    expect(lastClosing).toBe(full.body.closingBalance)
+    expect(lastClosing).toBe('5100.0000')
+  })
+
+  it('rejects a tampered cursor with 400, never 500', async () => {
+    const kappa = await createAccountingTenant('MAPKAPPA')
+    for (let i = 0; i < 3; i++) {
+      await request(app.getHttpServer())
+        .post('/api/journals')
+        .set(authHeaders(kappa.tenantId, kappa.ownerId))
+        .set('Idempotency-Key', `tamper-seed-${i}`)
+        .send(
+          jvBody({
+            occurredAt: '2026-08-01',
+            lines: [
+              { accountId: bankId(kappa), debit: '5.0000' },
+              { accountId: capitalId(kappa), credit: '5.0000' },
+            ],
+          }),
+        )
+        .expect(200)
+    }
+
+    const page1 = await request(app.getHttpServer())
+      .get(`/api/ledgers/${bankId(kappa)}`)
+      .query({ from: '2026-08-01', to: '2026-08-31', limit: 1 })
+      .set(authHeaders(kappa.tenantId, kappa.ownerId))
+      .expect(200)
+    const validCursor: string = page1.body.nextCursor
+    expect(validCursor).not.toBeNull()
+
+    const tampered = `${validCursor.slice(0, -2)}${validCursor.slice(-2) === 'AA' ? 'BB' : 'AA'}`
+    const res = await request(app.getHttpServer())
+      .get(`/api/ledgers/${bankId(kappa)}`)
+      .query({ from: '2026-08-01', to: '2026-08-31', limit: 1, cursor: tampered })
+      .set(authHeaders(kappa.tenantId, kappa.ownerId))
+      .expect(400)
+    expect(res.body.error).toBe('invalid_cursor')
+  })
+
+  it('rejects a cursor issued for a different account with 400', async () => {
+    const lambda = await createAccountingTenant('MAPLAMBDA')
+    for (let i = 0; i < 3; i++) {
+      await request(app.getHttpServer())
+        .post('/api/journals')
+        .set(authHeaders(lambda.tenantId, lambda.ownerId))
+        .set('Idempotency-Key', `cross-account-seed-${i}`)
+        .send(
+          jvBody({
+            occurredAt: '2026-08-01',
+            lines: [
+              { accountId: bankId(lambda), debit: '5.0000' },
+              { accountId: capitalId(lambda), credit: '5.0000' },
+            ],
+          }),
+        )
+        .expect(200)
+    }
+
+    const page1 = await request(app.getHttpServer())
+      .get(`/api/ledgers/${bankId(lambda)}`)
+      .query({ from: '2026-08-01', to: '2026-08-31', limit: 1 })
+      .set(authHeaders(lambda.tenantId, lambda.ownerId))
+      .expect(200)
+    const cursorFromBank: string = page1.body.nextCursor
+    expect(cursorFromBank).not.toBeNull()
+
+    const res = await request(app.getHttpServer())
+      .get(`/api/ledgers/${capitalId(lambda)}`)
+      .query({ from: '2026-08-01', to: '2026-08-31', limit: 1, cursor: cursorFromBank })
+      .set(authHeaders(lambda.tenantId, lambda.ownerId))
+      .expect(400)
+    expect(res.body.error).toBe('invalid_cursor')
+  })
 })
 
 describe('GET /api/reports/trial-balance', () => {
@@ -649,6 +1038,15 @@ describe('GET /api/reports/trial-balance', () => {
       .query({ asOf: '2026-09-27' })
       .set(authHeaders(alpha.tenantId, alpha.noRoleId))
       .expect(403)
+  })
+
+  it('rejects an unknown query key with 400', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/api/reports/trial-balance')
+      .query({ asOf: '2026-09-27', bogus: 'x' })
+      .set(authHeaders(alpha.tenantId, alpha.ownerId))
+      .expect(400)
+    expect(res.body.error).toBe('validation_failed')
   })
 })
 
@@ -728,5 +1126,219 @@ describe('Audit — every mutation writes an append-only record (CLAUDE.md, the 
     expect(before.status).toBe('POSTED')
     expect(after.status).toBe('REVERSED')
     expect(after.reason).toBe('Audit check')
+  })
+})
+
+describe('GET /api/accounts', () => {
+  it('returns the full chart, tree-buildable via parentId', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/api/accounts')
+      .set(authHeaders(alpha.tenantId, alpha.ownerId))
+      .expect(200)
+
+    expect(res.body.accounts.length).toBeGreaterThan(0)
+    const bank = res.body.accounts.find((a: { code: string }) => a.code === '1120')
+    expect(bank.kind).toBe('POSTABLE')
+    expect(bank.parentId).not.toBeNull()
+    const assetsHeader = res.body.accounts.find((a: { code: string }) => a.code === '1000')
+    expect(assetsHeader.kind).toBe('HEADER')
+    expect(assetsHeader.parentId).toBeNull()
+  })
+
+  it('owner, accountant and viewer can all read; a user with no role at all cannot', async () => {
+    for (const userId of [alpha.ownerId, alpha.accountantId, alpha.viewerId]) {
+      await request(app.getHttpServer())
+        .get('/api/accounts')
+        .set(authHeaders(alpha.tenantId, userId))
+        .expect(200)
+    }
+    await request(app.getHttpServer())
+      .get('/api/accounts')
+      .set(authHeaders(alpha.tenantId, alpha.noRoleId))
+      .expect(403)
+  })
+
+  it("tenant B never sees tenant A's accounts", async () => {
+    const res = await request(app.getHttpServer())
+      .get('/api/accounts')
+      .set(authHeaders(beta.tenantId, beta.ownerId))
+      .expect(200)
+    const betaAccountIds = new Set(res.body.accounts.map((a: { id: string }) => a.id))
+    expect(betaAccountIds.has(bankId(alpha))).toBe(false)
+  })
+})
+
+describe('GET /api/periods', () => {
+  it("returns the tenant's twelve FY2027 periods, chronological, all OPEN", async () => {
+    const mu = await createAccountingTenant('MAPMU')
+    const res = await request(app.getHttpServer())
+      .get('/api/periods')
+      .set(authHeaders(mu.tenantId, mu.ownerId))
+      .expect(200)
+
+    expect(res.body.periods).toHaveLength(12)
+    expect(res.body.periods[0].label).toBe('2026-07')
+    expect(res.body.periods[0].status).toBe('OPEN')
+    expect(res.body.periods.at(-1).label).toBe('2027-06')
+  })
+
+  it('owner, accountant and viewer can all read; a user with no role at all cannot', async () => {
+    for (const userId of [alpha.ownerId, alpha.accountantId, alpha.viewerId]) {
+      await request(app.getHttpServer())
+        .get('/api/periods')
+        .set(authHeaders(alpha.tenantId, userId))
+        .expect(200)
+    }
+    await request(app.getHttpServer())
+      .get('/api/periods')
+      .set(authHeaders(alpha.tenantId, alpha.noRoleId))
+      .expect(403)
+  })
+})
+
+describe('POST /api/periods/:id/close', () => {
+  it('owner closes the first period; a second, later close is out of order (409)', async () => {
+    const nu = await createAccountingTenant('MAPNU')
+    const periods = await request(app.getHttpServer())
+      .get('/api/periods')
+      .set(authHeaders(nu.tenantId, nu.ownerId))
+      .expect(200)
+    const july = periods.body.periods.find((p: { label: string }) => p.label === '2026-07')
+    const september = periods.body.periods.find((p: { label: string }) => p.label === '2026-09')
+
+    const outOfOrder = await request(app.getHttpServer())
+      .post(`/api/periods/${september.id}/close`)
+      .set(authHeaders(nu.tenantId, nu.ownerId))
+      .expect(409)
+    expect(outOfOrder.body.error).toBe('period_close_out_of_order')
+
+    const closed = await request(app.getHttpServer())
+      .post(`/api/periods/${july.id}/close`)
+      .set(authHeaders(nu.tenantId, nu.ownerId))
+      .expect(200)
+    expect(closed.body.status).toBe('CLOSED')
+  })
+
+  it('accountant (period.close) can close; viewer and no-role cannot', async () => {
+    const xi = await createAccountingTenant('MAPXI')
+    const periods = await request(app.getHttpServer())
+      .get('/api/periods')
+      .set(authHeaders(xi.tenantId, xi.ownerId))
+      .expect(200)
+    const july = periods.body.periods.find((p: { label: string }) => p.label === '2026-07')
+
+    await request(app.getHttpServer())
+      .post(`/api/periods/${july.id}/close`)
+      .set(authHeaders(xi.tenantId, xi.viewerId))
+      .expect(403)
+    await request(app.getHttpServer())
+      .post(`/api/periods/${july.id}/close`)
+      .set(authHeaders(xi.tenantId, xi.noRoleId))
+      .expect(403)
+
+    const closed = await request(app.getHttpServer())
+      .post(`/api/periods/${july.id}/close`)
+      .set(authHeaders(xi.tenantId, xi.accountantId))
+      .expect(200)
+    expect(closed.body.status).toBe('CLOSED')
+  })
+
+  it("404s for an unknown id and another tenant's real id", async () => {
+    const unknown = await request(app.getHttpServer())
+      .post('/api/periods/00000000-0000-4000-8000-000000000000/close')
+      .set(authHeaders(alpha.tenantId, alpha.ownerId))
+      .expect(404)
+    expect(unknown.body.error).toBe('period_not_found')
+
+    const periods = await request(app.getHttpServer())
+      .get('/api/periods')
+      .set(authHeaders(beta.tenantId, beta.ownerId))
+      .expect(200)
+    const betaJuly = periods.body.periods.find((p: { label: string }) => p.label === '2026-07')
+
+    const crossTenant = await request(app.getHttpServer())
+      .post(`/api/periods/${betaJuly.id}/close`)
+      .set(authHeaders(alpha.tenantId, alpha.ownerId))
+      .expect(404)
+    expect(crossTenant.body.error).toBe('period_not_found')
+  })
+})
+
+describe('POST /api/periods/:id/reopen', () => {
+  it('owner reopens the latest closed period; reopening a non-latest closed period is out of order (409)', async () => {
+    const omicron = await createAccountingTenant('MAPOMI')
+    const periods = await request(app.getHttpServer())
+      .get('/api/periods')
+      .set(authHeaders(omicron.tenantId, omicron.ownerId))
+      .expect(200)
+    const july = periods.body.periods.find((p: { label: string }) => p.label === '2026-07')
+    const august = periods.body.periods.find((p: { label: string }) => p.label === '2026-08')
+
+    await request(app.getHttpServer())
+      .post(`/api/periods/${july.id}/close`)
+      .set(authHeaders(omicron.tenantId, omicron.ownerId))
+      .expect(200)
+    await request(app.getHttpServer())
+      .post(`/api/periods/${august.id}/close`)
+      .set(authHeaders(omicron.tenantId, omicron.ownerId))
+      .expect(200)
+
+    const outOfOrder = await request(app.getHttpServer())
+      .post(`/api/periods/${july.id}/reopen`)
+      .set(authHeaders(omicron.tenantId, omicron.ownerId))
+      .send({ reason: 'Trying to reopen the wrong one' })
+      .expect(409)
+    expect(outOfOrder.body.error).toBe('period_reopen_out_of_order')
+
+    const reopened = await request(app.getHttpServer())
+      .post(`/api/periods/${august.id}/reopen`)
+      .set(authHeaders(omicron.tenantId, omicron.ownerId))
+      .send({ reason: 'Correcting a close-process error' })
+      .expect(200)
+    expect(reopened.body.status).toBe('OPEN')
+  })
+
+  it('requires a non-empty reason', async () => {
+    const pi = await createAccountingTenant('MAPPI')
+    const periods = await request(app.getHttpServer())
+      .get('/api/periods')
+      .set(authHeaders(pi.tenantId, pi.ownerId))
+      .expect(200)
+    const july = periods.body.periods.find((p: { label: string }) => p.label === '2026-07')
+    await request(app.getHttpServer())
+      .post(`/api/periods/${july.id}/close`)
+      .set(authHeaders(pi.tenantId, pi.ownerId))
+      .expect(200)
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/periods/${july.id}/reopen`)
+      .set(authHeaders(pi.tenantId, pi.ownerId))
+      .send({ reason: '' })
+      .expect(400)
+    expect(res.body.error).toBe('validation_failed')
+  })
+
+  it('Owner only: accountant and viewer are 403 even though accountant holds period.close', async () => {
+    const rho = await createAccountingTenant('MAPRHO')
+    const periods = await request(app.getHttpServer())
+      .get('/api/periods')
+      .set(authHeaders(rho.tenantId, rho.ownerId))
+      .expect(200)
+    const july = periods.body.periods.find((p: { label: string }) => p.label === '2026-07')
+    await request(app.getHttpServer())
+      .post(`/api/periods/${july.id}/close`)
+      .set(authHeaders(rho.tenantId, rho.ownerId))
+      .expect(200)
+
+    await request(app.getHttpServer())
+      .post(`/api/periods/${july.id}/reopen`)
+      .set(authHeaders(rho.tenantId, rho.accountantId))
+      .send({ reason: 'Should be refused' })
+      .expect(403)
+    await request(app.getHttpServer())
+      .post(`/api/periods/${july.id}/reopen`)
+      .set(authHeaders(rho.tenantId, rho.viewerId))
+      .send({ reason: 'Should be refused' })
+      .expect(403)
   })
 })

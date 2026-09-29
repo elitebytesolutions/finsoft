@@ -92,3 +92,27 @@ Two alternatives were rejected. **Controllers in the module, built by SWC**: thi
 |---|---|
 | **Architecture seat** | ✅ **APPROVED, 2026-09-29.** Author. Checked against ADR-0001, 0005, 0013, 0023 (A1, A4), 0026 and 0027, ARCHITECTURE §2 and §5, `.dependency-cruiser.cjs`, `eslint.config.mjs`, `risk-tiers.json`, `Dockerfile.api` and `apps/api/src/app.module.ts` on `develop` 6f728c8. C1–C12 bind M3-C's first PR. The M3-P lane repeats C6's adapter ban for `apps/api/src/receivables/**` and adds C8's receivables block. |
 | **Database/Security seat** | ✅ **APPROVED WITH CONDITIONS S1–S5, 2026-09-29.** Reviewed statements 6, 8 and 9, and C8 and C10, against `eslint.config.mjs`, `.dependency-cruiser.cjs` (`kysely-is-allowlisted`), `packages/database` exports, `rls.spec.ts` and `schema.spec.ts` on 69f065c. The statements hold: RLS stays forced, `TenantTx` is the only path in, and there is no `withGlobal` and no pool. As drafted, the mechanisms would have reopened the M1-X import bans (S1) and allowed a cross-tenant foreign-key write (S3). S1–S5 close both. |
+
+---
+
+**Amendment, 2026-09-29** (Council review of M2-B; Architecture + Database/Security seats).
+The signed body is not edited; this note overrides it where the two differ.
+
+1. **Statement 9's numbers.** Statement 9 names migrations 014, 015 and 016 for M3. Migration
+   **014** was taken by the M2-B permission backfill
+   (`database/migrations/014_add_account_and_period_permissions.sql`), a platform migration that
+   is not part of any module. M3's three migrations therefore move up by one: **015**
+   `customers` (M3-C), **016** and **017** (M3-P). The numbers are corrected in
+   [docs/design/M3/README.md](../design/M3/README.md) §2,
+   [docs/design/M3/open-questions.md](../design/M3/open-questions.md) and
+   [docs/IMPLEMENTATION.md](../IMPLEMENTATION.md).
+2. **C10 and S4 owners.** C10 applies to every migration from 014 on, as signed. S4's owner rule
+   is widened: `-- Owner:` must name an existing `modules/<name>` **or** `packages/<name>`
+   directory. A `packages/<name>` owner marks a platform or kernel migration. All of S4's
+   content bans still apply to it unchanged. Migration 014 is owned by `packages/permissions`.
+   The M3-C checker implements this rule, with a passing fixture for a `packages/<name>` owner
+   and a failing fixture for a directory that does not exist.
+
+Database/Security seat — 2026-09-29 — accepts point 2 (S4 owner widening).
+
+Architecture seat — 2026-09-29 — countersigns the amendment (points 1 and 2).

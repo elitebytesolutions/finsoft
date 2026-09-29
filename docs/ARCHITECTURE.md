@@ -311,6 +311,8 @@ Atomic permissions, not role names, all the way down. Roles are collections of p
 voucher.view      voucher.create    voucher.approve
 voucher.post      voucher.reverse
 
+account.view
+
 bank.view         bank.create       cheque.receive
 cheque.issue      cheque.clear      cheque.dishonour
 

@@ -34,6 +34,14 @@ export const PERMISSION_CODES = [
   'report.financial',
   'audit.view',
   'admin.user_manage',
+  // Added by the M2-B Council ruling, 2026-09-29 (docs/design/M2/api-contract.md
+  // §6/§9): the chart-of-accounts view and the fiscal-period lifecycle. There
+  // is deliberately NO 'period.lock' — M2 builds view/close/reopen only, per
+  // the ruling; a lock route and its permission are out of scope here.
+  'account.view',
+  'period.view',
+  'period.close',
+  'period.reopen',
 ] as const
 
 export type PermissionCode = (typeof PERMISSION_CODES)[number]
@@ -55,11 +63,18 @@ export function isPermissionCode(value: string): value is PermissionCode {
  * and GAP-003 tracks the gap. This flag exists so the guard, and whatever
  * later enforces ADR-0009's MFA gate, both read the same answer to "is this
  * permission privileged" rather than each keeping their own list.
+ *
+ * `period.close` / `period.reopen` added by the M2-B Council ruling,
+ * 2026-09-29 — ADR-0012:136 names step-up MFA for both period transitions.
+ * Enforcement is the same GAP-003 gap as every other privileged permission
+ * today; this only records that the answer to "is this privileged" is yes.
  */
 export const PRIVILEGED_PERMISSIONS: ReadonlySet<PermissionCode> = new Set<PermissionCode>([
   'voucher.reverse',
   'audit.view',
   'admin.user_manage',
+  'period.close',
+  'period.reopen',
 ])
 
 export function isPrivileged(code: PermissionCode): boolean {

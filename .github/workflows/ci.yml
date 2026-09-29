@@ -1,5 +1,48 @@
 name: CI
 
+# ------------------------------------------------------------------------- #
+# OPS-003 — "ship to staging from the laptop", PO decision 2026-09-29.
+#
+# WHY: the PO cannot pay for GitHub Actions minutes right now. Until billing
+# is turned on, automatic runs on push/pull_request/schedule would either
+# burn minutes we don't have or (if the account is out of minutes) fail every
+# push for a reason that has nothing to do with the change — so the trigger
+# below is `workflow_dispatch` only. Jobs themselves are UNCHANGED: this is a
+# trigger change, not a gate change. Nothing here is weakened, skipped, or
+# made optional — it is turned into a manual switch, including the nightly
+# safety-net run, which nobody is billed for while it isn't running.
+#
+# In the meantime the gate runs on the laptop instead: see
+# `npm run ship:staging` (tools/ship/staging.mjs) and
+# docs/workflows/ship-from-laptop.md. It runs the equivalent of a "full"
+# classify run — static analysis, secret scan, the full test suite including
+# the FinancialInvariantSuite, the web build, the blocking audit-gate — against
+# a fresh throwaway stack, then builds and deploys to Contabo staging itself.
+# The one thing it cannot do for free is CodeQL, which it records as skipped
+# in its evidence file rather than silently dropping.
+#
+# TO RESTORE (once GitHub billing is on — this is the exact trigger block to
+# put back, unchanged from what risk-tiered CI (OPS-002,
+# docs/workflows/ci-tiers.md) shipped with):
+#
+#   on:
+#     push:
+#       branches: ['**']
+#     pull_request:
+#       branches: [main, develop]
+#     workflow_dispatch:
+#     schedule:
+#       - cron: '0 21 * * *'
+#
+# See docs/COMPLIANCE_GAPS.md GAP-005 for the decision row this posture is
+# recorded under, alongside GAP-001 and GAP-002. Staging only; production
+# was already blocked by GAP-001/GAP-003/GAP-004 and stays blocked.
+# ------------------------------------------------------------------------- #
+#
+# The history below is preserved because it explains why `pull_request`, a
+# branch-scoped `push` and the nightly `schedule` each earned their place —
+# that reasoning applies again the moment the trigger above is restored:
+#
 # Every push to every branch, plus the pull request, plus a nightly full run.
 #
 # An earlier version ran only on `pull_request` and on pushes to main and
@@ -19,18 +62,7 @@ name: CI
 # warrant them, or unconditionally on develop, a release branch, a manual
 # dispatch, or the nightly schedule below ("full").
 on:
-  push:
-    branches: ['**']
-  pull_request:
-    branches: [main, develop]
-  # So a deploy can be exercised without merging. Agents push feature branches
-  # and never merge, so the automatic develop path alone could never be tested
-  # by the people who build it.
   workflow_dispatch:
-  # A full run every night, regardless of what did or did not change that
-  # day — the safety net under the tiering. 21:00 UTC = 02:00 PKT.
-  schedule:
-    - cron: '0 21 * * *'
 
 # Least privilege. No job here writes to the repository, publishes a package
 # or comments on a PR, so nothing needs more than read. `images`, `codeql`

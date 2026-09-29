@@ -34,3 +34,20 @@ export type {
   Instant,
   LocalDate,
 } from './customer.ts'
+
+export type {
+  AccountDto,
+  AccountLedgerLineDto,
+  AccountLedgerResponseDto,
+  AccountsResponseDto,
+  FiscalPeriodDto,
+  JournalEntryDto,
+  JournalEntryWithLinesDto,
+  JournalLineDto,
+  JournalListResponseDto,
+  PeriodsResponseDto,
+  PostJournalVoucherResponseDto,
+  ReverseJournalEntryResponseDto,
+  TrialBalanceLineDto,
+  TrialBalanceResponseDto,
+} from './accounting.ts'

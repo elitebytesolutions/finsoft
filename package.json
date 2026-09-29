@@ -51,7 +51,8 @@
     "prepare": "node tools/hooks/install.mjs",
     "test:integration": "vitest run --config tests/integration/vitest.config.ts",
     "test:performance": "vitest run --dir tests/performance",
-    "test:e2e": "playwright test --config tests/e2e/playwright.config.ts"
+    "test:e2e": "playwright test --config tests/e2e/playwright.config.ts",
+    "ship:staging": "node tools/ship/staging.mjs"
   },
   "engines": {
     "node": ">=24.17.0"

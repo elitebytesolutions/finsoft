@@ -1,9 +1,17 @@
 import { Controller, Get, Query, Req } from '@nestjs/common'
-import { ApiTags } from '@nestjs/swagger'
+import {
+  ApiBadRequestResponse,
+  ApiForbiddenResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+  ApiUnauthorizedResponse,
+} from '@nestjs/swagger'
 import type { Request } from 'express'
 import { trialBalance as computeTrialBalance } from '@finsoft/reporting'
 import { Money } from '@finsoft/validation'
 import { withTenant } from '@finsoft/database'
+import type { TrialBalanceResponseDto } from '@finsoft/shared-types'
 import { RequirePermission } from '../common/permission.decorator'
 import { ZodValidationPipe } from '../common/zod-validation.pipe'
 import { callerTenantId } from './caller'
@@ -27,10 +35,19 @@ import { TrialBalanceQuerySchema, type TrialBalanceQueryDto } from './dto/trial-
 export class ReportsController {
   @Get('trial-balance')
   @RequirePermission('report.financial')
+  @ApiOperation({
+    summary: 'The trial balance as of a date.',
+    description:
+      'Every POSTABLE account with activity on or before asOf. totalDebit always equals totalCredit exactly.',
+  })
+  @ApiOkResponse({ description: 'The trial balance.' })
+  @ApiUnauthorizedResponse({ description: 'Missing, invalid, expired or revoked credentials.' })
+  @ApiForbiddenResponse({ description: 'The caller lacks report.financial.' })
+  @ApiBadRequestResponse({ description: 'An unknown query key, or a malformed asOf date.' })
   async trialBalance(
     @Query(new ZodValidationPipe(TrialBalanceQuerySchema)) query: TrialBalanceQueryDto,
     @Req() req: Request,
-  ) {
+  ): Promise<TrialBalanceResponseDto> {
     const tenantId = callerTenantId(req)
 
     const result = await withTenant((tx) => computeTrialBalance(tx, tenantId, query.asOf))

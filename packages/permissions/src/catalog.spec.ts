@@ -7,7 +7,7 @@ import {
 } from './catalog.ts'
 
 describe('the permission catalogue', () => {
-  it('is exactly the MVP subset the brief names, no more and no less', () => {
+  it('is exactly the MVP subset the brief names plus the M2-B Council ruling, no more and no less', () => {
     expect([...PERMISSION_CODES].sort()).toEqual(
       [
         'admin.user_manage',
@@ -21,8 +21,16 @@ describe('the permission catalogue', () => {
         'voucher.post',
         'voucher.reverse',
         'voucher.view',
+        'account.view',
+        'period.view',
+        'period.close',
+        'period.reopen',
       ].sort(),
     )
+  })
+
+  it('has no period.lock — M2 builds view/close/reopen only (Council ruling)', () => {
+    expect(isPermissionCode('period.lock')).toBe(false)
   })
 
   it('has no duplicate code', () => {
@@ -42,9 +50,15 @@ describe('the permission catalogue', () => {
     expect(isPermissionCode('')).toBe(false)
   })
 
-  it('marks exactly voucher.reverse, audit.view and admin.user_manage as privileged (ADR-0009)', () => {
+  it('marks exactly voucher.reverse, audit.view, admin.user_manage, period.close and period.reopen as privileged (ADR-0009, ADR-0012:136)', () => {
     expect([...PRIVILEGED_PERMISSIONS].sort()).toEqual(
-      ['admin.user_manage', 'audit.view', 'voucher.reverse'].sort(),
+      [
+        'admin.user_manage',
+        'audit.view',
+        'voucher.reverse',
+        'period.close',
+        'period.reopen',
+      ].sort(),
     )
   })
 
@@ -58,7 +72,11 @@ describe('the permission catalogue', () => {
     expect(isPrivileged('voucher.reverse')).toBe(true)
     expect(isPrivileged('audit.view')).toBe(true)
     expect(isPrivileged('admin.user_manage')).toBe(true)
+    expect(isPrivileged('period.close')).toBe(true)
+    expect(isPrivileged('period.reopen')).toBe(true)
     expect(isPrivileged('voucher.view')).toBe(false)
     expect(isPrivileged('customer.view')).toBe(false)
+    expect(isPrivileged('period.view')).toBe(false)
+    expect(isPrivileged('account.view')).toBe(false)
   })
 })
