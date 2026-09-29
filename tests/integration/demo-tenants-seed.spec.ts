@@ -1,10 +1,13 @@
 import { execFile } from 'node:child_process'
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { promisify } from 'node:util'
-import { resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { withGlobal, withTenant } from '@finsoft/database'
 import {
   REPO_ROOT,
+  createTenantFixture,
   prepareTestDatabase,
   runAs,
   teardownTestDatabase,
@@ -20,8 +23,8 @@ import {
 const execFileAsync = promisify(execFile)
 const SCRIPT = resolve(REPO_ROOT, 'tools/seed/demo-tenants.mjs')
 
-async function runSeed(env: Record<string, string | undefined> = {}) {
-  return execFileAsync(process.execPath, [SCRIPT], {
+async function runSeed(env: Record<string, string | undefined> = {}, args: string[] = []) {
+  return execFileAsync(process.execPath, [SCRIPT, ...args], {
     env: {
       ...process.env,
       DATABASE_URL: process.env['TEST_DATABASE_URL'],
@@ -31,8 +34,23 @@ async function runSeed(env: Record<string, string | undefined> = {}) {
   })
 }
 
-beforeAll(prepareTestDatabase, 60_000)
-afterAll(teardownTestDatabase)
+/*
+ * Generated credentials go to a fresh directory OUTSIDE the repository —
+ * exactly what the script demands (Council S2). On a fresh database (every
+ * CI run) the first seed MUST generate passwords, and without this path the
+ * pre-flight refuses before creating anything (Sec F3). The earlier version
+ * of this file only passed on a host whose TEST database was already seeded.
+ */
+let credentialsDir: string
+
+beforeAll(async () => {
+  credentialsDir = mkdtempSync(join(tmpdir(), 'finsoft-seed-test-'))
+  await prepareTestDatabase()
+}, 60_000)
+afterAll(async () => {
+  rmSync(credentialsDir, { recursive: true, force: true })
+  await teardownTestDatabase()
+})
 
 describe('tools/seed/demo-tenants.mjs', () => {
   it('provisions both tenants, three ACTIVE users each, and is idempotent on a second run', async () => {
@@ -42,9 +60,33 @@ describe('tools/seed/demo-tenants.mjs', () => {
     // this test actually proves is that run A leaves the database in the
     // correct shape, and that run B (guaranteed to follow an already-seeded
     // database) is a true no-op.
-    const runA = await runSeed()
+    const credentialsOut = join(credentialsDir, 'run-a.txt')
+    const runA = await runSeed({}, ['--credentials-out', credentialsOut])
     expect(runA.stdout).toContain('BHATTI1 (Bhatti Demo 1)')
     expect(runA.stdout).toContain('BHATTI2 (Bhatti Demo 2)')
+
+    // When run A generated passwords (a fresh database — every CI run), they
+    // went to the file and never to stdout, and the file is 0600 on POSIX.
+    if (existsSync(credentialsOut)) {
+      const generated = readFileSync(credentialsOut, 'utf8')
+        .split('\n')
+        .filter((line) => /^BHATTI[12]_[a-z]+=/.test(line))
+        .map((line) =>
+          line
+            .slice(line.indexOf('=') + 1)
+            .split('  #')[0]!
+            .trim(),
+        )
+      expect(generated.length).toBeGreaterThan(0)
+      for (const password of generated) {
+        expect(password.length).toBeGreaterThanOrEqual(16)
+        expect(runA.stdout).not.toContain(password)
+        expect(runA.stderr).not.toContain(password)
+      }
+      if (process.platform !== 'win32') {
+        expect(statSync(credentialsOut).mode & 0o777).toBe(0o600)
+      }
+    }
 
     for (const code of ['BHATTI1', 'BHATTI2']) {
       const tenant = await withGlobal((tx) =>
@@ -107,7 +149,10 @@ describe('tools/seed/demo-tenants.mjs', () => {
     if (owner) return // already seeded by the test above; nothing new to assert here
 
     const pinned = 'a-pinned-password-for-this-test-only-32chars'
-    const result = await runSeed({ DEMO_BHATTI1_OWNER_PASSWORD: pinned })
+    const result = await runSeed({ DEMO_BHATTI1_OWNER_PASSWORD: pinned }, [
+      '--credentials-out',
+      join(credentialsDir, 'pinned.txt'),
+    ])
     expect(result.stdout).not.toContain(pinned)
   })
 
@@ -136,6 +181,9 @@ describe('tools/seed/demo-tenants.mjs', () => {
       // the suite — exactly the case the database-level check exists to
       // catch, and neither NODE_ENV nor FINSOFT_ENVIRONMENT alone (nor
       // together) is enough to bypass it.
+      // Guarantee that precondition rather than relying on other spec files
+      // having run first — this file must pass on its own, too.
+      await createTenantFixture('GUARD')
       await expect(
         runSeed({ NODE_ENV: 'production', FINSOFT_ENVIRONMENT: 'staging' }),
       ).rejects.toMatchObject({
@@ -165,6 +213,12 @@ describe('tools/seed/demo-tenants.mjs', () => {
     })
 
     /*
+     * UPDATE (fix/M1-seed-test-fresh-db): on a FRESH database — every CI
+     * run — the idempotency test above now passes --credentials-out and
+     * asserts the generated-passwords path end to end: written to the file,
+     * absent from stdout/stderr, mode 0600 on Linux. The note below still
+     * applies on a host whose TEST database is already seeded.
+     *
      * DECISION, recorded rather than silently skipped: a "passwords are
      * generated and written to a file, never stdout" case is NOT exercised
      * here end-to-end. Both demo tenants already exist in the shared TEST
