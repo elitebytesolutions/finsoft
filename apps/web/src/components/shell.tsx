@@ -67,6 +67,7 @@ import {
   Grid2x2,
   Layers,
   ListChecks,
+  LogOut,
   MapPin,
   PackageSearch,
   Percent,
@@ -84,7 +85,8 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { nav, roles, type NavChild, type NavItem } from '@/mocks/api'
-import { Badge } from '@finsoft/ui'
+import { Badge, Banner } from '@finsoft/ui'
+import { useAuth } from '@/lib/api/auth-context'
 
 const iconMap: Record<string, LucideIcon> = {
   Printer,
@@ -152,6 +154,15 @@ const iconMap: Record<string, LucideIcon> = {
   WalletCards,
   Warehouse,
 }
+
+/*
+ * Routes that actually call the real API. Everything else still renders from
+ * `@/mocks/*` (PRD §6.1: "existing mock screens are prototypes, not delivered
+ * functionality") and gets the persistent prototype banner below. As real
+ * screens land they are added here, one line each — nothing else about the
+ * banner changes.
+ */
+const API_BACKED_ROUTES: string[] = []
 
 const chevCls = (open: boolean) => 'chev ' + (open ? 'down' : '')
 function renderNodes(
@@ -222,6 +233,8 @@ export function Shell({
   const pathname = usePathname(),
     navigate = useNavigate()
   const path = pathname.split('?')[0]
+  const { user, tenant, signOut } = useAuth()
+  const isApiBacked = API_BACKED_ROUTES.includes(path)
   const [collapsed, setCollapsed] = useState(false),
     [mobileOpen, setMobileOpen] = useState(false),
     [global, setGlobal] = useState(''),
@@ -468,10 +481,10 @@ export function Shell({
           })}
         </nav>
         <div className="sb-foot">
-          <span className="sb-avatar">BT</span>
+          <span className="sb-avatar">{(tenant?.name ?? 'Finsoft').slice(0, 2).toUpperCase()}</span>
           <div className="sb-foot-text">
-            <b>Bhatti Traders</b>
-            <small>Admin</small>
+            <b>{tenant?.name ?? 'Finsoft'}</b>
+            <small>{user?.fullName ?? 'Signed in'}</small>
           </div>
           <button
             type="button"
@@ -501,7 +514,7 @@ export function Shell({
           </div>
           <button type="button" className="company-pick">
             <Building2 />
-            <span>Bhatti Traders</span>
+            <span>{tenant?.name ?? 'Finsoft'}</span>
             <ChevronDown />
           </button>
           <label className="global-search">
@@ -683,22 +696,46 @@ export function Shell({
               <Settings />
             </button>
             <label className="user-menu">
-              <span className="avatar">{role.slice(0, 2).toUpperCase()}</span>
+              <span className="avatar">
+                {(user?.fullName ?? 'Signed in').slice(0, 2).toUpperCase()}
+              </span>
               <div>
-                <b>Sarah Lloyd</b>
-                <small>{role}</small>
+                <b>{user?.fullName ?? 'Signed in'}</b>
+                <small>
+                  {process.env.NODE_ENV !== 'production'
+                    ? `${role} (prototype role)`
+                    : (tenant?.name ?? '')}
+                </small>
               </div>
               <ChevronDown />
-              <select
-                aria-label="View as role"
-                value={role}
-                onChange={(e) => setRole(e.target.value)}
-              >
-                {Object.keys(roles).map((r) => (
-                  <option key={r}>{r}</option>
-                ))}
-              </select>
+              {/* The mock permission switch that drives the prototype screens' `can()`/
+                  `act()` (docs/briefs/M1-W-web-infra.md — that mock stays; only the
+                  identity shown above is real now). docs/design-system/pages/app-shell
+                  §10: "role switching exists only in non-production builds" — gated
+                  here rather than removed, since prototype screens still need a way
+                  to exercise every role without a real RBAC backend yet. */}
+              {process.env.NODE_ENV !== 'production' && (
+                <select
+                  aria-label="View as role (prototype only)"
+                  value={role}
+                  onChange={(e) => setRole(e.target.value)}
+                >
+                  {Object.keys(roles).map((r) => (
+                    <option key={r}>{r}</option>
+                  ))}
+                </select>
+              )}
             </label>
+            <button
+              type="button"
+              aria-label="Sign out"
+              className="icon-btn"
+              onClick={() => {
+                void signOut()
+              }}
+            >
+              <LogOut />
+            </button>
           </div>
           {notifications && (
             <div className="notification-pop">
@@ -719,6 +756,13 @@ export function Shell({
             </div>
           )}
         </header>
+        {!isApiBacked && (
+          // Non-dismissible by design (docs/briefs/M1-W-web-infra.md item 4) — this is a
+          // fact about the screen, not a notice a user can dismiss and forget. Every
+          // screen renders it except /login (outside <Shell> entirely, app-frame.tsx)
+          // and any route added to API_BACKED_ROUTES above once it is real.
+          <Banner tone="warn">Prototype — demo data, not connected to the ledger.</Banner>
+        )}
         <div
           className={`content ${/^\/(vouchers|recurring)(\/|$)/.test(path) ? 'content-mint' : ''}`}
         >

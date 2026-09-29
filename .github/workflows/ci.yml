@@ -603,14 +603,12 @@ jobs:
   #
   # On a PR or feature push: build only the images whose paths changed, and
   # never push. On develop, a release branch, workflow_dispatch or the
-  # nightly schedule (classify's "full"): every image ends up tagged
-  # :${{ github.sha }} — a changed image is built and pushed fresh; an
-  # UNCHANGED one has its existing :develop digest retagged to :${{ sha }}
-  # with `docker buildx imagetools create` (no rebuild, so it stays the
-  # exact bytes that already passed staging), falling back to a full
-  # build+push only if :develop does not exist yet (first run). This is
-  # what keeps infrastructure/staging/deploy.sh — which pulls :$SHA for all
-  # three images unconditionally — working without changes.
+  # nightly schedule (classify's "full"): ALL THREE images are built from
+  # this commit and pushed as :${{ github.sha }} and :develop, so
+  # infrastructure/staging/deploy.sh (which pulls :$SHA for all three)
+  # always deploys the code of the commit it names. An earlier "retag the
+  # unchanged image" shortcut shipped pre-M1 images on every develop merge:
+  # a develop push is diffed against itself, so nothing ever looked changed.
   # ------------------------------------------------------------------ #
   images:
     name: container images (${{ matrix.image }})
@@ -645,7 +643,14 @@ jobs:
       - name: does this image need building?
         id: decide
         run: |
-          echo "changed=${{ contains(fromJSON(needs.classify.outputs.images_json), matrix.image) }}" >> "$GITHUB_OUTPUT"
+          # On a full run (develop, release/*, dispatch, nightly) EVERY image is
+          # built from this commit and pushed. The previous design retagged an
+          # "unchanged" image's :develop digest instead — but classify diffs a
+          # develop push against its own merge-base, i.e. itself, so every image
+          # always looked unchanged and staging kept receiving images built
+          # before M1 (Auth deployed as schema 5, /api/auth 404). A deploy must
+          # run the code of the commit being deployed; no shortcut is worth that.
+          echo "changed=${{ needs.classify.outputs.full == 'true' || contains(fromJSON(needs.classify.outputs.images_json), matrix.image) }}" >> "$GITHUB_OUTPUT"
           echo "full=${{ needs.classify.outputs.full }}" >> "$GITHUB_OUTPUT"
 
       - name: compute tags
@@ -689,28 +694,6 @@ jobs:
       # Runs only on a full run, and only when this image did NOT change —
       # the case deploy.sh needs covered: it pulls :$SHA for all three
       # images unconditionally, so an unchanged image still needs that tag.
-      - name: retag unchanged image's :develop digest as :${{ github.sha }}
-        if: steps.decide.outputs.full == 'true' && steps.decide.outputs.changed != 'true'
-        run: |
-          IMAGE="ghcr.io/${{ github.repository }}-${{ matrix.image }}"
-          SRC="$IMAGE:develop"
-          DST="$IMAGE:${{ github.sha }}"
-          if docker buildx imagetools inspect "$SRC" >/dev/null 2>&1; then
-            echo "retagging $SRC -> $DST — no rebuild, this image did not change"
-            docker buildx imagetools create -t "$DST" "$SRC"
-          else
-            echo "::warning::$SRC does not exist yet (first full run on this repository?) — building instead of retagging"
-            docker buildx build \
-              --push \
-              -t "$DST" -t "$SRC" \
-              -f "infrastructure/docker/Dockerfile.${{ matrix.image }}" \
-              --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
-              --label "org.opencontainers.image.revision=${{ github.sha }}" \
-              --cache-from "type=gha,scope=${{ matrix.image }}" \
-              --cache-to "type=gha,mode=max,scope=${{ matrix.image }}" \
-              .
-          fi
-
   # ------------------------------------------------------------------ #
   # Staging deploy. INFRASTRUCTURE §3: develop deploys to Contabo
   # automatically. Production is a different provider, needs a human, and
@@ -804,10 +787,27 @@ jobs:
 
       # A deploy that reports success without asking the thing whether it
       # works is a deploy that reports success.
+      #
+      # `vars.STAGING_URL` is the deployment's real, HTTPS, public address
+      # (PRD §6.1: `https://31-220-74-159.sslip.io` on the current host) — a
+      # repo variable rather than a hardcoded literal so the hostname can
+      # change without editing this file. REQUIRED, with no fallback: the
+      # Caddyfile (infrastructure/staging/Caddyfile) has exactly one site
+      # block, for the `31-220-74-159.sslip.io` hostname. A request with
+      # Host: 31.220.74.159 (what a fallback to `http://$STAGING_HOST` would
+      # send) matches no site block in Caddy and gets nothing usable back —
+      # so a fallback here would not be a degraded smoke test, it would be a
+      # smoke test that silently tests nothing. Fail fast instead
+      # (docs/workflows/ci-tiers.md has the cut-over steps).
       - name: smoke
         env:
-          HOST: ${{ vars.STAGING_HOST }}
-        run: bash infrastructure/staging/smoke.sh "http://$HOST"
+          BASE: ${{ vars.STAGING_URL }}
+        run: |
+          if [ -z "$BASE" ]; then
+            echo "::error::vars.STAGING_URL is not set. Set Settings -> Secrets and variables -> Actions -> Variables -> STAGING_URL to the staging HTTPS origin (e.g. https://31-220-74-159.sslip.io) before deploy-staging can run smoke tests. There is no bare-IP fallback: the Caddyfile has no site block for the bare host, so http://\$STAGING_HOST matches nothing. See docs/workflows/ci-tiers.md." >&2
+            exit 1
+          fi
+          bash infrastructure/staging/smoke.sh "$BASE"
 
       # A real browser against the real deployment, which curl cannot stand in
       # for: smoke.sh proves each endpoint answers, not that a document loaded
@@ -826,10 +826,20 @@ jobs:
       - name: install browser
         run: npx playwright install --with-deps chromium
 
+      # Same requirement as the smoke step above, and for the same reason:
+      # `http://$STAGING_HOST` matches no site block in the Caddyfile, so a
+      # fallback here would point a real browser at a host that answers
+      # nothing meaningful rather than exercising the deployed origin.
       - name: browser against the deployed origin
         env:
-          E2E_BASE_URL: http://${{ vars.STAGING_HOST }}
-        run: npx playwright test --config tests/e2e/playwright.deployed.config.ts
+          BASE: ${{ vars.STAGING_URL }}
+        run: |
+          if [ -z "$BASE" ]; then
+            echo "::error::vars.STAGING_URL is not set. Set Settings -> Secrets and variables -> Actions -> Variables -> STAGING_URL to the staging HTTPS origin (e.g. https://31-220-74-159.sslip.io) before deploy-staging can run the deployed Playwright suite. There is no bare-IP fallback: the Caddyfile has no site block for the bare host. See docs/workflows/ci-tiers.md." >&2
+            exit 1
+          fi
+          export E2E_BASE_URL="$BASE"
+          npx playwright test --config tests/e2e/playwright.deployed.config.ts
 
   # ------------------------------------------------------------------ #
   # GAP-002 (docs/COMPLIANCE_GAPS.md) — the blocking half. Fails the run on

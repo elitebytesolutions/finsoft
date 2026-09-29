@@ -3990,3 +3990,35 @@ output.sav-num{display:inline-flex;align-items:center;justify-content:center;bac
  /* Force colour blocks to print */
  .inv-lines thead th,.inv-doc-header { -webkit-print-color-adjust:exact;print-color-adjust:exact }
 }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   Financial UI Kit — packages/ui native components (not ported from the
+   prototype). Tokens only: docs/design-system/08-governance.md.
+   Field / TextInput — docs/design-system/02-components.md §C1, §C2
+   Banner            — §F (foundation for a future PeriodLockedBanner)
+   Button busy state — §B1
+   ══════════════════════════════════════════════════════════════════════════ */
+.field{display:flex;flex-direction:column;gap:var(--sp-2)}
+.field-label{font:var(--t-label);color:var(--ink-2);display:inline-flex;align-items:baseline;gap:2px}
+.field-required{color:var(--money-negative)}
+.field-message{margin:0;font:var(--t-caption)}
+.field-message.helper{color:var(--muted)}
+.field-message.error{color:var(--money-negative)}
+.field.has-error .text-input{border-color:var(--money-negative)}
+
+.text-input{height:40px;width:100%;border:1px solid var(--line);background:var(--surface-sunken);border-radius:9px;padding:0 var(--sp-4);font-size:11px;color:var(--ink);font-family:inherit}
+.text-input.dense{height:35px;font-size:10px}
+.text-input::placeholder{color:var(--muted-2)}
+.text-input:disabled{opacity:.6;cursor:not-allowed}
+
+.banner{display:flex;align-items:flex-start;gap:var(--sp-3);padding:var(--sp-4) var(--sp-6);border-radius:var(--r-md);font:var(--t-body-sm)}
+.banner svg{flex:none;margin-top:1px}
+.banner-body{flex:1;min-width:0}
+.banner.info{background:var(--tone-info-bg);color:var(--tone-info)}
+.banner.warn{background:var(--tone-warn-bg);color:var(--tone-warn)}
+.banner.danger{background:var(--tone-danger-bg);color:var(--tone-danger)}
+.banner.neutral{background:var(--tone-neutral-bg);color:var(--tone-neutral)}
+
+.btn.busy{pointer-events:none}
+.btn-spinner{animation:btn-spin var(--m-spin) linear infinite}
+@keyframes btn-spin{to{transform:rotate(360deg)}}

@@ -1,5 +1,6 @@
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import process from 'node:process'
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -40,5 +41,34 @@ const nextConfig = {
    */
   outputFileTracingRoot: join(fileURLToPath(import.meta.url), '../../..'),
   transpilePackages: ['@finsoft/ui', '@finsoft/shared-types'],
+  /*
+   * Dev/test only. `npm run dev` serves apps/web alone on :3000 with nothing in
+   * front of it, while the API listens on its own port — so a same-origin
+   * `/api/*` call from the browser (apps/web/src/lib/api/client.ts) would 404
+   * against Next's own router instead of reaching the API. This rewrite makes
+   * dev behave like staging/production, where Caddy (infrastructure/staging/
+   * Caddyfile) does the same routing in front of the container: one origin,
+   * `/api/*` proxied through to the API, everything else served by Next. That
+   * is also the arrangement ADR-0009's SameSite=Strict refresh cookie requires
+   * — a cross-origin call to a different port would never send it.
+   *
+   * Gated on NODE_ENV !== 'production' (security review, this task): in
+   * staging/production Caddy is supposed to intercept /api/* before it ever
+   * reaches this container, but "supposed to" is Caddy's ordering, not this
+   * app's. Leaving the rewrite live unconditionally meant the running Next
+   * server ALSO had its own, silent, correct-looking route to `/api/*` — if a
+   * future Caddyfile change ever mis-ordered the two `handle` blocks (or a
+   * request reached the web container directly, bypassing the proxy), this
+   * app would quietly proxy it onward to `http://localhost:${API_PORT}`
+   * instead of failing loudly. A `next dev` process always runs with
+   * `NODE_ENV=development` regardless of what is passed to it, so this stays
+   * active for local dev and for the e2e suite (tests/e2e/playwright.config.ts)
+   * and disappears only from a production build/start.
+   */
+  async rewrites() {
+    if (process.env.NODE_ENV === 'production') return []
+    const apiPort = process.env.API_PORT || 3001
+    return [{ source: '/api/:path*', destination: `http://localhost:${apiPort}/api/:path*` }]
+  },
 }
 export default nextConfig

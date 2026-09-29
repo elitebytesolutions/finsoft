@@ -122,8 +122,12 @@ log "Firewall"
 # reverse proxy is the only thing that publishes to 0.0.0.0. ufw below is
 # defence for the HOST's own services, not for containers.
 ufw allow OpenSSH >/dev/null          # before enabling, or this session dies
-ufw allow 80/tcp >/dev/null           # reverse proxy, the only public entry
-ufw --force enable >/dev/null
+ufw allow 80/tcp >/dev/null           # ACME HTTP-01 + the redirect to 443
+ufw allow 443/tcp >/dev/null          # the reverse proxy's HTTPS listener
+ufw --force enable >/dev/null         # `ufw allow` is itself idempotent — a
+                                       # re-run against an already-enabled
+                                       # firewall with these rules present is
+                                       # a no-op, not an error
 ufw status verbose | head -6
 
 # ---------------------------------------------------------------------------

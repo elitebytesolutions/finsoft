@@ -59,6 +59,44 @@ changed: a push to `develop`, a push to `release/*`, `workflow_dispatch`, and
 the nightly `schedule` (`0 21 * * *` UTC = 02:00 PKT). This is also when
 `deploy-staging` can run and when container images are published.
 
+## Staging address: `STAGING_URL` vs `STAGING_HOST`
+
+`deploy-staging` uses two different repo variables for two different purposes, and they are not
+interchangeable:
+
+- `vars.STAGING_HOST` — a bare host/IP, e.g. `31.220.74.159`. Used only to SSH in
+  (`$SSH_USER@$HOST`) and to `scp` configuration to the box. This is a transport address, not
+  something a browser or `curl` should ever be pointed at.
+- `vars.STAGING_URL` — the full public base URL a browser uses, e.g.
+  `https://31-220-74-159.sslip.io`. **Mandatory** from this merge onward. Used by the `smoke` step
+  and the `browser against the deployed origin` step as the one and only base URL.
+
+`vars.STAGING_URL` is mandatory, with **no fallback to `http://$STAGING_HOST`**, because that
+fallback does not degrade gracefully — it silently tests nothing. `infrastructure/staging/Caddyfile`
+has exactly one site block, addressed by the hostname `31-220-74-159.sslip.io`; Caddy dispatches by
+Host header, not by which socket the connection landed on. A request with `Host: 31.220.74.159`
+(what `http://$STAGING_HOST` sends) matches no site block Caddy owns for the app, so the old
+fallback was smoke-testing a dead end, not staging. (It now gets a real answer — the bare-IP
+catch-all documented below — but that answer is a redirect, not a running app, so it still cannot
+serve as the smoke/E2E base.) If `vars.STAGING_URL` is unset, `deploy-staging`'s `smoke` and
+`browser against the deployed origin` steps fail fast with `::error::` rather than pass while
+silently exercising nothing.
+
+### Cut-over checklist (one-time, before the first deploy under this rule)
+
+1. Set the repo variable: Settings → Secrets and variables → Actions → Variables →
+   `STAGING_URL` = `https://31-220-74-159.sslip.io`.
+2. On the staging host, open the HTTPS port: `sudo ufw allow 443/tcp`.
+3. Merge to `develop` (or dispatch the workflow) so `deploy-staging` ships the updated
+   `infrastructure/staging/Caddyfile`, which now also serves a bare-IP catch-all on `:80` that
+   redirects `http://31.220.74.159/...` to `https://31-220-74-159.sslip.io/...`.
+4. Verify by hand:
+   - `curl -sI https://31-220-74-159.sslip.io/api/health` returns `HTTP/2 200`.
+   - `curl -sI http://31-220-74-159.sslip.io/` returns a `30x` to the `https://` origin (Caddy's
+     automatic HTTP→HTTPS redirect for the named site).
+   - `curl -sI http://31.220.74.159/` returns a `301` to `https://31-220-74-159.sslip.io/` (the
+     bare-IP catch-all).
+
 ## Images
 
 Each of `api`, `worker`, `web` is rebuilt only when its own paths (or a
@@ -66,18 +104,15 @@ shared package it actually depends on — see the `images` map in
 `risk-tiers.json`) changed. On a PR or feature push, a changed image is built
 and **not** pushed — proving it still builds. On a full run:
 
-- A **changed** image is built and pushed as both `:${{ github.sha }}` and
-  `:develop`.
-- An **unchanged** image has its existing `:develop` digest retagged to
-  `:${{ github.sha }}` with `docker buildx imagetools create` — no rebuild,
-  so it stays the exact bytes that already ran on staging. This falls back to
-  a full build+push only if `:develop` does not exist yet (the first full run
-  on a fresh repository).
+- **Every** image (api, worker, web) is built from the commit and pushed as
+  both `:${{ github.sha }}` and `:develop`. There is no "retag the unchanged
+  image" shortcut: it was removed after it shipped images built before M1 to
+  staging on every develop merge (a develop push is diffed against its own
+  merge-base, so every image looked unchanged). The GHA build cache keeps an
+  unchanged image's rebuild short.
 
-This is what keeps `infrastructure/staging/deploy.sh` — which pulls
-`:$SHA` for all three images unconditionally — working without any change to
-it: every full run, all three tags exist, whether or not all three images
-were rebuilt.
+`infrastructure/staging/deploy.sh` pulls `:$SHA` for all three images, so a
+deploy always runs exactly the code of the commit it names.
 
 ## Dependency audit (GAP-002)
 
