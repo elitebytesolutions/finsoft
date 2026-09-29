@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { Client } from 'pg'
 import { beforeAll, describe, expect, it } from 'vitest'
 import {
   findEntryById,
@@ -13,14 +14,10 @@ import {
 } from '@finsoft/database'
 import { createTenantFixture, runAs, sqlstate, type TenantFixture } from '@finsoft/database/testing'
 import { createFiscalYear, seedChartOfAccounts } from '@finsoft/database/provisioning'
-import {
-  fixedClock,
-  KernelInvariantError,
-  periodEngine,
-  PostingError,
-} from '@finsoft/accounting-kernel'
+import { KernelInvariantError, periodEngine, PostingError } from '@finsoft/accounting-kernel'
 import { Money } from '@finsoft/validation'
 // Clock injection is test-only; these are deliberately not on the package's public surface.
+import { fixedClock } from '../../packages/accounting-kernel/src/clock.ts'
 import {
   assertEntryWellFormed,
   createPostingEngine,
@@ -31,8 +28,9 @@ import { createReversalEngine } from '../../packages/accounting-kernel/src/rever
 import {
   countAuditRecords,
   countJournalEntries,
+  entriesOutsideTheirPeriod,
   entryNumbersInSeries,
-  reversalResiduals,
+  reversalResidualMap,
   unbalancedEntries,
   unbalancedTrialBalances,
 } from './golden-support.ts'
@@ -164,6 +162,46 @@ function heldPosting(command: PostCommand) {
 }
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/*
+ * Scans over EVERY tenant of the test database are linear in its tenant
+ * count, which only grows between local runs (777 tenants when Invariant 6's
+ * scan first exceeded Vitest's 5 s default). This is a time budget for the
+ * scan, not a tolerance on any figure: every assertion inside is exact.
+ */
+const ALL_TENANT_SCAN_MS = 120_000
+
+/** Migration 012's period-gate message — distinguishes it from every other 23514. */
+const CLOSED_PERIOD_REFUSAL = /cannot post into a CLOSED period/
+
+/**
+ * finsoft_migration: the owning, BYPASSRLS role. Used here for two things
+ * only: to prove the database, not RLS, refuses a posting into a closed
+ * period (Invariant 5's no-bypass half), and to set up rows no M2 code path
+ * can create — a document-sourced entry (the modules arrive in M3) and an
+ * inactive account (finsoft_app has no UPDATE on accounts, migration 010).
+ */
+async function asMigrationRole<T>(fn: (client: Client) => Promise<T>): Promise<T> {
+  const url = process.env['TEST_MIGRATION_DATABASE_URL']
+  if (!url) throw new Error('TEST_MIGRATION_DATABASE_URL is not set')
+  const client = new Client({ connectionString: url })
+  await client.connect()
+  try {
+    return await fn(client)
+  } finally {
+    await client.end()
+  }
+}
+
+async function deactivateAccount(tenantId: string, accountId: string): Promise<void> {
+  await asMigrationRole(async (client) => {
+    const result = await client.query(
+      'UPDATE accounts SET is_active = false WHERE tenant_id = $1 AND id = $2',
+      [tenantId, accountId],
+    )
+    if (result.rowCount !== 1) throw new Error(`fixture: account ${accountId} not deactivated`)
+  })
+}
 
 export function registerPostingInvariantChecks(): void {
   describe('Invariants 1, 2, 4, 5, 6, 8 — against the real kernel and database (M2-A)', () => {
@@ -500,7 +538,49 @@ export function registerPostingInvariantChecks(): void {
           ),
         )
         expect(sqlstate(error)).toBe('23514')
+        // The PERIOD gate refused it — not the deferred "fewer than two lines"
+        // check, which also raises 23514 and would pass this test by accident.
+        expect(String(error)).toMatch(CLOSED_PERIOD_REFUSAL)
       })
+
+      it('the database refuses it as the migration role too — BYPASSRLS is not a period bypass', async () => {
+        const august = await asOwner((tx) => findPeriodForDate(tx, tenant.tenantId, '2026-08-20'))
+        expect(august!.status).toBe('CLOSED')
+        const before = await asOwner((tx) => countJournalEntries(tx, tenant.tenantId))
+        const error = await rejectionOf(
+          asMigrationRole((client) =>
+            client.query(
+              `INSERT INTO journal_entries (
+                 tenant_id, entry_number, posting_rule, event, occurred_at, fiscal_period_id,
+                 narration, source_type, source_id, idempotency_key, request_fingerprint,
+                 created_by, updated_by)
+               VALUES ($1, 'JV-2027-999903', 'JOURNAL_VOUCHER_POSTED@1', 'JOURNAL_VOUCHER_POSTED',
+                       '2026-08-20', $2, 'migration-role bypass attempt', 'journal_voucher', $3,
+                       'inv-bypass-closed-migration', $4, $5, $5)`,
+              [tenant.tenantId, august!.id, randomUUID(), '0'.repeat(64), tenant.ownerId],
+            ),
+          ),
+        )
+        expect(sqlstate(error)).toBe('23514')
+        expect(String(error)).toMatch(CLOSED_PERIOD_REFUSAL)
+        expect(await asOwner((tx) => countJournalEntries(tx, tenant.tenantId))).toBe(before)
+      })
+
+      it(
+        "every entry of every tenant is dated inside its own period — the period gate's backstop scan",
+        async () => {
+          let checked = 0
+          for (const tenantId of await everyTenant()) {
+            const scan = await asTenantReader(tenantId, (tx) =>
+              entriesOutsideTheirPeriod(tx, tenantId),
+            )
+            expect(scan.offenders, `tenant ${tenantId}: entries outside their period`).toEqual([])
+            checked += scan.checked
+          }
+          expect(checked).toBeGreaterThanOrEqual(5)
+        },
+        ALL_TENANT_SCAN_MS,
+      )
 
       it("a reversal is refused when today's own period is closed — never redirected", async () => {
         const other = await createTenantFixture('FIS5')
@@ -545,17 +625,36 @@ export function registerPostingInvariantChecks(): void {
     })
 
     describe("Invariant 6: a reversal exactly neutralises the original's financial impact", () => {
-      it('every reversal pair of every tenant nets to 0.0000 per account and per party', async () => {
-        let pairs = 0
-        for (const tenantId of await everyTenant()) {
-          const offenders = await asTenantReader(tenantId, (tx) => reversalResiduals(tx, tenantId))
-          expect(offenders, `tenant ${tenantId}: reversal residuals`).toEqual([])
-          pairs += (
-            await asTenantReader(tenantId, (tx) => entryNumbersInSeries(tx, tenantId, 'RV'))
-          ).length
-        }
-        expect(pairs).toBeGreaterThanOrEqual(2)
-      })
+      it(
+        'every reversal pair of every tenant nets to 0.0000 in EVERY (account, party) cell — the whole map',
+        async () => {
+          /*
+           * The whole residual map, compared cell by cell with an all-zero map
+           * of the same keys. Not "the database found no non-zero rows" and
+           * not a total: an offsetting pair of errors (+x on one account, −x
+           * on another) sums to zero but fails here, on the cell that is off.
+           * The party dimension is part of every key; in M2 no reversible
+           * entry carries a party (manual AR/AP lines are refused and a
+           * document-sourced entry is REVERSAL_VIA_SOURCE_REQUIRED), so every
+           * key's party is '-' until M3's module reversals land.
+           */
+          let pairs = 0
+          let cells = 0
+          for (const tenantId of await everyTenant()) {
+            const map = await asTenantReader(tenantId, (tx) => reversalResidualMap(tx, tenantId))
+            const actual = Object.fromEntries(map.residuals)
+            const allZero = Object.fromEntries([...map.residuals.keys()].map((k) => [k, '0.0000']))
+            expect(actual, `tenant ${tenantId}: reversal residual map`).toEqual(allZero)
+            expect(map.shapeOffenders, `tenant ${tenantId}: reversal pair shape`).toEqual([])
+            pairs += map.pairCount
+            cells += map.residuals.size
+          }
+          // Not vacuous: this fixture alone reverses two vouchers (2 + 4 accounts).
+          expect(pairs).toBeGreaterThanOrEqual(2)
+          expect(cells).toBeGreaterThanOrEqual(6)
+        },
+        ALL_TENANT_SCAN_MS,
+      )
 
       it("open period: R takes E's date. Closed period: R takes today and discloses", async () => {
         const [sepR, augR] = await asOwner(async (tx) => {
@@ -630,6 +729,174 @@ export function registerPostingInvariantChecks(): void {
         )
         expect(replay.outcome).toBe('REPLAYED')
         expect(replay.entry.id).toBe(augR)
+      })
+    })
+
+    describe('Reversal and posting preconditions — reversal.md §3/§11, journal-voucher.md §3', () => {
+      /*
+       * A second tenant, so that the rows these tests create (a document-
+       * sourced entry, two deactivated accounts) never touch the main
+       * fixture's figures. The main fixture's entries serve as "another
+       * tenant's entry".
+       */
+      let other: TenantFixture
+      let otherAccounts: Map<string, string>
+      const asOther = <T>(fn: (tx: TenantTx) => Promise<T>): Promise<T> =>
+        runAs({ tenantId: other.tenantId, userId: other.ownerId }, () => withTenant(fn))
+      const reverseAsOther = (entryId: string, reason: unknown, key: string) =>
+        asOther((tx) =>
+          reversal.reverse({ entryId, reason: reason as string, idempotencyKey: key }, tx),
+        )
+      const otherJv = (key: string, lines: [string, 'debit' | 'credit', string][]) =>
+        asOther((tx) => engine.post(jv(key, '2026-09-05', lines, otherAccounts), tx))
+      const entriesOfOther = () => asOther((tx) => countJournalEntries(tx, other.tenantId))
+
+      beforeAll(async () => {
+        other = await createTenantFixture('FISP')
+        const all = await asOther(async (tx) => {
+          await seedChartOfAccounts(tx, other.tenantId)
+          await createFiscalYear(tx, other.tenantId, 2027)
+          return listAllAccounts(tx, other.tenantId)
+        })
+        otherAccounts = new Map(all.map((account) => [account.code, account.id]))
+      }, 120_000)
+
+      it("ENTRY_NOT_FOUND: unknown, malformed and ANOTHER TENANT's entry id give the same answer", async () => {
+        const foreignId = augustVoucher.entry.id // the main fixture's entry: exists, elsewhere
+        const unknownId = randomUUID()
+        const before = await entriesOfOther()
+        const answers = []
+        for (const [i, id] of [foreignId, unknownId, 'not-a-uuid'].entries()) {
+          const error = await rejectionOf(reverseAsOther(id, 'Wrong vendor', `pre-enf-${i}`))
+          expect(codeOf(error), `entry id ${id}`).toBe('ENTRY_NOT_FOUND')
+          const e = error as PostingError
+          // Normalise the id itself out; everything else must be identical.
+          answers.push({
+            message: e.message.replaceAll(id, '<id>'),
+            details: { ...e.details, entryId: e.details.entryId === id ? '<id>' : 'LEAKED' },
+          })
+        }
+        expect(answers[0]).toEqual(answers[1])
+        expect(answers[1]).toEqual(answers[2])
+        expect(await entriesOfOther()).toBe(before)
+        // The foreign entry is untouched: still REVERSED by its own tenant's R.
+        const foreign = await asOwner((tx) => findEntryById(tx, tenant.tenantId, foreignId))
+        expect(foreign!.status).toBe('REVERSED')
+        expect(foreign!.reversedBy).not.toBeNull()
+      })
+
+      it('REVERSAL_REASON_REQUIRED: missing, empty, blank and over-long reasons; nothing written', async () => {
+        const e = await otherJv('pre-reason-e', [
+          ['6300', 'debit', '25.0000'],
+          ['1110', 'credit', '25.0000'],
+        ])
+        const before = await entriesOfOther()
+        const reasons: [string, unknown][] = [
+          ['missing', undefined],
+          ['empty', ''],
+          ['blank', '   \t '],
+          ['501 characters', 'x'.repeat(501)],
+        ]
+        for (const [label, reason] of reasons) {
+          const error = await rejectionOf(
+            reverseAsOther(e.entry.id, reason, `pre-reason-${label.replace(/ /g, '-')}`),
+          )
+          expect(codeOf(error), label).toBe('REVERSAL_REASON_REQUIRED')
+        }
+        expect(await entriesOfOther()).toBe(before)
+        const after = await asOther((tx) => findEntryById(tx, other.tenantId, e.entry.id))
+        expect(after!.status).toBe('POSTED')
+        expect(after!.reversedBy).toBeNull()
+      })
+
+      it('REVERSAL_VIA_SOURCE_REQUIRED: a document-sourced entry is not reversed from the journal', async () => {
+        /*
+         * No M2 code path creates a document-sourced entry (sales_invoice
+         * arrives with M3), so it is written here as the migration role: a
+         * complete, balanced entry satisfying every constraint and trigger
+         * of migration 012, in one transaction.
+         */
+        const period = await asOther((tx) => findPeriodForDate(tx, other.tenantId, '2026-09-06'))
+        const entryId = await asMigrationRole(async (client) => {
+          await client.query('BEGIN')
+          try {
+            const inserted = await client.query<{ id: string }>(
+              `INSERT INTO journal_entries (
+                 tenant_id, entry_number, posting_rule, event, occurred_at, fiscal_period_id,
+                 narration, source_type, source_id, idempotency_key, request_fingerprint,
+                 created_by, updated_by)
+               VALUES ($1, 'JE-2027-900001', 'SALE_POSTED/service@1', 'SALE_POSTED', '2026-09-06',
+                       $2, 'Cash service sale (test fixture)', 'sales_invoice', $3,
+                       'pre-doc-sourced', $4, $5, $5)
+               RETURNING id`,
+              [other.tenantId, period!.id, randomUUID(), '0'.repeat(64), other.ownerId],
+            )
+            const id = inserted.rows[0]!.id
+            await client.query(
+              `INSERT INTO journal_lines (tenant_id, entry_id, line_number, account_id,
+                 account_control, debit, credit, created_by, updated_by)
+               VALUES ($1, $2, 1, $3, 'NONE', 900.0000, 0, $5, $5),
+                      ($1, $2, 2, $4, 'NONE', 0, 900.0000, $5, $5)`,
+              [
+                other.tenantId,
+                id,
+                otherAccounts.get('1110'),
+                otherAccounts.get('4200'),
+                other.ownerId,
+              ],
+            )
+            await client.query('COMMIT')
+            return id
+          } catch (error) {
+            await client.query('ROLLBACK')
+            throw error
+          }
+        })
+
+        const before = await entriesOfOther()
+        const error = await rejectionOf(reverseAsOther(entryId, 'Customer returned', 'pre-doc-r'))
+        expect(codeOf(error)).toBe('REVERSAL_VIA_SOURCE_REQUIRED')
+        expect((error as PostingError).details).toEqual({
+          entry: 'JE-2027-900001',
+          sourceType: 'sales_invoice',
+        })
+        expect(await entriesOfOther()).toBe(before)
+        const after = await asOther((tx) => findEntryById(tx, other.tenantId, entryId))
+        expect(after!.status).toBe('POSTED')
+      })
+
+      it('ACCOUNT_INACTIVE on the JV path: an inactive account is refused, nothing written', async () => {
+        await deactivateAccount(other.tenantId, otherAccounts.get('6400')!)
+        const before = await entriesOfOther()
+        const error = await rejectionOf(
+          otherJv('pre-inactive-jv', [
+            ['6400', 'debit', '10.0000'],
+            ['1110', 'credit', '10.0000'],
+          ]),
+        )
+        expect(codeOf(error)).toBe('ACCOUNT_INACTIVE')
+        expect(await entriesOfOther()).toBe(before)
+      })
+
+      it('ACCOUNT_INACTIVE on the reversal path: E on an account deactivated since, R refused', async () => {
+        const e = await otherJv('pre-inactive-e', [
+          ['6200', 'debit', '40.0000'],
+          ['1110', 'credit', '40.0000'],
+        ])
+        await deactivateAccount(other.tenantId, otherAccounts.get('6200')!)
+        const before = await entriesOfOther()
+        const error = await rejectionOf(
+          reverseAsOther(e.entry.id, 'Wrong account', 'pre-inactive-r'),
+        )
+        expect(codeOf(error)).toBe('ACCOUNT_INACTIVE')
+        expect((error as PostingError).details).toMatchObject({
+          entry: e.entry.entryNumber,
+          accountId: otherAccounts.get('6200'),
+        })
+        expect(await entriesOfOther()).toBe(before)
+        const after = await asOther((tx) => findEntryById(tx, other.tenantId, e.entry.id))
+        expect(after!.status).toBe('POSTED')
+        expect(after!.reversedBy).toBeNull()
       })
     })
 

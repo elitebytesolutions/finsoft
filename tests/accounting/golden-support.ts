@@ -194,3 +194,94 @@ export async function entryNumbersInSeries(
   `.execute(tx)
   return result.rows.map((row) => row.entry_number)
 }
+
+export interface ReversalResidualMap {
+  /**
+   * EVERY (reversal pair, account, party) cell any line of an original or its
+   * reversal touches — zero cells included — keyed
+   * `E-number/R-number account party`, valued Σ(debit − credit) as numeric text.
+   */
+  readonly residuals: ReadonlyMap<string, string>
+  /** Pairs whose line counts differ, or whose original is not REVERSED by this R. */
+  readonly shapeOffenders: readonly string[]
+  readonly pairCount: number
+}
+
+/**
+ * Invariant 6, as the WHOLE residual map (T3 Council, Acct F4/R4): the caller
+ * asserts every cell is exactly 0.0000, rather than asking the database for
+ * the non-zero ones — a filter that is itself wrong would return nothing and
+ * pass. Also the cheaper of the two formulations (no correlated subqueries),
+ * which matters: the suite runs it once per tenant of an accumulating test
+ * database.
+ */
+export async function reversalResidualMap(
+  tx: TenantTx,
+  tenantId: string,
+): Promise<ReversalResidualMap> {
+  assertIssuedTenantTx(tx)
+  const cells = await sql<{ key: string; residual: string }>`
+    SELECT e.entry_number || '/' || r.entry_number || ' ' || a.code || ' '
+             || coalesce(jl.party_type || ':' || jl.party_id::text, '-') AS key,
+           sum(jl.debit - jl.credit)::text AS residual
+      FROM journal_entries r
+      JOIN journal_entries e ON e.tenant_id = r.tenant_id AND e.id = r.reversal_of
+      JOIN journal_lines jl  ON jl.tenant_id = r.tenant_id AND jl.entry_id IN (e.id, r.id)
+      JOIN accounts a        ON a.tenant_id = jl.tenant_id AND a.id = jl.account_id
+     WHERE r.tenant_id = ${tenantId}
+     GROUP BY e.entry_number, r.entry_number, a.code, jl.party_type, jl.party_id
+  `.execute(tx)
+  const shape = await sql<{ offender: string; pairs: string }>`
+    WITH pairs AS (
+      SELECT e.entry_number AS original, r.entry_number AS reversal,
+             e.status, e.reversed_by, r.id AS r_id,
+             (SELECT count(*) FROM journal_lines l WHERE l.tenant_id = e.tenant_id AND l.entry_id = e.id) AS e_lines,
+             (SELECT count(*) FROM journal_lines l WHERE l.tenant_id = r.tenant_id AND l.entry_id = r.id) AS r_lines
+        FROM journal_entries r
+        JOIN journal_entries e ON e.tenant_id = r.tenant_id AND e.id = r.reversal_of
+       WHERE r.tenant_id = ${tenantId}
+    )
+    SELECT CASE
+             WHEN status <> 'REVERSED' OR reversed_by IS DISTINCT FROM r_id OR e_lines <> r_lines
+             THEN original || '/' || reversal || ': ' || e_lines || ' vs ' || r_lines
+                  || ' lines, original ' || status
+           END AS offender,
+           (SELECT count(*) FROM pairs)::text AS pairs
+      FROM pairs
+  `.execute(tx)
+  return {
+    residuals: new Map(cells.rows.map((row) => [row.key, row.residual])),
+    shapeOffenders: shape.rows.flatMap((row) => (row.offender === null ? [] : [row.offender])),
+    pairCount: Number(shape.rows[0]?.pairs ?? '0'),
+  }
+}
+
+/**
+ * Period-gate backstop scan (T3 Council, PERIOD GATE item): every journal
+ * entry's occurred_at lies inside its own fiscal_period_id's
+ * [period_start, period_end]. Returns offenders (empty = holds) and the number
+ * of entries checked, so the caller can prove the scan was not vacuous. An
+ * entry whose period does not resolve at all is an offender too.
+ */
+export async function entriesOutsideTheirPeriod(
+  tx: TenantTx,
+  tenantId: string,
+): Promise<{ readonly offenders: readonly string[]; readonly checked: number }> {
+  assertIssuedTenantTx(tx)
+  const result = await sql<{ offender: string | null }>`
+    SELECT CASE
+             WHEN fp.id IS NULL
+               OR je.occurred_at < fp.period_start
+               OR je.occurred_at > fp.period_end
+             THEN je.entry_number || ' dated ' || to_char(je.occurred_at, 'YYYY-MM-DD')
+                  || ' in period ' || coalesce(fp.label, '(none)')
+           END AS offender
+      FROM journal_entries je
+      LEFT JOIN fiscal_periods fp ON fp.tenant_id = je.tenant_id AND fp.id = je.fiscal_period_id
+     WHERE je.tenant_id = ${tenantId}
+  `.execute(tx)
+  return {
+    offenders: result.rows.flatMap((row) => (row.offender === null ? [] : [row.offender])),
+    checked: result.rows.length,
+  }
+}

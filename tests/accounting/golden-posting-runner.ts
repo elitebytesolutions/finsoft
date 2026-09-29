@@ -16,31 +16,28 @@ import {
   findPeriodForDate,
   listAllAccounts,
   resolveAccountsByRole,
-  trialBalanceRawSums,
   withTenant,
   type AccountRow,
   type JournalLineRow,
   type TenantTx,
 } from '@finsoft/database'
 import { createFiscalYear, seedChartOfAccounts } from '@finsoft/database/provisioning'
-import {
-  fixedClock,
-  periodEngine,
-  PostingError,
-  type FinancialEventName,
-} from '@finsoft/accounting-kernel'
-// Clock injection is test-only: these two are deliberately not on the package's public surface.
+import { periodEngine, PostingError, type FinancialEventName } from '@finsoft/accounting-kernel'
+// Clock injection is test-only: these are deliberately not on the package's public surface.
+import { fixedClock } from '../../packages/accounting-kernel/src/clock.ts'
 import {
   createPostingEngine,
   type PostResult,
 } from '../../packages/accounting-kernel/src/posting-engine.ts'
 import { createReversalEngine } from '../../packages/accounting-kernel/src/reversal.ts'
 import { Money } from '@finsoft/validation'
+import { trialBalance } from '@finsoft/reporting'
 import {
   accountMovement,
   countAuditRecords,
   countJournalEntries,
   reversalPairResidualByAccount,
+  reversalResiduals,
 } from './golden-support.ts'
 
 /*
@@ -227,21 +224,29 @@ export async function runPostingScenario(scenario: PostingScenario): Promise<voi
       })),
     )
 
+  /*
+   * The SHIPPED report, not a parallel computation: @finsoft/reporting's
+   * trialBalance() — its rows, its column presentation, its totals — is what
+   * is compared with the hand-computed figures (T3 Council, Acct F5/R5). A
+   * runner that re-derived the trial balance itself would prove only that two
+   * implementations agree, not that the one users see is right.
+   */
   async function checkTrialBalance(label: string, tb: Record<string, unknown>): Promise<void> {
     assertOnlyKnownKeys(label, tb, ['asOf', 'rows', 'totals'])
-    const rows = await act((tx) => trialBalanceRawSums(tx, tenantId, tb.asOf as string))
-    const actual = rows
-      .map((row) => ({ account: row.code, ...presentNet(row.debit, row.credit) }))
+    const report = await act((tx) => trialBalance(tx, tenantId, tb.asOf as string))
+    expect(report.asOf, `${label} asOf`).toBe(tb.asOf)
+    const actual = report.lines
+      .map((line) => ({ account: line.code, debit: line.debit, credit: line.credit }))
       .sort((a, b) => a.account.localeCompare(b.account))
     const expected = [...(tb.rows as { account: string }[])].sort((a, b) =>
       a.account.localeCompare(b.account),
     )
     expect(actual, `${label} rows as of ${String(tb.asOf)}`).toEqual(expected)
-    expect(totalsOf(actual), `${label} totals`).toEqual(tb.totals)
-    // Invariant 2, on every trial balance a golden file names.
-    expect(
-      Money.equals(Money.from(totalsOf(actual).debit), Money.from(totalsOf(actual).credit)),
-    ).toBe(true)
+    expect({ debit: report.totalDebit, credit: report.totalCredit }, `${label} totals`).toEqual(
+      tb.totals,
+    )
+    // Invariant 2, on every trial balance a golden file names — the report's own totals.
+    expect(report.totalDebit, `${label}: Invariant 2`).toBe(report.totalCredit)
   }
 
   async function checkAfterCounts(where: string, exp: Expect): Promise<void> {
@@ -501,14 +506,22 @@ export async function runPostingScenario(scenario: PostingScenario): Promise<voi
       if (step.invariant6) {
         const spec = step.invariant6 as Expect
         assertOnlyKnownKeys(`${where} invariant6`, spec, ['perAccountResidual'])
+        // The WHOLE map (T3 Council, Acct F5/R5): every account any reversal
+        // pair touches must appear in the golden file with its residual, and
+        // nothing the golden file names may be missing. Comparing only the
+        // keys the file lists would let a non-zero residual on an account the
+        // author did not think of pass silently.
         const residuals = await act((tx) => reversalPairResidualByAccount(tx, tenantId))
-        for (const [account, residual] of Object.entries(
-          spec.perAccountResidual as Record<string, string>,
-        )) {
-          expect(residuals.get(account), `${where}: invariant6 residual on ${account}`).toBe(
-            residual,
-          )
-        }
+        expect(
+          Object.fromEntries([...residuals].sort(([a], [b]) => a.localeCompare(b))),
+          `${where}: invariant6 per-account residual map`,
+        ).toEqual(spec.perAccountResidual)
+        // And finer than the file states: per reversal pair, per account, per
+        // party, plus pair shape. Empty = every residual is exactly zero.
+        expect(
+          await act((tx) => reversalResiduals(tx, tenantId)),
+          `${where}: invariant6 per (pair, account, party)`,
+        ).toEqual([])
       }
       if (step.accountLedger) await checkAccountLedger(where, step.accountLedger as Expect)
       if (typeof step.journalEntryCount === 'number') {
@@ -542,15 +555,16 @@ export async function runPostingScenario(scenario: PostingScenario): Promise<voi
     }
   }
 
+  /** A role account's signed balance (debit-positive), read from the shipped trial balance. */
   async function roleBalance(role: string): Promise<string> {
     return act(async (tx) => {
       const account = (await resolveAccountsByRole(tx, tenantId, [role])).get(role)
       if (!account) throw new Error(`golden runner: role ${role} does not resolve.`)
-      const row = (await trialBalanceRawSums(tx, tenantId, '9999-12-31')).find(
-        (r) => r.accountId === account.id,
+      const line = (await trialBalance(tx, tenantId, '9999-12-31')).lines.find(
+        (l) => l.accountId === account.id,
       )
-      return row
-        ? Money.serialize(Money.subtract(Money.from(row.debit), Money.from(row.credit)), 4)
+      return line
+        ? Money.serialize(Money.subtract(Money.from(line.debit), Money.from(line.credit)), 4)
         : '0.0000'
     })
   }

@@ -62,16 +62,20 @@ export const INVARIANTS: readonly Invariant[] = [
     status: 'enforced',
     note:
       'M2-A. Kernel: PERIOD_CLOSED / PERIOD_LOCKED for posts and reversals, no user = FORBIDDEN. ' +
-      'Database: a direct INSERT into a closed period as finsoft_app is refused by the trigger — the ' +
-      'no-bypass half. OPEN GAP, reported: no test yet posts into a closed period as the migration role.',
+      'Database: a direct INSERT into a CLOSED or LOCKED period is refused by the trigger for ' +
+      'finsoft_app AND the BYPASSRLS migration role; a period/date mismatch is refused; posting-vs-close ' +
+      'is serialised both ways (database/tests/accounting-triggers.spec.ts). This suite repeats the ' +
+      'closed-period refusal for both roles, pinned to the trigger message rather than SQLSTATE 23514 ' +
+      'alone, and scans every entry of every tenant for a date inside its own fiscal period.',
   },
   {
     id: 6,
     statement: "A reversal exactly neutralises the original's financial impact",
     status: 'enforced',
     note:
-      'M2-A. Every reversal pair of every tenant nets to 0.0000 per account and per party, has the ' +
-      'same line count as its original, and its original is REVERSED by it. Both date branches ' +
+      'M2-A. For every reversal pair of every tenant the WHOLE (account, party) residual map is ' +
+      'compared cell by cell with 0.0000; each pair has its original line count and its original is ' +
+      'REVERSED by it. The golden runner compares the whole per-account map too. Both date branches ' +
       '(original period open / closed) are exercised. Subledger and stock legs arrive with M3/Wave 5.',
   },
   {

@@ -16,7 +16,9 @@ import {
   type TenantFixture,
 } from '@finsoft/database/testing'
 import { createFiscalYear, seedChartOfAccounts } from '@finsoft/database/provisioning'
-import { fixedClock, PostingError, registerParty } from '@finsoft/accounting-kernel'
+import { PostingError, registerParty } from '@finsoft/accounting-kernel'
+// Test-only: the clock is deliberately not on the package's public surface.
+import { fixedClock } from '../../packages/accounting-kernel/src/clock.ts'
 import {
   createPostingEngine,
   runPostingPipeline,
