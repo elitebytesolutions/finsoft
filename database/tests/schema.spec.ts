@@ -416,7 +416,8 @@ describe('schema', () => {
   it('S3 fixture: a composite local key against a non-tenant-leading referenced key is still an offender', () => {
     // Pure regex check, mirroring the live query above — proves the fix
     // actually inspects the REFERENCES side, not only the FOREIGN KEY side.
-    const re = /^FOREIGN KEY \(tenant_id,[^)]*\)\s+REFERENCES\s+"?[a-zA-Z_][a-zA-Z0-9_]*"?\(tenant_id,/i
+    const re =
+      /^FOREIGN KEY \(tenant_id,[^)]*\)\s+REFERENCES\s+"?[a-zA-Z_][a-zA-Z0-9_]*"?\(tenant_id,/i
     expect(re.test('FOREIGN KEY (tenant_id, x) REFERENCES t(id, y)')).toBe(false)
     expect(re.test('FOREIGN KEY (tenant_id, x) REFERENCES t(tenant_id, y)')).toBe(true)
   })

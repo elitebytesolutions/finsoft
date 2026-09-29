@@ -42,7 +42,8 @@ const CREATE_IDEMPOTENCY_KEY_CONSTRAINT = 'customers_tenant_create_idempotency_k
 function isConcurrentIdempotencyKeyRace(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false
   const code = 'code' in error ? (error as { code?: unknown }).code : undefined
-  const constraint = 'constraint' in error ? (error as { constraint?: unknown }).constraint : undefined
+  const constraint =
+    'constraint' in error ? (error as { constraint?: unknown }).constraint : undefined
   return code === UNIQUE_VIOLATION && constraint === CREATE_IDEMPOTENCY_KEY_CONSTRAINT
 }
 

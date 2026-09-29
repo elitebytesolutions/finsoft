@@ -1775,7 +1775,7 @@ describe('C8 / S2 (ADR-0028): modules/customers/infrastructure/** names only its
     // C7's own message ("sql`` tag outside modules...") fires instead —
     // proves the two bans are not silently doubled up or dropped.
     expect(matching(messages, 'does not use the sql`` tag at all')).toEqual([])
-    expect(matching(messages, "sql`` tag outside modules")).toHaveLength(1)
+    expect(matching(messages, 'sql`` tag outside modules')).toHaveLength(1)
   })
 
   it.each(['table', 'ref'])(

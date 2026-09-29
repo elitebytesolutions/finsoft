@@ -6,8 +6,12 @@ import type { NextFunction, Request, Response } from 'express'
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { TenantContext } from '@finsoft/database'
-import { migrateTestDatabase, prepareTestDatabase, teardownTestDatabase } from '@finsoft/database/testing'
-import { PERMISSION_CODES } from '@finsoft/permissions'
+import {
+  migrateTestDatabase,
+  prepareTestDatabase,
+  teardownTestDatabase,
+} from '@finsoft/database/testing'
+import { PERMISSION_CODES, SYSTEM_ROLE_SEEDS } from '@finsoft/permissions'
 import { AllExceptionsFilter } from '../../apps/api/src/common/all-exceptions.filter.ts'
 import { PermissionGuard } from '../../apps/api/src/common/permission.guard.ts'
 import { MeModule } from '../../apps/api/src/me/me.module.ts'
@@ -96,9 +100,14 @@ describe('GET /api/me/permissions (S1)', () => {
       .set(authHeaders(tenant.tenantId, tenant.viewerId))
       .expect(200)
 
-    expect([...res.body.permissions].sort()).toEqual(
-      ['customer.view', 'report.financial', 'voucher.view'].sort(),
-    )
+    // Read off SYSTEM_ROLE_SEEDS rather than a hardcoded list — the M2-B
+    // permission backfill (migration 014) widened the viewer's grants to
+    // include account.view/period.view; this test asserts the LIVE
+    // catalogue's view, not a snapshot that would silently go stale the
+    // next time a Council ruling changes the seed.
+    const viewerSeed = SYSTEM_ROLE_SEEDS.find((seed) => seed.code === 'viewer')
+    expect(viewerSeed, 'no "viewer" entry in SYSTEM_ROLE_SEEDS').toBeDefined()
+    expect([...res.body.permissions].sort()).toEqual([...(viewerSeed?.permissions ?? [])].sort())
     // The Viewer set is a strict subset — proves this is genuinely THIS
     // caller's own resolved set, not accidentally the Owner's.
     for (const code of res.body.permissions as string[]) {

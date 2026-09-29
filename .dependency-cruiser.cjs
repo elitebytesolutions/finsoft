@@ -183,7 +183,7 @@ module.exports = {
         '@finsoft/shared-types outright, plus @finsoft/accounting-kernel type-only (to build a ' +
         "kernel payload, e.g. toSalePostedPayload()). Anything else — including the module's " +
         'own infrastructure/api/application, or a runtime import of the kernel — is forbidden. ' +
-        'accounting-kernel is in this rule\'s allow-list (pathNot) so the TYPE-ONLY exception ' +
+        "accounting-kernel is in this rule's allow-list (pathNot) so the TYPE-ONLY exception " +
         'statement 5 grants is reachable at all — domain-kernel-import-is-type-only, below, is ' +
         'the rule that then rejects a non-type-only (runtime) import of it. Without ' +
         'accounting-kernel here, this rule alone forbade the path unconditionally and the other ' +

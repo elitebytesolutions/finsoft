@@ -4,11 +4,17 @@ import { REPO_ROOT } from '@finsoft/database/testing'
 import { describe, expect, it } from 'vitest'
 
 /*
- * C10 (ADR-0028): every module migration (015 on, M3-C's own renumbering —
- * see 015_create_customers.sql's own header) carries an `-- Owner:` header,
- * and every ALTER TABLE, CREATE TRIGGER … ON, CREATE POLICY … ON,
- * CREATE INDEX … ON and GRANT … ON targets a table that a migration with
- * the SAME owner created.
+ * C10 (ADR-0028): every migration from 014 on carries an `-- Owner:` header
+ * naming an existing `modules/<name>` or `packages/<name>` directory (§9's
+ * 2026-09-29 amendment, Architecture + Database/Security seats, both
+ * countersigned), and every ALTER TABLE, CREATE TRIGGER … ON,
+ * CREATE POLICY … ON, CREATE INDEX … ON and GRANT … ON targets a table that
+ * a migration with the SAME owner created.
+ *
+ * 014 (`packages/permissions`) is a platform/RBAC migration, not a
+ * `modules/<name>` one — the amendment widens the owner rule to admit it
+ * while keeping every one of S4's bans in force for it unchanged. 015
+ * (`modules/customers`, M3-C) is the first module migration proper.
  *
  * S4: also rejects outright, in a module migration: ALTER POLICY, DROP,
  * CREATE RULE, REVOKE, ALTER … OWNER, CREATE FUNCTION … SECURITY DEFINER,
@@ -26,8 +32,13 @@ import { describe, expect, it } from 'vitest'
 
 const MIGRATIONS_DIR = join(REPO_ROOT, 'database/migrations')
 
-/** M3-C's renumbering (015_create_customers.sql's own header) — C10 applies from here on. */
-const FIRST_MODULE_MIGRATION = 15
+/**
+ * 014 (`packages/permissions`) is the first migration C10 applies to — the
+ * §9 amendment's own statement 2 ("C10 applies to every migration from 014
+ * on, as signed"). 015 (`modules/customers`) is the first `modules/<name>`
+ * migration.
+ */
+const FIRST_MODULE_MIGRATION = 14
 
 function migrationNumber(filename: string): number {
   const match = /^(\d+)_/.exec(filename)
@@ -40,8 +51,15 @@ export function normalizeIdentifier(raw: string): string {
   return raw.replace(/^"|"$/g, '').replace(/^public\./i, '')
 }
 
+/**
+ * S4, widened by the §9 2026-09-29 amendment: the owner is either a
+ * `modules/<name>` migration or a `packages/<name>` one (platform/kernel
+ * master data, e.g. 014's `packages/permissions`). The header's own
+ * existence check (`existsSync`, below) is what actually enforces "an
+ * existing directory" — this regex only captures the candidate path.
+ */
 export function ownerOf(sql: string): string | null {
-  const match = /^--\s*Owner:\s*(modules\/[a-zA-Z0-9_-]+)\s*$/m.exec(sql)
+  const match = /^--\s*Owner:\s*((?:modules|packages)\/[a-zA-Z0-9_-]+)\s*$/m.exec(sql)
   return match?.[1] ?? null
 }
 
@@ -157,7 +175,9 @@ export function grantRevokeOffenses(sql: string, ownedTables: ReadonlySet<string
     if (!isGrant && !isRevoke) continue
 
     const shapes = isGrant ? GRANT_SHAPES : [REVOKE_SHAPE]
-    const match = shapes.map((re) => re.exec(statement)).find((m): m is RegExpExecArray => m !== null)
+    const match = shapes
+      .map((re) => re.exec(statement))
+      .find((m): m is RegExpExecArray => m !== null)
 
     if (!match) {
       offenses.push(`unrecognised ${isGrant ? 'GRANT' : 'REVOKE'} shape: ${statement}`)
@@ -166,7 +186,9 @@ export function grantRevokeOffenses(sql: string, ownedTables: ReadonlySet<string
 
     const table = normalizeIdentifier(match[1] as string)
     if (!ownedTables.has(table)) {
-      offenses.push(`${isGrant ? 'GRANT' : 'REVOKE'} on a table this migration's owner did not create ("${table}"): ${statement}`)
+      offenses.push(
+        `${isGrant ? 'GRANT' : 'REVOKE'} on a table this migration's owner did not create ("${table}"): ${statement}`,
+      )
     }
   }
 
@@ -219,16 +241,19 @@ function read(filename: string): string {
 describe('migration ownership (C10, ADR-0028)', () => {
   const files = moduleMigrationFiles()
 
-  it('finds at least one module migration to check (015 on)', () => {
+  it('finds at least one migration to check (014 on)', () => {
     expect(files.length).toBeGreaterThan(0)
   })
 
   it.each(files)(
-    '%s carries an "-- Owner: modules/<name>" header naming an existing directory',
+    '%s carries an "-- Owner: modules/<name>" or "packages/<name>" header naming an existing directory',
     (file) => {
       const sql = read(file)
       const owner = ownerOf(sql)
-      expect(owner, `${file} has no "-- Owner: modules/<name>" header`).not.toBeNull()
+      expect(
+        owner,
+        `${file} has no "-- Owner: modules/<name>" or "packages/<name>" header`,
+      ).not.toBeNull()
       expect(
         existsSync(join(REPO_ROOT, owner as string)),
         `${file}'s Owner (${String(owner)}) does not name an existing directory`,
@@ -369,7 +394,10 @@ describe('migration ownership (C10, ADR-0028)', () => {
       ],
       ['REVOKE ... ON TABLE x ...', 'REVOKE INSERT, UPDATE ON TABLE customers FROM finsoft_app;'],
       ['REVOKE ... FROM PUBLIC CASCADE', 'REVOKE ALL ON customers FROM PUBLIC CASCADE;'],
-      ['REVOKE ... FROM a, b (multi-role)', 'REVOKE INSERT, UPDATE ON customers FROM finsoft_app, readonly_support;'],
+      [
+        'REVOKE ... FROM a, b (multi-role)',
+        'REVOKE INSERT, UPDATE ON customers FROM finsoft_app, readonly_support;',
+      ],
     ]
 
     it.each(escapeFixtures)('%s is rejected, not silently skipped', (_label, fixture) => {
@@ -406,6 +434,40 @@ describe('migration ownership (C10, ADR-0028)', () => {
 
     it('a migration with no Owner header is rejected', () => {
       expect(ownerOf('CREATE TABLE customers (id uuid);')).toBeNull()
+    })
+
+    /*
+     * S-OWNER (§9's 2026-09-29 amendment, Architecture + Database/Security
+     * seats): the owner rule widened from `modules/<name>` only to
+     * `modules/<name>` OR `packages/<name>`, still gated on the directory
+     * actually existing — a header cannot claim ownership on behalf of a
+     * package that was never created.
+     */
+    it('S-OWNER: a "-- Owner: packages/<name>" header is recognised and, for an existing package, passes', () => {
+      const owner = ownerOf(
+        '-- Owner: packages/permissions\nINSERT INTO role_permissions DEFAULT VALUES;',
+      )
+      expect(owner).toBe('packages/permissions')
+      expect(existsSync(join(REPO_ROOT, owner as string))).toBe(true)
+    })
+
+    it("S-OWNER: migration 014's real header names packages/permissions and passes", () => {
+      const sql = read('014_add_account_and_period_permissions.sql')
+      const owner = ownerOf(sql)
+      expect(owner).toBe('packages/permissions')
+      expect(existsSync(join(REPO_ROOT, owner as string))).toBe(true)
+    })
+
+    it('S-OWNER: a "-- Owner: packages/<name>" header naming a directory that does not exist is rejected', () => {
+      const owner = ownerOf('-- Owner: packages/does-not-exist\nCREATE TABLE t (id uuid);')
+      expect(owner).toBe('packages/does-not-exist')
+      expect(existsSync(join(REPO_ROOT, owner as string))).toBe(false)
+    })
+
+    it('S-OWNER: a "-- Owner: modules/<name>" header naming a directory that does not exist is still rejected', () => {
+      const owner = ownerOf('-- Owner: modules/does-not-exist\nCREATE TABLE t (id uuid);')
+      expect(owner).toBe('modules/does-not-exist')
+      expect(existsSync(join(REPO_ROOT, owner as string))).toBe(false)
     })
 
     it('normalises a quoted and/or schema-qualified identifier before matching', () => {
