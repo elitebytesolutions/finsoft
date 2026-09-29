@@ -1,11 +1,11 @@
 import { Injectable } from '@nestjs/common'
 import {
+  authAuditSink,
   getJwks,
   login as authLogin,
   logout as authLogout,
   refresh as authRefresh,
   hashRefreshToken,
-  noopAuthAuditSink,
   ThrottleUnavailableError,
   type LoginResult,
   type RefreshResult,
@@ -18,8 +18,13 @@ import type { JWK } from 'jose'
  * Thin orchestration over `@finsoft/auth`. Every decision (throttle, argon2,
  * token issuance, the atomic spend) lives there or in
  * `@finsoft/database/auth`; this class exists so the controller does not
- * import both packages directly and does not know about `AuthAuditSink`,
- * which is a `packages/auth` concern.
+ * import both packages directly.
+ *
+ * `authAuditSink` (M1-X) is the real, DB-backed implementation — not the
+ * no-op default. Rule 9's audit rows are written by `packages/auth` and
+ * `@finsoft/database/auth` from INSIDE their own transactions; this
+ * service's only job regarding it is choosing which implementation the
+ * production wiring uses.
  *
  * A database error caught here is rethrown as a code only (ADR-0023 §6): no
  * `detail`, `hint`, `where` or `constraint` crosses the boundary, and the
@@ -28,18 +33,20 @@ import type { JWK } from 'jose'
 @Injectable()
 export class AuthService {
   login(input: Parameters<typeof authLogin>[0]): Promise<LoginResult> {
-    return authLogin(input, noopAuthAuditSink)
+    return authLogin(input, authAuditSink)
   }
 
   refresh(input: Parameters<typeof authRefresh>[0]): Promise<RefreshResult> {
-    return authRefresh(input, noopAuthAuditSink)
+    return authRefresh(input, authAuditSink)
   }
 
-  logout(auth: AuthContext): Promise<void> {
-    return authLogout(
-      { tenantId: auth.tenantId, userId: auth.userId, sessionId: auth.sessionId },
-      noopAuthAuditSink,
-    )
+  logout(auth: AuthContext, ip: string | null): Promise<void> {
+    return authLogout({
+      tenantId: auth.tenantId,
+      userId: auth.userId,
+      sessionId: auth.sessionId,
+      ip,
+    })
   }
 
   jwks(): Promise<{ keys: readonly JWK[] }> {

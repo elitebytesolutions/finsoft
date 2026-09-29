@@ -1,4 +1,5 @@
 import { sql } from 'kysely'
+import { recordAudit } from '../audit/writer.ts'
 import { withTenant } from '../transaction.ts'
 
 /*
@@ -27,14 +28,27 @@ export async function isSessionActive(sessionId: string): Promise<boolean> {
  * Logout. Cascades to every family opened under this session via migration
  * 005's `sessions_cascade_revocation` trigger — this call does not touch
  * `refresh_token_families` itself.
+ *
+ * M1-X (audit wiring). Writes `USER_SIGNED_OUT` inside this SAME
+ * transaction, not after it. This is the one auth audit write that does not
+ * go through `packages/auth`'s `AuthAuditSink`: `TenantContext` is already
+ * established by the time this function runs (`packages/auth/src/logout.ts`
+ * calls it from inside its own `TenantContext.run`), and unlike login.ts/
+ * refresh.ts, this file carries no restriction against calling `recordAudit`
+ * directly — there is exactly one caller today (an authenticated user
+ * ending their own session), so the action name is not a business decision
+ * this function is guessing at. If `revokeSession` ever grows a second
+ * caller (an admin ending someone else's session, say), the action should
+ * become a parameter at that point rather than staying hardcoded.
  */
 export async function revokeSession(
   sessionId: string,
   actorUserId: string,
   reason: string,
+  ip: string | null = null,
 ): Promise<void> {
   await withTenant(async (tx) => {
-    await tx
+    const updated = await tx
       .updateTable('sessions')
       .set({
         revoked_at: new Date(),
@@ -45,7 +59,23 @@ export async function revokeSession(
       })
       .where('id', '=', sessionId)
       .where('revoked_at', 'is', null)
-      .execute()
+      .executeTakeFirst()
+
+    // Idempotent by design (a second logout on an already-revoked session is
+    // a no-op, not an error) — but a no-op is not a fresh sign-out, so it is
+    // not audited a second time.
+    if (updated.numUpdatedRows > 0n) {
+      await recordAudit(tx, {
+        actorUserId,
+        action: 'USER_SIGNED_OUT',
+        entityType: 'session',
+        entityId: sessionId,
+        beforeJson: null,
+        afterJson: null,
+        ip,
+        requestId: null,
+      })
+    }
   })
 }
 

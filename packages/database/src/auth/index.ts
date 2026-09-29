@@ -17,6 +17,8 @@
 export {
   withLoginAttempt,
   type LoginAttemptResult,
+  type LoginAuditHook,
+  type LoginAuditOutcome,
   type LoginCandidate,
   type LoginCandidateUser,
   type LoginDecision,
@@ -28,6 +30,8 @@ export {
 export {
   spendRefreshToken,
   type RefreshOutcome,
+  type RefreshReuseAuditHook,
+  type RefreshReuseAuditOutcome,
   type SpendRefreshTokenParams,
   type RefreshTestHooks,
 } from './refresh.ts'

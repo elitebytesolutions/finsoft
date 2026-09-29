@@ -68,7 +68,7 @@ export {
   invalidateAccountStateCache,
 } from './account-state-cache.ts'
 
-export { noopAuthAuditSink } from './audit-sink.ts'
+export { authAuditSink, noopAuthAuditSink } from './audit-sink.ts'
 export type { AuthAuditEvent, AuthAuditSink } from './audit-sink.ts'
 
 export { atAuthBoundary, SanitisedDatabaseError } from './db-error.ts'

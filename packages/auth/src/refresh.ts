@@ -13,6 +13,14 @@ import { checkLayers, refreshLayers } from './throttle.ts'
 export interface RefreshInput {
   readonly presentedRefreshToken: string
   readonly ipPrefix: string
+  /**
+   * The full client address, from the verified request context (trusted-
+   * proxy `clientIp`) — distinct from `ipPrefix`, which is truncated for
+   * rate-limit keying (ADR-0023 §5) and is not suitable for the audit
+   * record's `ip` column. M1-X (audit wiring): used only on the
+   * REFRESH_REUSE_DETECTED path.
+   */
+  readonly ip: string
   readonly deviceId: string | null
 }
 
@@ -75,11 +83,21 @@ export async function refresh(
   // measures issued_at against. ADR-0023 §6: any driver error is caught and
   // rethrown carrying only a SQLSTATE code.
   const outcome = await atAuthBoundary(() =>
-    spendRefreshToken({
-      presentedTokenHash,
-      newTokenHash: minted.hash,
-      deviceId: input.deviceId,
-    }),
+    spendRefreshToken(
+      { presentedTokenHash, newTokenHash: minted.hash, deviceId: input.deviceId },
+      // M1-X (audit wiring): called from INSIDE the same transaction as
+      // both revocations, the moment reuse is detected — rule 9.
+      async (tx, reuse) => {
+        await auditSink.record(tx, {
+          tenantId: reuse.tenantId,
+          actorUserId: reuse.userId,
+          action: 'REFRESH_REUSE_DETECTED',
+          entityType: 'session',
+          entityId: reuse.sessionId,
+          ip: input.ip,
+        })
+      },
+    ),
   )
 
   if (outcome.outcome === 'reused') {
@@ -119,13 +137,10 @@ export async function refresh(
     mfa: false,
   })
 
-  await auditSink.record({
-    tenantId: outcome.tenant.id,
-    actorUserId: outcome.user.id,
-    action: 'REFRESH_ROTATED',
-    entityType: 'session',
-    entityId: outcome.sessionId,
-  })
+  // M1-X: ordinary refresh rotation is not one of this deliverable's four
+  // named audit events (USER_SIGNED_IN, USER_SIGNED_OUT, USER_SIGN_IN_FAILED,
+  // REFRESH_REUSE_DETECTED) — recorded as OBSERVED in the delivery report
+  // rather than added here speculatively. The reuse path above IS wired.
 
   return {
     outcome: 'success',

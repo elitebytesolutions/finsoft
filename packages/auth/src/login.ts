@@ -117,6 +117,18 @@ export async function login(
             verifiedPasswordHash: storedHash as string,
           }
         },
+        // M1-X (audit wiring): called from INSIDE whichever transaction
+        // decided the outcome — never after this function returns. rule 9.
+        async (tx, outcome) => {
+          await auditSink.record(tx, {
+            tenantId: outcome.tenantId,
+            actorUserId: outcome.userId,
+            action: outcome.authenticated ? 'USER_SIGNED_IN' : 'USER_SIGN_IN_FAILED',
+            entityType: 'session',
+            entityId: outcome.sessionId,
+            ip: input.ip,
+          })
+        },
         testHooks,
       ),
     )
@@ -141,13 +153,9 @@ export async function login(
       mfa: false,
     })
 
-    await auditSink.record({
-      tenantId: attempt.tenant.id,
-      actorUserId: attempt.user.id,
-      action: 'LOGIN_SUCCEEDED',
-      entityType: 'session',
-      entityId: attempt.sessionId,
-    })
+    // USER_SIGNED_IN was already written inside the write transaction, via
+    // the onOutcome hook passed to withLoginAttempt above — not here, and
+    // not after the fact (rule 9: "in the same transaction as the change").
 
     return {
       outcome: 'success',

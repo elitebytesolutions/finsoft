@@ -112,6 +112,26 @@ export interface LoginSuccess {
 
 export type LoginAttemptResult = LoginSuccess | { readonly authenticated: false }
 
+/**
+ * M1-X (audit wiring). What `withLoginAttempt` tells its caller about the
+ * outcome it just reached, at the one call site inside whichever
+ * transaction determined it — never after the fact. `packages/auth`'s
+ * `login()` builds one of these into an `AuthAuditEvent` and calls its
+ * `AuthAuditSink` with it; this module has no opinion about audit actions or
+ * entity names (Architecture seat ruling: this package holds no business
+ * rules), only about WHEN a transaction exists to write inside.
+ */
+export interface LoginAuditOutcome {
+  readonly tenantId: string
+  /** null only when no candidate user existed at all (an unknown email). */
+  readonly userId: string | null
+  readonly authenticated: boolean
+  /** Set only when `authenticated` is true. */
+  readonly sessionId: string | null
+}
+
+export type LoginAuditHook = (tx: TenantTx, outcome: LoginAuditOutcome) => Promise<void>
+
 export interface LoginTestHooks {
   /**
    * TEST ONLY. Called after `decide` has authenticated the candidate and
@@ -135,12 +155,15 @@ export interface LoginTestHooks {
  * Returns `null` when the tenant code does not resolve at all: the caller
  * (`packages/auth`) must still perform its one decoy verification in that
  * case, so that exactly one argon2id call happens on every path (ADR-0023
- * §4).
+ * §4). `onOutcome`, when given, is NEVER called on this path either — "no
+ * tenant, no chain" (ADR-0023 §4 item 7): there is no tenant to attach an
+ * audit row to.
  */
 export async function withLoginAttempt(
   tenantCode: string,
   normalisedEmail: string,
   decide: (candidate: LoginCandidate) => Promise<LoginDecision>,
+  onOutcome?: LoginAuditHook,
   testHooks?: LoginTestHooks,
 ): Promise<LoginAttemptResult | null> {
   const resolved = await withResolvedTenant(
@@ -174,6 +197,22 @@ export async function withLoginAttempt(
 
   const decision = await decide(resolved)
   if (!decision.authenticate) {
+    // The tenant DID resolve — auditable, in a short transaction of its own
+    // (re-resolving the tenant, the only way one may enter this module,
+    // exactly as the write path below does). Skipped entirely when no hook
+    // is given, so a caller that does not care about auditing pays no extra
+    // round trip.
+    if (onOutcome) {
+      await withResolvedTenant(tenantByCodeResolver(tenantCode), async (tx) => {
+        await onOutcome(tx, {
+          tenantId: resolved.tenant.id,
+          userId: resolved.user?.id ?? null,
+          authenticated: false,
+          sessionId: null,
+        })
+        return null
+      })
+    }
     return { authenticated: false }
   }
 
@@ -197,18 +236,33 @@ export async function withLoginAttempt(
   const writeResult = await withResolvedTenant(
     tenantByCodeResolver(tenantCode),
     async (tx, { tenant: tenantAtWrite }, tenantIdAtWrite) => {
-      if (tenantIdAtWrite !== tenantAtRead.id) {
-        // The tenant code resolved to a DIFFERENT id than moments ago.
-        // Should be unreachable (tenant ids are immutable once assigned —
-        // there is no code path that reassigns a code to a different row),
+      if (tenantIdAtWrite !== tenantAtRead.id || tenantAtWrite.status !== 'ACTIVE') {
+        // The tenant code resolved to a DIFFERENT id than moments ago
+        // (should be unreachable — tenant ids are immutable once assigned —
         // but this function does not trust that absence of a code path is
-        // the same as a guarantee.
+        // the same as a guarantee), or the tenant is no longer ACTIVE. The
+        // tenant DID resolve at both reads, so this is still auditable,
+        // inside the transaction that just determined it.
+        if (onOutcome) {
+          await onOutcome(tx, {
+            tenantId: tenantAtRead.id,
+            userId: user.id,
+            authenticated: false,
+            sessionId: null,
+          })
+        }
         return { authenticated: false } satisfies LoginAttemptResult
       }
-      if (tenantAtWrite.status !== 'ACTIVE') {
-        return { authenticated: false } satisfies LoginAttemptResult
+      const result = await writeLoginSuccess(tx, tenantAtWrite, user, decision)
+      if (onOutcome) {
+        await onOutcome(tx, {
+          tenantId: tenantAtWrite.id,
+          userId: user.id,
+          authenticated: result.authenticated,
+          sessionId: result.authenticated ? result.sessionId : null,
+        })
       }
-      return writeLoginSuccess(tx, tenantAtWrite, user, decision)
+      return result
     },
   )
 

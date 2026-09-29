@@ -47,6 +47,25 @@ export interface SpendRefreshTokenParams {
   readonly deviceId: string | null
 }
 
+/**
+ * M1-X (audit wiring). Called inside the SAME transaction as the
+ * revocation, the moment reuse is detected — never after the fact. This
+ * package has no opinion about audit actions or entity names (Architecture
+ * seat ruling: no business rules here); `packages/auth`'s `refresh()` builds
+ * the `AuthAuditEvent` and calls its `AuthAuditSink` with it.
+ */
+export interface RefreshReuseAuditOutcome {
+  readonly tenantId: string
+  readonly userId: string
+  readonly familyId: string
+  readonly sessionId: string
+}
+
+export type RefreshReuseAuditHook = (
+  tx: TenantTx,
+  outcome: RefreshReuseAuditOutcome,
+) => Promise<void>
+
 export interface RefreshTestHooks {
   /**
    * TEST ONLY. Called after the candidate row is read and before the atomic
@@ -71,6 +90,7 @@ async function revokeFamilyAndSession(
   familyId: string,
   sessionId: string,
   actorUserId: string,
+  onReuseDetected?: RefreshReuseAuditHook,
 ): Promise<void> {
   await tx
     .updateTable('refresh_token_families')
@@ -98,10 +118,17 @@ async function revokeFamilyAndSession(
     .where('id', '=', sessionId)
     .where('revoked_at', 'is', null)
     .execute()
+
+  // M1-X (audit wiring): inside the SAME transaction as both revocations
+  // above, before it commits — never a post-hoc write.
+  if (onReuseDetected) {
+    await onReuseDetected(tx, { tenantId, userId: actorUserId, familyId, sessionId })
+  }
 }
 
 export async function spendRefreshToken(
   params: SpendRefreshTokenParams,
+  onReuseDetected?: RefreshReuseAuditHook,
   testHooks?: RefreshTestHooks,
 ): Promise<RefreshOutcome> {
   const result = await withResolvedTenant(
@@ -170,6 +197,7 @@ export async function spendRefreshToken(
           candidate.family_id,
           candidate.session_id,
           candidate.user_id,
+          onReuseDetected,
         )
         return {
           outcome: 'reused',
@@ -237,6 +265,7 @@ export async function spendRefreshToken(
             candidate.family_id,
             candidate.session_id,
             candidate.user_id,
+            onReuseDetected,
           )
           return {
             outcome: 'reused',
@@ -274,6 +303,7 @@ export async function spendRefreshToken(
           after.family_id,
           candidate.session_id,
           candidate.user_id,
+          onReuseDetected,
         )
         return {
           outcome: 'reused',

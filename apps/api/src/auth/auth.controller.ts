@@ -143,6 +143,7 @@ export class AuthController {
       result = await this.auth.refresh({
         presentedRefreshToken: presented,
         ipPrefix: ipPrefix(ip),
+        ip,
         deviceId: deviceFingerprint(req),
       })
     } catch (error) {
@@ -204,7 +205,7 @@ export class AuthController {
     const auth = req.auth
     if (!auth) throw new UnauthorizedException(INVALID_CREDENTIALS)
 
-    await this.auth.logout(auth)
+    await this.auth.logout(auth, clientIp(req))
     clearRefreshCookie(res)
   }
 
