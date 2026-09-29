@@ -100,6 +100,28 @@ const PROVISIONING_IMPORT_BAN = {
     'importable only from tools/seed/** or a test file — never from application code.',
 }
 
+/*
+ * Security seat, second review of 91f330f (S2, medium, blocking): the
+ * `sql`` `` tag ban in tableOwnershipSyntax() is a `no-restricted-syntax`
+ * selector matching `TaggedTemplateExpression[tag.name='sql']` — it reads
+ * the tag's LOCAL name, so `import { sql as q } from 'kysely'` followed by
+ * `` q`select * from users` `` never matches `tag.name === 'sql'` and lints
+ * clean, even though it is the exact same escape hatch the ban exists to
+ * close. `no-restricted-imports` with `importNames` bans the EXPORT name
+ * regardless of the local alias the importer gives it, which closes this
+ * the same way ESLint itself recommends renaming-to-evade an import ban be
+ * closed — at the import, not at every possible call-site spelling.
+ */
+const KYSELY_SQL_IMPORT_BAN = {
+  name: 'kysely',
+  importNames: ['sql'],
+  message:
+    "S2 (ADR-0028): modules/customers/infrastructure/** does not import kysely's `sql` tag " +
+    'at all, under any local name — every read and write goes through the Kysely query ' +
+    'builder. Renaming the import does not create an exception; this ban matches the ' +
+    'export, not the alias.',
+}
+
 /** Network clients. ADR-0001: the kernels have no network. */
 const HTTP_CLIENTS = ['axios', 'node-fetch', 'undici', 'got', 'superagent', 'ky']
 
@@ -1604,11 +1626,38 @@ export default tseslint.config(
   /* ---------------------------------------------------------------- *
    * C8 / S2 (ADR-0028): modules/customers/infrastructure/** names only its
    * own table. M3-P adds the receivables block alongside this one.
+   *
+   * `no-restricted-imports` is restated here in full (MODULES_IMPORT_BAN_
+   * PATHS, WITHTENANT_OUTSIDE_APPLICATION_BAN and the @nestjs/express/
+   * fastify pattern, exactly as the "modules/**, ignores application/**"
+   * block above sets them) rather than left to that earlier block alone —
+   * flat config replaces no-restricted-imports wholesale per matching
+   * file, so adding KYSELY_SQL_IMPORT_BAN here without restating the rest
+   * would have silently dropped every other import ban for this one
+   * directory the moment this block's own key was added.
    * ---------------------------------------------------------------- */
   {
     files: ['modules/customers/infrastructure/**/*.ts'],
     ignores: ['modules/customers/infrastructure/**/*.spec.ts'],
     rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            ...MODULES_IMPORT_BAN_PATHS,
+            WITHTENANT_OUTSIDE_APPLICATION_BAN,
+            KYSELY_SQL_IMPORT_BAN,
+          ],
+          patterns: [
+            {
+              group: ['@nestjs/*', 'express', 'fastify'],
+              message:
+                'ADR-0028 statement 1: modules/** has no NestJS, express or fastify import. ' +
+                'Controllers live in apps/api/src/<module>/.',
+            },
+          ],
+        },
+      ],
       'no-restricted-syntax': [
         'error',
         ...invariantSyntax,

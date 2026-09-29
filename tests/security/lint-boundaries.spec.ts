@@ -1767,6 +1767,41 @@ describe('C8 / S2 (ADR-0028): modules/customers/infrastructure/** names only its
     expect(matching(messages, 'does not use the sql`` tag at all')).toHaveLength(1)
   })
 
+  /*
+   * S2 escape 3 (Security seat, second review of 91f330f, 2026-09-29): the
+   * `no-restricted-syntax` tag ban matches on `tag.name`, the LOCAL
+   * identifier — so renaming the import at the source dodges it entirely
+   * while the tagged template is still, functionally, the sql`` tag. This
+   * is closed by a SEPARATE `no-restricted-imports` rule
+   * (KYSELY_SQL_IMPORT_BAN) that matches kysely's `sql` EXPORT regardless
+   * of the local alias, so the import itself is refused before any call
+   * site can be written.
+   */
+  it('S2 escape 3: importing sql under an alias (import { sql as q }) is caught at the import, not the call site', async () => {
+    const messages = await messagesFor(
+      'modules/customers/infrastructure/x.ts',
+      "import { sql as q } from 'kysely'\nexport const query = (tx: any) => q`select * from users`.execute(tx)",
+    )
+    expect(matching(messages, "does not import kysely's `sql` tag")).toHaveLength(1)
+  })
+
+  it('S2 escape 3, unaliased: a plain `import { sql }` is ALSO caught by the import ban (belt and suspenders with the tag ban)', async () => {
+    const messages = await messagesFor(
+      'modules/customers/infrastructure/x.ts',
+      "import { sql } from 'kysely'\nexport const q = (tx: any) => sql`select * from customers`.execute(tx)",
+    )
+    expect(matching(messages, "does not import kysely's `sql` tag")).toHaveLength(1)
+    expect(matching(messages, 'does not use the sql`` tag at all')).toHaveLength(1)
+  })
+
+  it('S2 escape 3 negative control: importing something else from kysely (not sql) is untouched', async () => {
+    const messages = await messagesFor(
+      'modules/customers/infrastructure/x.ts',
+      "import { Kysely } from 'kysely'\nexport type X = Kysely<any>",
+    )
+    expect(matching(messages, "does not import kysely's `sql` tag")).toEqual([])
+  })
+
   it('leaves the sql`` tag alone OUTSIDE infrastructure/ where C7 already owns the same ban with its own message', async () => {
     const messages = await messagesFor(
       'modules/customers/application/x.ts',

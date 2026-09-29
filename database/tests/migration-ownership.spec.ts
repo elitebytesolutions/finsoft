@@ -210,6 +210,29 @@ export const FORBIDDEN_PATTERNS: readonly { readonly name: string; readonly re: 
   { name: 'SET ROLE', re: /\bSET\s+ROLE\b/i },
   { name: 'DISABLE ROW LEVEL SECURITY', re: /\bDISABLE\s+ROW\s+LEVEL\s+SECURITY\b/i },
   { name: 'NO FORCE ROW LEVEL SECURITY', re: /\bNO\s+FORCE\s+ROW\s+LEVEL\s+SECURITY\b/i },
+  /*
+   * Security seat, second review of 91f330f (low, "do it anyway, it's
+   * cheap"): a GRANT/REVOKE built as a string and run from a DO block, or
+   * via a bare EXECUTE, is dynamic SQL — S-GRANT's statement-shape check
+   * above only ever sees the literal text of the migration file, so a
+   * grant assembled at runtime inside one of these is invisible to it.
+   * Banning both constructs outright closes that, the same way S4 already
+   * bans every other way this file could smuggle DDL/DCL past the checks
+   * that read it as text.
+   *
+   * `EXECUTE` is NOT banned when followed by FUNCTION or PROCEDURE —
+   * `CREATE TRIGGER ... FOR EACH ROW EXECUTE FUNCTION x()` is ordinary,
+   * static trigger syntax (015_create_customers.sql uses it twice) and has
+   * nothing to do with dynamic SQL.
+   */
+  {
+    name: 'DO block (anonymous PL/pgSQL — dynamic SQL is invisible to S-GRANT)',
+    re: /\bDO\s+\$/i,
+  },
+  {
+    name: 'EXECUTE (dynamic SQL — not EXECUTE FUNCTION/PROCEDURE, which is ordinary trigger syntax)',
+    re: /\bEXECUTE\b(?!\s+(?:FUNCTION|PROCEDURE)\b)/i,
+  },
 ]
 
 /** CREATE VIEW is allowed only WITH (security_invoker = true) — S4. */
@@ -328,6 +351,14 @@ describe('migration ownership (C10, ADR-0028)', () => {
       ['SET ROLE', 'SET ROLE finsoft_migration;'],
       ['DISABLE ROW LEVEL SECURITY', 'ALTER TABLE customers DISABLE ROW LEVEL SECURITY;'],
       ['NO FORCE ROW LEVEL SECURITY', 'ALTER TABLE customers NO FORCE ROW LEVEL SECURITY;'],
+      [
+        'DO block (anonymous PL/pgSQL — dynamic SQL is invisible to S-GRANT)',
+        'DO $$ BEGIN PERFORM 1; END $$;',
+      ],
+      [
+        'EXECUTE (dynamic SQL — not EXECUTE FUNCTION/PROCEDURE, which is ordinary trigger syntax)',
+        "EXECUTE 'GRANT SELECT ON customers TO finsoft_app';",
+      ],
     ]
 
     it.each(cases)('%s is rejected', (name, fixture) => {
@@ -468,6 +499,46 @@ describe('migration ownership (C10, ADR-0028)', () => {
       const owner = ownerOf('-- Owner: modules/does-not-exist\nCREATE TABLE t (id uuid);')
       expect(owner).toBe('modules/does-not-exist')
       expect(existsSync(join(REPO_ROOT, owner as string))).toBe(false)
+    })
+
+    /*
+     * Security seat, second review of 91f330f: the exact escape named in
+     * review — a GRANT built as a string and run from a DO block — trips
+     * BOTH the DO-block ban and the EXECUTE ban, so it cannot survive by
+     * evading one while a fix for the other is still pending.
+     */
+    it('the named escape — a GRANT built as a string, run from a DO block — is rejected by both new bans', () => {
+      const fixture = `
+        DO $$
+        BEGIN
+          EXECUTE 'GRANT SELECT ON ' || quote_ident('customers') || ' TO finsoft_app';
+        END $$;
+      `
+      const hits = FORBIDDEN_PATTERNS.filter((p) => p.re.test(fixture)).map((p) => p.name)
+      expect(hits).toContain('DO block (anonymous PL/pgSQL — dynamic SQL is invisible to S-GRANT)')
+      expect(hits).toContain(
+        'EXECUTE (dynamic SQL — not EXECUTE FUNCTION/PROCEDURE, which is ordinary trigger syntax)',
+      )
+    })
+
+    /*
+     * Positive control: 015_create_customers.sql's own two triggers use
+     * `FOR EACH ROW EXECUTE FUNCTION ...` — ordinary, static trigger
+     * syntax that has to keep passing, or the EXECUTE ban would be a
+     * false positive on every trigger this schema (or any future module)
+     * ever creates.
+     */
+    it('EXECUTE FUNCTION / EXECUTE PROCEDURE (trigger syntax) is NOT rejected', () => {
+      const hits = FORBIDDEN_PATTERNS.filter((p) =>
+        p.re.test('CREATE TRIGGER t BEFORE UPDATE ON customers FOR EACH ROW EXECUTE FUNCTION f();'),
+      ).map((p) => p.name)
+      expect(hits).toEqual([])
+    })
+
+    it("015_create_customers.sql's real EXECUTE FUNCTION triggers still pass (no false positive)", () => {
+      const sql = read('015_create_customers.sql')
+      const hits = FORBIDDEN_PATTERNS.filter((p) => p.re.test(sql)).map((p) => p.name)
+      expect(hits).toEqual([])
     })
 
     it('normalises a quoted and/or schema-qualified identifier before matching', () => {
