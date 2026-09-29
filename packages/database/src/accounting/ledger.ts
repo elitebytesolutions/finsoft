@@ -107,6 +107,55 @@ export async function accountOpeningBalance(
   return { debit: row.debit ?? '0', credit: row.credit ?? '0' }
 }
 
+/**
+ * The sum of every line for `accountId` dated `>= from` up to and including
+ * `through` (a keyset position: occurred_at, created_at, entry_number,
+ * line_number — the same tuple accountLedgerLines paginates on). Combined
+ * with `accountOpeningBalance(from)` by packages/reporting, this recomputes
+ * a resumed page's carry-forward balance SERVER-SIDE from the cursor's
+ * POSITION alone.
+ *
+ * M2-B Council ruling, 2026-09-29 (Architecture/Accounting/Security, all
+ * three seats): the client must never supply a financial number. The
+ * previous shape trusted an opaque `closingBalance` round-tripped through
+ * the cursor; a forged or stale one would have silently produced a wrong
+ * running balance on every subsequent row of a resumed page. This function
+ * is what replaces that trust with a real query.
+ */
+export async function accountLedgerBalanceThrough(
+  tx: TenantTx,
+  tenantId: string,
+  accountId: string,
+  from: string,
+  through: LedgerCursor,
+  partyId: string | null,
+): Promise<{ debit: string; credit: string }> {
+  assertIssuedTenantTx(tx)
+
+  let query = tx
+    .selectFrom('journal_lines as jl')
+    .innerJoin('journal_entries as je', (join) =>
+      join.onRef('je.id', '=', 'jl.entry_id').on('je.tenant_id', '=', tenantId),
+    )
+    .where('jl.tenant_id', '=', tenantId)
+    .where('jl.account_id', '=', accountId)
+    .where('je.occurred_at', '>=', sqlDate(from))
+    .where(
+      sql<boolean>`(je.occurred_at, je.created_at, je.entry_number, jl.line_number) <= (${through.occurredAt}::date, ${through.createdAt}::timestamptz, ${through.entryNumber}, ${through.lineNumber})`,
+    )
+
+  if (partyId !== null) query = query.where('jl.party_id', '=', partyId)
+
+  const row = await query
+    .select((eb) => [
+      eb.fn.sum<string>('jl.debit').as('debit'),
+      eb.fn.sum<string>('jl.credit').as('credit'),
+    ])
+    .executeTakeFirstOrThrow()
+
+  return { debit: row.debit ?? '0', credit: row.credit ?? '0' }
+}
+
 /** Hard ceiling on one ledger page. A caller asking for more gets this many. */
 export const LEDGER_PAGE_MAX = 500
 

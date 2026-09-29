@@ -1,18 +1,26 @@
 import { Module } from '@nestjs/common'
+import { AccountsController } from './accounts.controller'
 import { JournalsController } from './journals.controller'
 import { LedgersController } from './ledgers.controller'
+import { PeriodsController } from './periods.controller'
 import { ReportsController } from './reports.controller'
 
 /*
- * M2-B: the accounting HTTP API. docs/design/M2/api-contract.md.
+ * The accounting HTTP API. docs/design/M2/api-contract.md.
  *
- * Journals (register, detail, post, reverse), the account ledger and the
- * trial balance. Chart-of-accounts and fiscal-period routes are NOT here —
- * see the contract doc §5/§6 for why (no permission code exists for either,
- * and account creation additionally conflicts with an APPROVED posting
- * rule; both are raised as open items rather than built).
+ * Journals (register, detail, post, reverse), the account ledger, the trial
+ * balance, the read-only chart of accounts and the fiscal-period lifecycle
+ * (view/close/reopen — no lock route, Council ruling 2026-09-29).
+ * POST /api/accounts stays Wave 2 remainder work (coa-standard.md §5) and
+ * is not built.
  */
 @Module({
-  controllers: [JournalsController, LedgersController, ReportsController],
+  controllers: [
+    AccountsController,
+    JournalsController,
+    LedgersController,
+    PeriodsController,
+    ReportsController,
+  ],
 })
 export class AccountingModule {}

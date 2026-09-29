@@ -1,81 +1,178 @@
 import { BadRequestException } from '@nestjs/common'
+import { UUID_PATTERN } from './dto/shared'
 
 /*
- * Opaque keyset-cursor codec for the accounting list endpoints. The wire
- * format is a caller's concern only in that it must round-trip
- * (`nextCursor` in, `?cursor=` back out unchanged) — apps/api owns the
- * encoding; packages/database's cursor types are plain objects.
+ * Opaque keyset-cursor codec for the accounting list endpoints.
+ *
+ * M2-B Council ruling, 2026-09-29 (all three seats): a cursor is base64url
+ * JSON, so it is trivially readable and editable by anyone holding it — it
+ * is opaque by CONVENTION (a client should treat it as a token), never by
+ * secrecy. Every field is therefore validated on decode:
+ *
+ *  - FORMAT: a uuid is a uuid, a date is a real calendar date, a timestamp
+ *    is a real ISO instant, an integer is an integer. A cursor that fails
+ *    format validation is 400, never trusted, never allowed to reach a
+ *    `uuid`- or `date`-typed SQL parameter as a raw string (which would
+ *    surface as a 500 from a PostgreSQL type-cast error instead).
+ *  - For the ledger cursor only: the CONTEXT it was issued for (accountId,
+ *    from, to, partyId) must match the request presenting it. A cursor
+ *    issued for account X presented on account Y, or under a different
+ *    date range, is 400 — never silently reinterpreted against the new
+ *    context, which could otherwise return a running balance that carries
+ *    forward from the wrong account or the wrong range.
+ *  - No financial number ever travels in a cursor. The ledger cursor used
+ *    to carry `closingBalance`; packages/reporting now recomputes the
+ *    carry-forward balance from the cursor's POSITION alone
+ *    (accountLedgerBalanceThrough) — see that package for why.
  */
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
+// Matches accountLedgerLines' / listJournalEntries' own to_char format:
+// YYYY-MM-DDTHH:MI:SS.UUUUUU Z (microsecond precision, UTC).
+const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/
+const ENTRY_NUMBER = /^[A-Z]+-\d{4}-\d{6}$/
+
+function isUuid(value: unknown): value is string {
+  return typeof value === 'string' && UUID_PATTERN.test(value)
+}
+function isIsoDate(value: unknown): value is string {
+  return typeof value === 'string' && ISO_DATE.test(value)
+}
+function isIsoTimestamp(value: unknown): value is string {
+  return typeof value === 'string' && ISO_TIMESTAMP.test(value)
+}
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1
+}
+
+function invalidCursor(): never {
+  throw new BadRequestException({
+    statusCode: 400,
+    error: 'invalid_cursor',
+    message: 'The cursor is malformed, forged, or was issued for a different request.',
+  })
+}
 
 export function encodeCursor<T extends object>(cursor: T | null): string | null {
   if (cursor === null) return null
   return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url')
 }
 
-/**
- * Decodes a cursor previously produced by `encodeCursor`. A forged or
- * corrupted cursor is a client error, never a 500 and never silently
- * ignored (docs/design/M2/api-contract.md §1, "Pagination").
- */
-export function decodeCursor<T extends Record<string, unknown>>(
-  raw: string | undefined,
-  isShape: (value: unknown) => value is T,
-): T | null {
-  if (raw === undefined) return null
-  let parsed: unknown
+function decodeJson(raw: string): unknown {
   try {
-    parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'))
+    return JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'))
   } catch {
-    throw new BadRequestException({
-      statusCode: 400,
-      error: 'invalid_cursor',
-      message: 'The cursor is malformed.',
-    })
+    invalidCursor()
   }
-  if (!isShape(parsed)) {
-    throw new BadRequestException({
-      statusCode: 400,
-      error: 'invalid_cursor',
-      message: 'The cursor is malformed.',
-    })
-  }
-  return parsed
 }
 
-export function isJournalEntryCursorShape(
-  value: unknown,
-): value is { occurredAt: string; createdAt: string; id: string } {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    typeof (value as Record<string, unknown>)['occurredAt'] === 'string' &&
-    typeof (value as Record<string, unknown>)['createdAt'] === 'string' &&
-    typeof (value as Record<string, unknown>)['id'] === 'string'
-  )
+/* ------------------------------------------------------------------ *
+ * Register cursor — GET /api/journals
+ * ------------------------------------------------------------------ */
+
+export interface RegisterCursor {
+  readonly occurredAt: string
+  readonly createdAt: string
+  readonly id: string
+}
+
+export function decodeRegisterCursor(raw: string | undefined): RegisterCursor | null {
+  if (raw === undefined) return null
+  const value = decodeJson(raw)
+  if (typeof value !== 'object' || value === null) invalidCursor()
+  const v = value as Record<string, unknown>
+  if (!isIsoDate(v['occurredAt'])) invalidCursor()
+  if (!isIsoTimestamp(v['createdAt'])) invalidCursor()
+  if (!isUuid(v['id'])) invalidCursor()
+  return { occurredAt: v['occurredAt'], createdAt: v['createdAt'], id: v['id'] }
+}
+
+/* ------------------------------------------------------------------ *
+ * Ledger cursor — GET /api/ledgers/:accountId
+ * ------------------------------------------------------------------ */
+
+export interface LedgerCursorPosition {
+  readonly occurredAt: string
+  readonly createdAt: string
+  readonly entryNumber: string
+  readonly lineNumber: number
+}
+
+export interface LedgerCursorContext {
+  readonly accountId: string
+  readonly from: string
+  readonly to: string
+  readonly partyId: string | null
+}
+
+export type LedgerCursorDto = LedgerCursorPosition & { readonly issuedFor: LedgerCursorContext }
+
+function decodeLedgerCursorFormat(raw: string): LedgerCursorDto {
+  const value = decodeJson(raw)
+  if (typeof value !== 'object' || value === null) invalidCursor()
+  const v = value as Record<string, unknown>
+
+  if (!isIsoDate(v['occurredAt'])) invalidCursor()
+  if (!isIsoTimestamp(v['createdAt'])) invalidCursor()
+  if (typeof v['entryNumber'] !== 'string' || !ENTRY_NUMBER.test(v['entryNumber'])) invalidCursor()
+  if (!isPositiveInteger(v['lineNumber'])) invalidCursor()
+
+  const issuedFor = v['issuedFor']
+  if (typeof issuedFor !== 'object' || issuedFor === null) invalidCursor()
+  const ctx = issuedFor as Record<string, unknown>
+  if (!isUuid(ctx['accountId'])) invalidCursor()
+  if (!isIsoDate(ctx['from'])) invalidCursor()
+  if (!isIsoDate(ctx['to'])) invalidCursor()
+  if (ctx['partyId'] !== null && !isUuid(ctx['partyId'])) invalidCursor()
+
+  return {
+    occurredAt: v['occurredAt'] as string,
+    createdAt: v['createdAt'] as string,
+    entryNumber: v['entryNumber'] as string,
+    lineNumber: v['lineNumber'] as number,
+    issuedFor: {
+      accountId: ctx['accountId'] as string,
+      from: ctx['from'] as string,
+      to: ctx['to'] as string,
+      partyId: ctx['partyId'] as string | null,
+    },
+  }
 }
 
 /**
- * The ledger cursor carries `closingBalance` alongside packages/reporting's
- * own `LedgerCursor` shape (occurredAt/createdAt/entryNumber/lineNumber):
- * `accountLedger`'s own contract requires the previous page's closing
- * balance to resume correctly (running balance cannot be recomputed from
- * `from` alone past page 1) — see ledgers.controller.ts.
+ * Decodes and validates a ledger cursor's FORMAT, then requires its
+ * `issuedFor` to match the request presenting it exactly — the accountId in
+ * the path, and the from/to/partyId in the query. Either failure is 400
+ * (`invalid_cursor`); the caller cannot tell the two apart, which is
+ * deliberate — neither is information a forger should get back.
  */
-export function isLedgerCursorShape(value: unknown): value is {
-  occurredAt: string
-  createdAt: string
-  entryNumber: string
-  lineNumber: number
-  closingBalance: string
-} {
-  const v = value as Record<string, unknown> | null
-  return (
-    typeof v === 'object' &&
-    v !== null &&
-    typeof v['occurredAt'] === 'string' &&
-    typeof v['createdAt'] === 'string' &&
-    typeof v['entryNumber'] === 'string' &&
-    typeof v['lineNumber'] === 'number' &&
-    typeof v['closingBalance'] === 'string'
-  )
+export function decodeLedgerCursor(
+  raw: string | undefined,
+  expected: LedgerCursorContext,
+): LedgerCursorPosition | null {
+  if (raw === undefined) return null
+  const cursor = decodeLedgerCursorFormat(raw)
+  const issuedFor = cursor.issuedFor
+  if (
+    issuedFor.accountId !== expected.accountId ||
+    issuedFor.from !== expected.from ||
+    issuedFor.to !== expected.to ||
+    issuedFor.partyId !== expected.partyId
+  ) {
+    invalidCursor()
+  }
+  return {
+    occurredAt: cursor.occurredAt,
+    createdAt: cursor.createdAt,
+    entryNumber: cursor.entryNumber,
+    lineNumber: cursor.lineNumber,
+  }
+}
+
+export function encodeLedgerCursor(
+  position: LedgerCursorPosition | null,
+  issuedFor: LedgerCursorContext,
+): string | null {
+  if (position === null) return null
+  return encodeCursor<LedgerCursorDto>({ ...position, issuedFor })
 }
