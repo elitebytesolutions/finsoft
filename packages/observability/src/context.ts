@@ -101,16 +101,27 @@ export interface CorrelationContext {
    * raw header read a second time. Set at the edge, alongside `requestId`,
    * by apps/api/src/correlation/request-correlation.middleware.ts. M1-C.
    *
+   * CARRIED HERE SOLELY SO `packages/database`'s `recordAudit` CAN DEFAULT
+   * AN AUDIT ROW'S `ip` COLUMN FROM IT — it is NOT a general-purpose
+   * correlation field and NEVER appears in a log line: `logger.ts`'s
+   * `mixin()` explicitly strips it before spreading the context into the
+   * merge object (Architecture seat condition on M1-C). An IP address is
+   * personal data; writing one append-only audit column per event is a
+   * decision this codebase already made (ADR-0020), but broadcasting it
+   * onto every log line for the life of a request is a data-protection
+   * policy question ADR-0016's redaction layers were never built to answer,
+   * and this field must not smuggle that decision in by accident.
+   *
    * Undefined for a job or another system-originated event: there is no
    * client to attribute an address to, and nothing here may invent one —
-   * `packages/database`'s `recordAudit` treats an absent `ip` (here or on
-   * its own caller's explicit input) as `null`, never as a value to guess.
+   * `recordAudit` treats an absent `ip` (here or on its own caller's
+   * explicit input) as `null`, never as a value to guess.
    *
    * Deliberately the RAW textual form, not the canonicalised one
    * `packages/database/src/audit/ip.ts`'s `normalizeIp` produces — this
    * package cannot depend on `packages/database` (`observability-imports-
    * almost-nothing`), and canonicalisation belongs at the one point a value
-   * is about to be hashed into the audit chain, not at every log line.
+   * is about to be hashed into the audit chain.
    */
   readonly ip?: string
 }

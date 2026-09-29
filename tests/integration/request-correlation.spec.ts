@@ -1,6 +1,6 @@
 import { Writable } from 'node:stream'
 import type { MiddlewareConsumer, NestMiddleware, INestApplication } from '@nestjs/common'
-import { Controller, Get, Injectable, Module } from '@nestjs/common'
+import { Body, Controller, Get, Injectable, Module, Post } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 import type { NextFunction, Request, Response } from 'express'
 import request from 'supertest'
@@ -73,6 +73,37 @@ class CorrelationProbeController {
     )
 
     return { requestId: getCorrelation()?.requestId, auditId: result.id }
+  }
+
+  /*
+   * POST with a JSON body: NestJS's default body parser reads the request
+   * stream (an asynchronous operation happening AFTER
+   * requestCorrelationMiddleware has already called `next()`) before this
+   * handler — or any guard/interceptor — runs. This proves the correlation
+   * context, entered via AsyncLocalStorage around `next()`, survives that
+   * hop rather than being an artefact of GET requests never crossing it.
+   */
+  @Post('audit')
+  async writeAuditFromBody(@Body() body: { note?: string }) {
+    getLogger().info({}, 'probe handling POST request')
+
+    const { userId } = TenantContext.require()
+    const result = await withTenant((tx) =>
+      recordAudit(tx, {
+        actorUserId: userId,
+        action: 'CORRELATION_PROBE_POST',
+        entityType: 'probe',
+        entityId: null,
+        beforeJson: null,
+        afterJson: null,
+      }),
+    )
+
+    return {
+      requestId: getCorrelation()?.requestId,
+      auditId: result.id,
+      receivedNote: body?.note,
+    }
   }
 }
 
@@ -174,6 +205,30 @@ describe('a request with a valid X-Request-Id', () => {
     expect(probeLine).toBeDefined()
     expect(probeLine?.['requestId']).toBe(requestId)
   })
+
+  /*
+   * Architecture seat condition, M1-C: ip is personal data and must never
+   * reach a log line, even though it does reach the audit row (asserted
+   * above). packages/observability/src/logger.test.ts covers mixin() in
+   * isolation; this is the same rule asserted against the real pipeline —
+   * a real request, a real X-Forwarded-For, the real logger.
+   */
+  it('never logs the ip, on any line written while handling the request', async () => {
+    const requestId = '9f8e7d6c-5b4a-4321-9876-543210fedcbc'
+
+    await request(app.getHttpServer())
+      .get('/api/probe/audit')
+      .set('X-Request-Id', requestId)
+      .set('X-Forwarded-For', '203.0.113.77')
+      .set(TEST_TENANT_HEADER, tenant.tenantId)
+      .set(TEST_USER_HEADER, tenant.ownerId)
+      .expect(200)
+
+    for (const l of lines) {
+      expect(l['ip'], `log line ${JSON.stringify(l)} must not carry ip`).toBeUndefined()
+    }
+    expect(JSON.stringify(lines)).not.toContain('203.0.113.77')
+  })
 })
 
 describe('a request with no X-Request-Id, or a malformed one', () => {
@@ -206,6 +261,30 @@ describe('a request with no X-Request-Id, or a malformed one', () => {
 
     const row = await storedRow(res.body.auditId)
     expect(row.request_id).toBe(echoed)
+  })
+})
+
+describe('a POST with a JSON body', () => {
+  it('the correlation context survives the body parser: the audit row carries request_id and the normalised ip', async () => {
+    const requestId = '9f8e7d6c-5b4a-4321-9876-543210fedcbd'
+
+    const res = await request(app.getHttpServer())
+      .post('/api/probe/audit')
+      .set('X-Request-Id', requestId)
+      .set('X-Forwarded-For', '203.0.113.88')
+      .set(TEST_TENANT_HEADER, tenant.tenantId)
+      .set(TEST_USER_HEADER, tenant.ownerId)
+      .send({ note: 'hello from the body' })
+      .expect(201)
+
+    // The body really was parsed — this is not a no-op POST.
+    expect(res.body.receivedNote).toBe('hello from the body')
+    expect(res.body.requestId).toBe(requestId)
+    expect(res.headers[REQUEST_ID_RESPONSE_HEADER.toLowerCase()]).toBe(requestId)
+
+    const row = await storedRow(res.body.auditId)
+    expect(row.request_id).toBe(requestId)
+    expect(row.ip).toBe('203.0.113.88')
   })
 })
 

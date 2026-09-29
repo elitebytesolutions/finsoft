@@ -35,14 +35,19 @@ import { resolveRequestId } from './request-id'
  * is present but invalid at the trusted position) are exactly the kind of
  * logic that drifts out of sync when written twice.
  *
- * Both flow into `withCorrelation`, which the observability package already
- * threads through every log line via `mixin()` (packages/observability/src/
- * logger.ts) — so no call site anywhere downstream has to remember to pass
- * either one for a log to carry them. `packages/database`'s `recordAudit`
- * reads the same ambient context to default `request_id`/`ip` on an audit
- * row when its caller does not supply them explicitly (packages/database/
- * src/audit/writer.ts) — see that file for why an explicit caller value
- * always wins and a missing context is never fabricated into one.
+ * Both flow into `withCorrelation`. `requestId` reaches every log line for
+ * the request via the observability package's `mixin()` (packages/
+ * observability/src/logger.ts) — no call site anywhere downstream has to
+ * remember to pass it. `ip` does NOT: `mixin()` deliberately strips it
+ * before it reaches a log line (Architecture seat condition, M1-C — an IP
+ * address is personal data, and broadcasting it onto every line of output
+ * is a policy decision ADR-0016's redaction layers were never built to
+ * make). `ip`'s one sanctioned reader is `packages/database`'s
+ * `recordAudit`, which defaults an audit row's `ip` column from the same
+ * ambient context when its caller does not supply one explicitly
+ * (packages/database/src/audit/writer.ts) — see that file for why an
+ * explicit caller value always wins and a missing context is never
+ * fabricated into one.
  */
 
 export const REQUEST_ID_HEADER = 'x-request-id'

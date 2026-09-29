@@ -163,7 +163,42 @@ rows and correlation across the whole request lifecycle.
       value (including explicit `null`) always wins, partial defaulting
       (one explicit, one from context), and a context with no `ip` (the
       worker/job shape) defaults `requestId` only.
+- [x] `ip` never appears in a log line, even though `requestId` and every
+      other correlation field still do — asserted against real logger
+      output in both `packages/observability/src/logger.test.ts` and
+      `tests/integration/request-correlation.spec.ts` (a real request with
+      a real `X-Forwarded-For`).
+- [x] A POST with a JSON body: the correlation context (entered via
+      `AsyncLocalStorage.run()` around `next()` in the correlation
+      middleware) survives NestJS's body parser reading the request stream
+      — an async hop that happens between the middleware calling `next()`
+      and the handler running — and the audit row written during the
+      request still carries `request_id` and the normalised `ip`.
+
+## Architecture seat review — APPROVED WITH CONDITIONS
+
+Two conditions, both landed:
+
+1. **`ip` must never appear in a log line.** It is personal data; ADR-0016's
+   redaction layers exist to catch secrets and driver topology, not to
+   decide a data-protection policy question about broadcasting an address
+   onto every line of output. Fixed in `packages/observability/src/
+   logger.ts`'s `mixin()`: `const { ip: _ip, ...rest } = correlation` before
+   the spread, so `ip` reaches `recordAudit` (the one caller that reads
+   `getCorrelation()` directly) and nowhere else. `CorrelationContext.ip`'s
+   own doc comment, this brief, and the middleware's header comment are
+   corrected to state this — they previously (incorrectly) said `ip` flowed
+   into every log line the same way `requestId` does. Covered by a new
+   logger-output test (`logger.test.ts`: "never logs the ip, even though
+   requestId and other fields still appear") and a real-HTTP one
+   (`request-correlation.spec.ts`: "never logs the ip, on any line written
+   while handling the request").
+2. **A POST + JSON-body integration test**, to prove the AsyncLocalStorage
+   context survives the body parser rather than only ever being exercised
+   over a bodyless GET. Added: `CorrelationProbeController.writeAuditFromBody`
+   (`@Post('audit')`, `@Body()`) plus the "a POST with a JSON body" describe
+   block in `tests/integration/request-correlation.spec.ts`.
 
 ## Gate
 
-`npm run check:full`, twice.
+`npm run check:full`, twice — before and after the conditions above.
