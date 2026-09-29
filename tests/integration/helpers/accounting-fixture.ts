@@ -16,7 +16,7 @@ import { seedSystemRoles } from '@finsoft/permissions'
  */
 export interface AccountingTenantFixture extends TenantFixture {
   readonly viewerId: string
-  /** account.view, period.view, period.close — not period.reopen. */
+  /** account.view, account.manage, period.view, period.close — not period.reopen. */
   readonly accountantId: string
   /** ACTIVE, but assigned NO role at all — holds zero permissions. */
   readonly noRoleId: string
@@ -161,6 +161,7 @@ export async function createAccountingTenant(label: string): Promise<AccountingT
               restricted: row.restricted,
               isActive: row.is_active,
               parentId: row.parent_id,
+              version: row.version,
             },
           ]),
         )

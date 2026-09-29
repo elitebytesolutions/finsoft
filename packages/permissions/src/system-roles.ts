@@ -21,6 +21,10 @@ import { PERMISSION_CODES, type PermissionCode } from './catalog.ts'
  * roles, so a tenant provisioned before or after that migration ends up
  * with identical grants — see that migration's header and
  * tests/integration/permission-backfill.spec.ts.
+ *
+ * database/migrations/019_add_account_manage_permission.sql does the same
+ * for `account.manage` (M2-C, coa-standard.md §8.5) — Owner and Accountant
+ * only.
  */
 
 const ALL_PERMISSIONS: readonly PermissionCode[] = PERMISSION_CODES
@@ -48,6 +52,7 @@ const ACCOUNTANT_PERMISSIONS: readonly PermissionCode[] = [
   'report.financial',
   'audit.view',
   'account.view',
+  'account.manage',
   'period.view',
   'period.close',
 ]

@@ -235,6 +235,143 @@ export const FORBIDDEN_PATTERNS: readonly { readonly name: string; readonly re: 
   },
 ]
 
+/*
+ * ADR-0028 §9, note dated 2026-09-29 (Architecture seat, M2-C). The checker
+ * only scans migrations >= FIRST_MODULE_MIGRATION for `tablesCreatedBy`, so
+ * a migration owned by `packages/accounting-kernel` that targets a table
+ * created BEFORE 014 (migration 018 on `accounts`, from migration 010) would
+ * otherwise see that table as belonging to no owner at all. This map is
+ * EXPLICIT and narrow — only the pre-014 tables a >= 014 migration actually
+ * needs to reference today — never a general "everything before 014 belongs
+ * to X" inference.
+ */
+export const PRE_014_TABLE_OWNERS: Readonly<Record<string, string>> = {
+  accounts: 'packages/accounting-kernel',
+  fiscal_periods: 'packages/accounting-kernel',
+  parties: 'packages/accounting-kernel',
+  journal_entries: 'packages/accounting-kernel',
+  journal_lines: 'packages/accounting-kernel',
+  document_sequences: 'packages/accounting-kernel',
+}
+
+/** Every table a migration file (>= 014) creates, keyed by its declared owner, seeded with PRE_014_TABLE_OWNERS. */
+export function buildOwnerTables(
+  files: readonly string[],
+  read: (file: string) => string,
+): Map<string, Set<string>> {
+  const ownerTables = new Map<string, Set<string>>()
+  for (const [table, owner] of Object.entries(PRE_014_TABLE_OWNERS)) {
+    const set = ownerTables.get(owner) ?? new Set<string>()
+    set.add(table)
+    ownerTables.set(owner, set)
+  }
+  for (const file of files) {
+    const sql = read(file)
+    const owner = ownerOf(sql)
+    if (!owner) continue
+    const set = ownerTables.get(owner) ?? new Set<string>()
+    for (const table of tablesCreatedBy(sql)) set.add(table)
+    ownerTables.set(owner, set)
+  }
+  return ownerTables
+}
+
+/*
+ * ADR-0028 §9, note dated 2026-09-29 (Security seat, M2-C). S4 for
+ * `packages/<name>` owners: all bans apply, with exactly three exceptions
+ * (verbatim text in the ADR note). Exception (a) — REVOKE INSERT, UPDATE ON
+ * an owned table FROM finsoft_app, only if the same migration re-grants a
+ * column list — needed no new code: it was already the one allowed REVOKE
+ * shape (REVOKE_SHAPE above), gated on table ownership via `ownedTables`,
+ * which `buildOwnerTables` (above) now resolves correctly across the 014
+ * boundary. Exceptions (b) and (c) are new, owner-gated allowances below.
+ */
+
+/**
+ * S4 exception (b), `packages/<name>` owners only: a `SECURITY DEFINER`
+ * function is allowed only if the SAME migration also pins
+ * `search_path = pg_catalog, public`, revokes EXECUTE from PUBLIC, and then
+ * grants EXECUTE explicitly. A pragmatic, whole-file regex check — matching
+ * this file's existing style — not a statement-scoped parse: the point is
+ * that all three companion statements are present, not that they attach to
+ * one specific CREATE FUNCTION in a file with several.
+ */
+export function isAllowedSecurityDefiner(sql: string): boolean {
+  const pinnedSearchPath = /SET\s+search_path\s*=\s*pg_catalog\s*,\s*public\b/is.test(sql)
+  const revokeExecuteFromPublic = /REVOKE\s+EXECUTE\s+ON\s+FUNCTION\b[^;]*\bFROM\s+PUBLIC\b/is.test(
+    sql,
+  )
+  const explicitGrantExecute = /GRANT\s+EXECUTE\s+ON\s+FUNCTION\b/is.test(sql)
+  return pinnedSearchPath && revokeExecuteFromPublic && explicitGrantExecute
+}
+
+/**
+ * S4 exception (c), `packages/<name>` owners only: every `OWNER TO`
+ * occurrence in the file must be an `ALTER FUNCTION ... OWNER TO ...` —
+ * never `ALTER TABLE`, `ALTER INDEX`, or any other object. This function
+ * checks only the SHAPE; that the named role is NOLOGIN, NOBYPASSRLS and
+ * owns nothing else is `schema.spec.ts`'s job, against a real database.
+ */
+export function isAllowedFunctionOwnerChange(sql: string): boolean {
+  const ownerToStatements =
+    stripComments(sql).match(/\bALTER\s+\w+\b[^;]*\bOWNER\s+TO\b[^;]*/gis) ?? []
+  if (ownerToStatements.length === 0) return false
+  return ownerToStatements.every((statement) => /^ALTER\s+FUNCTION\b/is.test(statement.trim()))
+}
+
+const EXECUTE_BAN_RE = /\bEXECUTE\b(?!\s+(?:FUNCTION|PROCEDURE)\b)/gi
+
+/**
+ * Exception (b)'s own companion statements — `GRANT EXECUTE ON FUNCTION ...`
+ * / `REVOKE EXECUTE ON FUNCTION ... FROM PUBLIC` — use the word EXECUTE in a
+ * way the base EXECUTE-ban (dynamic SQL) pattern also matches, since it is
+ * not `EXECUTE FUNCTION`/`EXECUTE PROCEDURE` (ordinary trigger syntax). This
+ * checks that EVERY such match in the file is one of those two safe shapes,
+ * not a genuine dynamic `EXECUTE '...'` — which stays banned even here.
+ */
+export function everyExecuteOccurrenceIsGrantOrRevoke(sql: string): boolean {
+  const matches = [...sql.matchAll(EXECUTE_BAN_RE)]
+  if (matches.length === 0) return true
+  return matches.every((m) => {
+    const start = m.index ?? 0
+    const before = sql.slice(Math.max(0, start - 12), start)
+    const after = sql.slice(start + m[0].length, start + m[0].length + 24)
+    return /\b(?:GRANT|REVOKE)\s*$/i.test(before) && /^\s+ON\s+FUNCTION\b/i.test(after)
+  })
+}
+
+/**
+ * S4's forbidden-construct scan, owner-aware (ADR-0028 §9 notes above). A
+ * `modules/<name>` owner (or no owner at all) gets the unconditional ban,
+ * unchanged. A `packages/<name>` owner gets the two narrow exceptions —
+ * exception (b) also exempts the EXECUTE-ban pattern where it fires only on
+ * that exception's own `GRANT|REVOKE EXECUTE ON FUNCTION` companion
+ * statements, never on a genuine dynamic EXECUTE.
+ */
+export function forbiddenOffenses(sql: string, owner: string | null): string[] {
+  const isPackageOwner = owner !== null && owner.startsWith('packages/')
+  const allowedDefiner = isPackageOwner && isAllowedSecurityDefiner(sql)
+  const offenses: string[] = []
+
+  for (const pattern of FORBIDDEN_PATTERNS) {
+    if (!pattern.re.test(sql)) continue
+
+    if (allowedDefiner && pattern.name === 'CREATE FUNCTION ... SECURITY DEFINER') continue
+    if (
+      allowedDefiner &&
+      pattern.name.startsWith('EXECUTE (dynamic SQL') &&
+      everyExecuteOccurrenceIsGrantOrRevoke(sql)
+    ) {
+      continue
+    }
+    if (isPackageOwner && pattern.name === 'ALTER ... OWNER' && isAllowedFunctionOwnerChange(sql)) {
+      continue
+    }
+    offenses.push(pattern.name)
+  }
+  return offenses
+}
+
 /** CREATE VIEW is allowed only WITH (security_invoker = true) — S4. */
 export function viewsWithoutSecurityInvoker(sql: string): string[] {
   const names: string[] = []
@@ -285,15 +422,7 @@ describe('migration ownership (C10, ADR-0028)', () => {
   )
 
   it('every targeted table belongs to a migration with the same owner', () => {
-    const ownerTables = new Map<string, Set<string>>()
-    for (const file of files) {
-      const sql = read(file)
-      const owner = ownerOf(sql)
-      if (!owner) continue
-      const set = ownerTables.get(owner) ?? new Set<string>()
-      for (const table of tablesCreatedBy(sql)) set.add(table)
-      ownerTables.set(owner, set)
-    }
+    const ownerTables = buildOwnerTables(files, read)
 
     const offenders: string[] = []
     for (const file of files) {
@@ -314,15 +443,21 @@ describe('migration ownership (C10, ADR-0028)', () => {
     ).toEqual([])
   })
 
-  it.each(files)("%s contains none of S4's outright-forbidden constructs", (file) => {
-    const sql = read(file)
-    const hits = FORBIDDEN_PATTERNS.filter((p) => p.re.test(sql)).map((p) => p.name)
-    expect(hits, `${file} contains a forbidden construct`).toEqual([])
-  })
+  it.each(files)(
+    "%s contains none of S4's outright-forbidden constructs (packages/<name> exceptions apply)",
+    (file) => {
+      const sql = read(file)
+      const owner = ownerOf(sql)
+      const hits = forbiddenOffenses(sql, owner)
+      expect(hits, `${file} contains a forbidden construct`).toEqual([])
+    },
+  )
 
   it.each(files)('%s: every GRANT/REVOKE matches an explicitly allowed shape (S-GRANT)', (file) => {
     const sql = read(file)
-    const owned = new Set(tablesCreatedBy(sql))
+    const owner = ownerOf(sql)
+    const ownerTables = buildOwnerTables(files, read)
+    const owned = owner ? (ownerTables.get(owner) ?? new Set<string>()) : new Set<string>()
     expect(
       grantRevokeOffenses(sql, owned),
       `${file} has a GRANT/REVOKE that does not match an allowed shape, or targets an unowned table`,
@@ -545,6 +680,135 @@ describe('migration ownership (C10, ADR-0028)', () => {
       expect(normalizeIdentifier('customers')).toBe('customers')
       expect(normalizeIdentifier('"customers"')).toBe('customers')
       expect(normalizeIdentifier('public.customers')).toBe('customers')
+    })
+
+    /*
+     * S4 exceptions for packages/<name> owners (ADR-0028 §9, note dated
+     * 2026-09-29, Security seat). Each of (b) and (c) gets a failing
+     * fixture (missing a companion statement, or the wrong owner) and a
+     * passing fixture (the full allowed shape) — plus proof that a
+     * modules/<name> owner gets NONE of this: the unconditional ban stays.
+     */
+    describe('S4 exceptions for packages/<name> owners (ADR-0028 §9, 2026-09-29)', () => {
+      const definerFixture = `
+        CREATE FUNCTION coa_seed(template_id text) RETURNS void
+        LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path = pg_catalog, public AS $fn$
+        BEGIN
+          NULL;
+        END;
+        $fn$;
+        REVOKE EXECUTE ON FUNCTION coa_seed(text) FROM PUBLIC;
+        GRANT EXECUTE ON FUNCTION coa_seed(text) TO finsoft_app;
+      `
+
+      it('(b) full shape: SECURITY DEFINER + pinned search_path + REVOKE EXECUTE FROM PUBLIC + explicit GRANT EXECUTE passes for a packages/<name> owner', () => {
+        expect(isAllowedSecurityDefiner(definerFixture)).toBe(true)
+        expect(forbiddenOffenses(definerFixture, 'packages/accounting-kernel')).toEqual([])
+      })
+
+      it('(b) is rejected for a packages/<name> owner when search_path is not pinned to exactly pg_catalog, public', () => {
+        const missingSearchPath = definerFixture.replace(
+          'SET search_path = pg_catalog, public',
+          'SET search_path = pg_catalog, pg_temp',
+        )
+        expect(isAllowedSecurityDefiner(missingSearchPath)).toBe(false)
+        expect(forbiddenOffenses(missingSearchPath, 'packages/accounting-kernel')).toContain(
+          'CREATE FUNCTION ... SECURITY DEFINER',
+        )
+      })
+
+      it('(b) is rejected for a packages/<name> owner when EXECUTE is not revoked from PUBLIC', () => {
+        const missingRevoke = definerFixture.replace(
+          'REVOKE EXECUTE ON FUNCTION coa_seed(text) FROM PUBLIC;',
+          '',
+        )
+        expect(isAllowedSecurityDefiner(missingRevoke)).toBe(false)
+        expect(forbiddenOffenses(missingRevoke, 'packages/accounting-kernel')).toContain(
+          'CREATE FUNCTION ... SECURITY DEFINER',
+        )
+      })
+
+      it('(b) is rejected for a packages/<name> owner when there is no explicit GRANT EXECUTE', () => {
+        const missingGrant = definerFixture.replace(
+          'GRANT EXECUTE ON FUNCTION coa_seed(text) TO finsoft_app;',
+          '',
+        )
+        expect(isAllowedSecurityDefiner(missingGrant)).toBe(false)
+        expect(forbiddenOffenses(missingGrant, 'packages/accounting-kernel')).toContain(
+          'CREATE FUNCTION ... SECURITY DEFINER',
+        )
+      })
+
+      it('(b) the exception does NOT apply to a modules/<name> owner — the unconditional ban stands', () => {
+        expect(forbiddenOffenses(definerFixture, 'modules/customers')).toContain(
+          'CREATE FUNCTION ... SECURITY DEFINER',
+        )
+      })
+
+      it('(b) the exception does NOT apply with no owner at all', () => {
+        expect(forbiddenOffenses(definerFixture, null)).toContain(
+          'CREATE FUNCTION ... SECURITY DEFINER',
+        )
+      })
+
+      const ownerFixture = 'ALTER FUNCTION coa_seed(text) OWNER TO finsoft_coa_seed;'
+
+      it('(c) ALTER FUNCTION ... OWNER TO ... passes for a packages/<name> owner', () => {
+        expect(isAllowedFunctionOwnerChange(ownerFixture)).toBe(true)
+        expect(forbiddenOffenses(ownerFixture, 'packages/accounting-kernel')).toEqual([])
+      })
+
+      it('(c) ALTER TABLE ... OWNER TO ... is still rejected for a packages/<name> owner — only ALTER FUNCTION qualifies', () => {
+        const tableOwnerFixture = 'ALTER TABLE accounts OWNER TO someone;'
+        expect(isAllowedFunctionOwnerChange(tableOwnerFixture)).toBe(false)
+        expect(forbiddenOffenses(tableOwnerFixture, 'packages/accounting-kernel')).toContain(
+          'ALTER ... OWNER',
+        )
+      })
+
+      it('(c) a file mixing an allowed ALTER FUNCTION OWNER TO with a disallowed ALTER TABLE OWNER TO is rejected', () => {
+        const mixed = `${ownerFixture}\nALTER TABLE accounts OWNER TO someone;`
+        expect(isAllowedFunctionOwnerChange(mixed)).toBe(false)
+        expect(forbiddenOffenses(mixed, 'packages/accounting-kernel')).toContain('ALTER ... OWNER')
+      })
+
+      it('(c) the exception does NOT apply to a modules/<name> owner — the unconditional ban stands', () => {
+        expect(forbiddenOffenses(ownerFixture, 'modules/customers')).toContain('ALTER ... OWNER')
+      })
+
+      it('(a) needs no new code: REVOKE INSERT, UPDATE ON an owned table FROM finsoft_app already passes, for a packages/<name> owner, once the table resolves as owned', () => {
+        const revokeFixture = 'REVOKE INSERT, UPDATE ON accounts FROM finsoft_app;'
+        const owned = new Set(['accounts'])
+        expect(grantRevokeOffenses(revokeFixture, owned)).toEqual([])
+      })
+
+      it('(a) the same REVOKE is rejected if the table does not resolve as owned (the pre-014 map is what makes it resolve for migration 018)', () => {
+        const revokeFixture = 'REVOKE INSERT, UPDATE ON accounts FROM finsoft_app;'
+        expect(grantRevokeOffenses(revokeFixture, new Set())).toHaveLength(1)
+      })
+    })
+
+    describe('pre-014 owner map (ADR-0028 §9, note dated 2026-09-29)', () => {
+      it('resolves accounts (migration 010) to packages/accounting-kernel', () => {
+        const ownerTables = buildOwnerTables(files, read)
+        expect(ownerTables.get('packages/accounting-kernel')?.has('accounts')).toBe(true)
+      })
+
+      it("018's real ALTER TABLE/CREATE TRIGGER/CREATE INDEX/GRANT on accounts pass, now that accounts resolves as owned", () => {
+        const migration018 = '018_accounts_create_and_edit.sql'
+        if (!existsSync(join(MIGRATIONS_DIR, migration018))) return // not yet present in this checkout
+        const sql = read(migration018)
+        const owner = ownerOf(sql)
+        expect(owner).toBe('packages/accounting-kernel')
+
+        const ownerTables = buildOwnerTables(files, read)
+        const allowed = ownerTables.get(owner as string) ?? new Set<string>()
+        const offenders = targetedConstructs(sql).filter((c) => !allowed.has(c.table))
+        expect(offenders).toEqual([])
+
+        expect(grantRevokeOffenses(sql, allowed)).toEqual([])
+      })
     })
   })
 })

@@ -130,7 +130,11 @@ const EXPECTED: Record<
   (typeof TABLES)[number],
   { columns: string[]; insert: string[]; update: string[] }
 > = {
-  // 010: INSERT for provisioning's seed, no UPDATE at all in the MVP.
+  // 010: INSERT for provisioning's seed. 018 (M2-C): column-scoped UPDATE
+  // for name/code/parent_id (coa-standard.md §8.2, §8.7 R1) — every other
+  // column stays ungranted; accounts_enforce_posted_immutability (012,
+  // widened by 018) and the protected-row check (018 R3) are the backstop
+  // for every OTHER role, including finsoft_migration.
   accounts: {
     columns: [
       ...MANDATORY,
@@ -160,7 +164,7 @@ const EXPECTED: Record<
       'created_by',
       'updated_by',
     ],
-    update: [],
+    update: ['name', 'code', 'parent_id', 'updated_by', 'version'],
   },
   // 011: created OPEN (status not insertable), transitions write stamps only.
   fiscal_periods: {

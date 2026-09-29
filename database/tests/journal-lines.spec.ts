@@ -325,6 +325,16 @@ describe('accounts.control_kind is pinned once posted to (ADR-0026 Compliance ro
     await client.connect()
     try {
       await client.query('BEGIN')
+      // M2-C (migration 018): accounts_enforce_posted_immutability now ALSO
+      // rejects ANY change to a protected row (coa-standard.md §8.2/§8.7 R3)
+      // — 1300 Inventory (control_kind INVENTORY) is protected regardless of
+      // postings, which is a second, independent guard from the one this
+      // test exists to isolate. Disabled here, exactly like the sibling
+      // test above, so this proves the FK's OWN behaviour ("the FK only
+      // pins posted accounts") rather than R3's.
+      await client.query(
+        'ALTER TABLE accounts DISABLE TRIGGER accounts_enforce_posted_immutability',
+      )
       // 1300 Inventory has no lines in this tenant. INVENTORY -> NONE is
       // permitted by every CHECK on accounts.
       const result = await client.query(
@@ -332,6 +342,23 @@ describe('accounts.control_kind is pinned once posted to (ADR-0026 Compliance ro
         [account(t, '1300')],
       )
       expect(result.rowCount).toBe(1)
+    } finally {
+      await client.query('ROLLBACK').catch(() => undefined)
+      await client.end()
+    }
+  })
+
+  it('M2-C: with the trigger ENABLED, the same update is refused — R3 protects a control account regardless of postings', async () => {
+    const client = migrationClient()
+    await client.connect()
+    try {
+      await client.query('BEGIN')
+      await expect(
+        client.query(
+          `update accounts set control_kind = 'NONE', version = version + 1 where id = $1`,
+          [account(t, '1300')],
+        ),
+      ).rejects.toMatchObject({ code: '23514' })
     } finally {
       await client.query('ROLLBACK').catch(() => undefined)
       await client.end()

@@ -642,6 +642,7 @@ describe('seedSystemRoles', () => {
     expect([...ownerPerms].sort()).toEqual(
       [
         'account.view',
+        'account.manage',
         'admin.user_manage',
         'audit.view',
         'customer.create',

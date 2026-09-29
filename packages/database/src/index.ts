@@ -156,12 +156,21 @@ export type { RoleSeed } from './rbac/seed-roles.ts'
  * (see that file's header for why).
  */
 export {
+  ACCOUNTS_CODE_CONSTRAINT,
+  ACCOUNTS_NAME_CONSTRAINT,
+  findAccountById,
   findAccountsByIds,
+  hasJournalLines,
+  insertUserCreatedAccount,
+  isProtectedAccount,
   listAllAccounts,
+  listCodesInBlock,
   listPostableAccounts,
+  lockAccountForUpdate,
   resolveAccountsByRole,
+  updateAccountRow,
 } from './accounting/accounts.ts'
-export type { AccountRow } from './accounting/accounts.ts'
+export type { AccountEditChanges, AccountRow, NewUserAccount } from './accounting/accounts.ts'
 
 export { findPeriodById, findPeriodForDate, listPeriods } from './accounting/periods.ts'
 export type { FiscalPeriodRow, PeriodStatus } from './accounting/periods.ts'

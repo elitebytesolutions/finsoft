@@ -28,8 +28,13 @@ import { readSchemaHealth } from '@finsoft/database'
  *
  * 15: 015_create_customers.sql (M3-C). Renumbered from the M3 design pack's
  * original 014 — see that migration's own header for why.
+ *
+ * 19: 018_accounts_create_and_edit.sql + 019_add_account_manage_permission.sql
+ * (M2-C, chart-of-accounts create/edit). Migrations 016 and 017 are M3-P's
+ * (feature/M3-P-receivables, not yet merged as of this lane) — gapless
+ * numbering means this lane's PR merges after that one.
  */
-export const REQUIRED_SCHEMA_VERSION = 15
+export const REQUIRED_SCHEMA_VERSION = 19
 
 /**
  * A readiness probe must answer quickly or it is useless: an orchestrator

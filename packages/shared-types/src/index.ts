@@ -40,6 +40,7 @@ export type {
   AccountLedgerLineDto,
   AccountLedgerResponseDto,
   AccountsResponseDto,
+  CreateAccountRequestDto,
   FiscalPeriodDto,
   JournalEntryDto,
   JournalEntryWithLinesDto,
@@ -48,6 +49,8 @@ export type {
   PeriodsResponseDto,
   PostJournalVoucherResponseDto,
   ReverseJournalEntryResponseDto,
+  SuggestAccountCodeResponseDto,
   TrialBalanceLineDto,
   TrialBalanceResponseDto,
+  UpdateAccountRequestDto,
 } from './accounting.ts'

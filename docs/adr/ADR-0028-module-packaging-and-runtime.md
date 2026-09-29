@@ -116,3 +116,51 @@ The signed body is not edited; this note overrides it where the two differ.
 Database/Security seat — 2026-09-29 — accepts point 2 (S4 owner widening).
 
 Architecture seat — 2026-09-29 — countersigns the amendment (points 1 and 2).
+
+---
+
+**Note, 2026-09-29** (Architecture seat, M2-C). C10's checker
+(`database/tests/migration-ownership.spec.ts`) only scans migrations from 014 on for
+`tablesCreatedBy` when building each owner's allowed-table set (per statement 2 of the amendment
+above). Migration 018 (`packages/accounting-kernel`) needs to `ALTER TABLE`, `CREATE TRIGGER … ON`,
+`CREATE INDEX … ON` and `GRANT … ON` the `accounts` table, which migration 010 — before 014 — created.
+Without an explicit pre-014 owner record, the checker would see `accounts` as belonging to no owner at
+all and reject 018's own, legitimate constructs. The checker is amended with an EXPLICIT, hard-coded
+map from a pre-014 table to its owner, used only to seed each owner's allowed-table set (never to admit
+a NEW pre-014 migration to the checker's scan, which stays 014 on):
+
+| Migration | Tables | Owner |
+|---|---|---|
+| 010 | `accounts` | `packages/accounting-kernel` |
+| 011 | `fiscal_periods` | `packages/accounting-kernel` |
+| 012 | `parties`, `journal_entries`, `journal_lines` | `packages/accounting-kernel` |
+| 013 | `document_sequences` | `packages/accounting-kernel` |
+
+This map is deliberately narrow — only the tables M2-C's own migration 018 needs to reference. It
+does not assign an owner to any table from migrations 001–009; a future lane extending the map to those
+tables makes that assignment explicitly, in its own reviewed change, not by silent precedent from this
+one.
+
+**Note, 2026-09-29** (Security seat, M2-C). The three named exceptions to S4 for `packages/<name>`
+owners, verbatim from this lane's delivery brief:
+
+> **S4 for `packages/<name>` owners, 2026-09-29.** All S4 bans apply, with exactly three exceptions,
+> each needing a failing fixture: (a) `REVOKE INSERT|UPDATE ON <table> FROM finsoft_app`, only on a
+> table this owner owns, and only if the same migration then re-grants a column list to
+> `finsoft_app`; (b) `CREATE FUNCTION … SECURITY DEFINER`, only with
+> `SET search_path = pg_catalog, public`, and then `REVOKE EXECUTE … FROM PUBLIC` and an explicit
+> `GRANT EXECUTE`; (c) `ALTER FUNCTION <that function> OWNER TO <role>`, only if `schema.spec.ts`
+> asserts that role is `NOLOGIN`, `NOBYPASSRLS` and owns nothing else. Every `packages/<name>`
+> migration also needs a named T2 Database/Security review.
+
+Implemented in `database/tests/migration-ownership.spec.ts` (`isAllowedSecurityDefiner`,
+`isAllowedFunctionOwnerChange`, both gated on a `packages/<name>` owner only — a `modules/<name>`
+owner keeps the unconditional ban), each with a failing fixture and a passing fixture for the allowed
+shape. Exception (a) needed no new code: `REVOKE INSERT, UPDATE ON <table> FROM finsoft_app` was
+already the one allowed `REVOKE` shape (`REVOKE_SHAPE`), gated only on the table being one the
+migration's owner created — which is exactly what the pre-014 owner map above now lets migration 018
+satisfy for `accounts`. Migration 018 itself uses none of the three exceptions — it needed no
+`SECURITY DEFINER` function, having been unable to complete the one that coa-standard.md §8.7 R2 asks
+for (a dedicated `NOLOGIN`/`NOBYPASSRLS` role could not be provisioned from within this lane's `ALLOWED`
+paths — see this lane's report). The three exceptions are implemented and fixture-tested regardless,
+ready for whichever migration lands R2's seeding function.

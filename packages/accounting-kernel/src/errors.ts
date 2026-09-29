@@ -77,6 +77,21 @@ export type PostingErrorCode =
   | 'INVOICE_NOT_OPEN'
   | 'ALLOCATION_INVOICE_AFTER_RECEIPT'
   | 'ALLOCATION_EXCEEDS_OUTSTANDING'
+  // coa-standard.md §8.9 — chart of accounts create/edit (M2-C). Evaluation
+  // order: permission, payload shape, account found and not protected
+  // (edit), version (edit), parent, code format, code range, has-postings
+  // (edit of code/parent), code and name uniqueness.
+  | 'ACCOUNT_PARENT_NOT_FOUND'
+  | 'ACCOUNT_PARENT_NOT_HEADER'
+  | 'ACCOUNT_PARENT_TYPE_MISMATCH'
+  | 'ACCOUNT_CODE_FORMAT'
+  | 'ACCOUNT_CODE_OUT_OF_RANGE'
+  | 'ACCOUNT_CODE_TAKEN'
+  | 'ACCOUNT_NAME_INVALID'
+  | 'ACCOUNT_NAME_TAKEN'
+  | 'ACCOUNT_PROTECTED'
+  | 'ACCOUNT_HAS_POSTINGS'
+  | 'ACCOUNT_VERSION_CONFLICT'
 
 /**
  * The one error type every posting-rule rejection and every reversal

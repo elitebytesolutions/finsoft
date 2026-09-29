@@ -310,6 +310,37 @@ COLUMN`, or dropped in a later migration — not silently left ambiguous.
 
 ---
 
+## Row locks — migration 018 (accounts create/edit, M2-C)
+
+**Order:** a single row, `accounts (tenant_id, id)` — the account being edited, `FOR UPDATE`.
+
+coa-standard.md §8.7 R8: a code or parent-id edit must not pass its "the account has no journal
+line yet" check while a concurrent transaction inserts that account's first `journal_lines` row.
+`accounts_enforce_posted_immutability` (migration 012, widened by migration 018) takes this lock
+explicitly — `SELECT id FROM accounts WHERE tenant_id = ... AND id = ... FOR UPDATE` — inside the
+`BEFORE UPDATE` trigger, before its fresh read of `journal_lines`. The kernel
+(`chartOfAccounts.update`, `packages/accounting-kernel/src/chart-of-accounts.ts`) takes the same
+lock itself, via `lockAccountForUpdate`, so the common case gets a typed `ACCOUNT_HAS_POSTINGS`
+rejection rather than an opaque database exception; the trigger is the backstop for every other
+role and for the FOR UPDATE the outer `UPDATE` statement already implicitly holds by the time the
+trigger's own explicit lock statement runs.
+
+**Only one row, so it cannot deadlock.** There is no second row in this transaction's lock order
+for a concurrent transaction to be holding while it waits on this one — a `journal_lines` INSERT
+that references the same account takes an implicit `FOR KEY SHARE` on this same row (via
+`journal_lines_account_fkey`, ADR-0026), which conflicts with `FOR UPDATE` and forces that
+transaction to wait or (if it already committed) to have already released the lock before this one
+was taken. Either the account edit commits first (and the posting then lands on the same account
+id under its new code/parent), or the posting commits first (and the fresh `journal_lines` read
+inside the lock sees it, rejecting the edit) — proved both ways by
+`tests/integration/accounts-create-edit.spec.ts`'s "code and parent freeze after the first
+posting" describe block (edit-then-post, post-then-edit, and a real concurrent race).
+
+**Not a new position in the global advisory-lock order above** — this is a row lock, grouped by
+migration like 005's and 008's own entries, not an advisory lock.
+
+---
+
 ## Adding an entry
 
 1. Name the key expression exactly as the code computes it (advisory locks) or

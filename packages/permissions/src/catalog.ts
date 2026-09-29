@@ -42,6 +42,12 @@ export const PERMISSION_CODES = [
   'period.view',
   'period.close',
   'period.reopen',
+  // Added by the M2-C Council ruling, 2026-09-29 (coa-standard.md §8.5,
+  // Security seat APPROVED WITH CONDITIONS): create and edit a chart-of-
+  // accounts account. One code for both acts — the MVP treats them as the
+  // same act of shaping the chart, and deactivate (Wave 2 remainder) earns
+  // its own code when it is built.
+  'account.manage',
 ] as const
 
 export type PermissionCode = (typeof PERMISSION_CODES)[number]

@@ -16,7 +16,18 @@ import { PostingError, type PostingErrorCode } from '@finsoft/accounting-kernel'
  * caught and never corrected").
  */
 
-const STATUS_404: ReadonlySet<PostingErrorCode> = new Set(['ENTRY_NOT_FOUND'])
+const STATUS_404: ReadonlySet<PostingErrorCode> = new Set([
+  'ENTRY_NOT_FOUND',
+  // M2-C, coa-standard.md §8.1: "the same error whether the id is unknown
+  // or belongs to another tenant" — never 403, RLS makes the two
+  // indistinguishable, so the API must too. NOT `ACCOUNT_NOT_FOUND`: that
+  // code is ALSO raised by journal-voucher.ts for an unknown account named
+  // inside a JV's body (accounting-api.spec.ts: 400, by design — a body
+  // field, not a path parameter). accounts.controller.ts's PATCH handler
+  // special-cases `ACCOUNT_NOT_FOUND` to 404 itself, for its own path-
+  // parameter case only, rather than widening this shared, code-keyed map.
+  'ACCOUNT_PARENT_NOT_FOUND',
+])
 
 const STATUS_409: ReadonlySet<PostingErrorCode> = new Set([
   'PERIOD_CLOSED',
@@ -35,6 +46,14 @@ const STATUS_409: ReadonlySet<PostingErrorCode> = new Set([
   'PERIOD_REOPEN_OUT_OF_ORDER',
   'PERIOD_LOCK_OUT_OF_ORDER',
   'PERIOD_NOT_CLOSED',
+  // M2-C, coa-standard.md §8.9: the request is individually valid but
+  // conflicts with the account's current state — already taken, protected,
+  // has postings, or a stale version.
+  'ACCOUNT_CODE_TAKEN',
+  'ACCOUNT_NAME_TAKEN',
+  'ACCOUNT_PROTECTED',
+  'ACCOUNT_HAS_POSTINGS',
+  'ACCOUNT_VERSION_CONFLICT',
 ])
 
 const STATUS_403: ReadonlySet<PostingErrorCode> = new Set(['FORBIDDEN'])

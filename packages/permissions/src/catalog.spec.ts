@@ -7,7 +7,7 @@ import {
 } from './catalog.ts'
 
 describe('the permission catalogue', () => {
-  it('is exactly the MVP subset the brief names plus the M2-B Council ruling, no more and no less', () => {
+  it('is exactly the MVP subset the brief names plus the M2-B and M2-C Council rulings, no more and no less', () => {
     expect([...PERMISSION_CODES].sort()).toEqual(
       [
         'admin.user_manage',
@@ -22,6 +22,7 @@ describe('the permission catalogue', () => {
         'voucher.reverse',
         'voucher.view',
         'account.view',
+        'account.manage',
         'period.view',
         'period.close',
         'period.reopen',
@@ -78,5 +79,7 @@ describe('the permission catalogue', () => {
     expect(isPrivileged('customer.view')).toBe(false)
     expect(isPrivileged('period.view')).toBe(false)
     expect(isPrivileged('account.view')).toBe(false)
+    // coa-standard.md §8.5: account.manage is NOT privileged — no MFA step-up.
+    expect(isPrivileged('account.manage')).toBe(false)
   })
 })

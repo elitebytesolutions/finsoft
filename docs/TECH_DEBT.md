@@ -377,3 +377,63 @@ every AR-control account for the party, matching `customerSubledgerBalance`'s
 own query shape, rather than resolving a single role.
 
 **Update, 2026-09-29 (Accounting seat, M2-C).** The Product Owner brought chart create/edit into the MVP. It does **not** force this item: [coa-standard.md](posting-rules/coa-standard.md) §8.1 forbids users from creating control accounts, and §8.7 asks migration 018 for R2 (the create path cannot write `control_kind`) and R7 (at most one `AR` and one `AP` control account per tenant, structurally). Once R7 lands, the divergent configuration cannot be stored, and this item can close on the Database seat's evidence.
+
+**Update, 2026-09-29 (M2-C implementation).** R7 has landed: migration 018 adds `accounts_tenant_ar_ap_control_key`, a unique index on `(tenant_id, control_kind) WHERE control_kind IN ('AR', 'AP')`, binding every role including `finsoft_migration` — a second `AR`- or `AP`-control account cannot be stored by any path. R2 (the application-layer narrowing of the create path's own INSERT privilege) is **not** landed — see TD-012 — but R7 alone already closes the structural gap this item names: the divergent configuration `controlAccountLedger` worries about cannot exist in the database regardless of which path attempted to write it. Recommend closing this item on the Database seat's sign-off of migration 018's `accounts_tenant_ar_ap_control_key`.
+
+---
+
+## TD-012 · coa-standard.md §8.7 R2's database-privilege backstop is not built — blocked on a new database role
+
+**What.** `coa-standard.md` §8.7 R2 asks for the chart-of-accounts user-create
+path to be structurally unable to insert a header, a control account, a role
+or a restricted account — at the privilege layer, not only in application
+code — via a `SECURITY DEFINER` seeding function that replaces
+`finsoft_app`'s current column-scoped `INSERT` grant on
+`kind`/`control_kind`/`role`/`restricted` (today used only by tenant
+provisioning, `seedChartOfAccounts`). The Security seat's tightening of R2
+(this lane's delivery brief, M2-C) requires that function's owner to be a
+`NOLOGIN`, `NOBYPASSRLS` role that "owns nothing else" (the S4 exception this
+lane implemented in `database/tests/migration-ownership.spec.ts`, ready for
+whichever migration lands this function).
+
+Migration 018 does **not** land this function. The one existing role that
+fits "NOLOGIN, NOBYPASSRLS" — `finsoft_refresh` (migration 006, ADR-0023 §2)
+— already owns `auth_lookup.resolve_refresh`; giving it a second function
+would fail "owns nothing else" for both. A fresh, dedicated role cannot be
+created by a migration (`finsoft_migration` has no `CREATEROLE`, measured,
+migration 006's own header) — it can only be provisioned in
+`infrastructure/docker/postgres/init/00-bootstrap.sh`, a file outside this
+lane's `ALLOWED` paths. The Security seat's other named option, a trigger
+that admits those values only inside the tenant-provisioning transaction, is
+explicitly **REJECTED** by the same ruling — there is no third mechanism this
+lane could use instead.
+
+**Why it is accepted, for now.** The APPLICATION-layer half of R2 holds:
+`chartOfAccounts.create` (`packages/accounting-kernel/src/chart-of-accounts.ts`)
+hardcodes `kind='POSTABLE'`, `control_kind='NONE'`, `role=NULL`,
+`restricted=false` — there is no field through which a request, however
+malformed, could ask for anything else. Combined with R7 (landed, TD-011's
+update above), the reachable blast radius of the missing privilege-layer
+backstop is narrow: a bug would have to be in `finsoft_app`'s OWN code path
+(not a crafted HTTP request, which the kernel's fixed values already
+foreclose) to reach the still-open `kind`/`control_kind`/`role`/`restricted`
+columns of its INSERT grant.
+
+**Owner.** Database Guardian / DevOps Guardian (owns
+`infrastructure/docker/postgres/init/00-bootstrap.sh`), with the Security
+seat on the exact role shape.
+
+**What would force it.** A new NOLOGIN, NOBYPASSRLS role — for example
+`finsoft_coa_seed` — added to `00-bootstrap.sh` alongside `finsoft_refresh`
+(same `GRANT ... TO finsoft_migration WITH INHERIT FALSE, SET TRUE` pattern),
+plus a follow-up migration that: creates the seeding function as
+`finsoft_migration`, pins `SET search_path = pg_catalog, public`, does
+`ALTER FUNCTION ... OWNER TO finsoft_coa_seed`, revokes `EXECUTE` from
+`PUBLIC` and grants it explicitly to `finsoft_app`, and narrows
+`finsoft_app`'s `INSERT` on `accounts` to drop
+`kind`/`control_kind`/`role`/`restricted`. `schema.spec.ts` then asserts
+`finsoft_coa_seed` is `NOLOGIN`, `NOBYPASSRLS` and owns exactly that one
+function — the S4 exception (c) condition this lane's checker already
+enforces. `tools/seed/backfill-accounting.mjs` and
+`seedChartOfAccounts`/provisioning's tenant-creation path route through the
+new function instead of the current direct INSERT.

@@ -61,6 +61,10 @@ export const PENDING: readonly PendingScenario[] = [
     file: 'posting-p13-coa-create-and-rename.json',
     steps: 'all',
     reason:
-      'requires migration 018 (accounts UPDATE grant, protected-row and code/parent immutability triggers) and the kernel account create/edit functions (M2-C, coa-standard.md §8)',
+      'M2-C: migration 018 (accounts UPDATE grant, protected-row and code/parent immutability ' +
+      'triggers) and the kernel account create/edit functions (chartOfAccounts.create/update, ' +
+      "coa-standard.md §8) now exist. What remains is the runner learning the 'account' step " +
+      "verb (create/rename) — not built by this lane; posting-p13's own status field records the " +
+      'same remaining gap',
   },
 ]

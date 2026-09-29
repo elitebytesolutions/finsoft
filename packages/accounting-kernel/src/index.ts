@@ -10,6 +10,13 @@
  * UPDATE, audit — are the kernel's src/queries/periods.ts, and nothing
  * outside the kernel performs a period transition (T3 Council, Arch 1/2/5).
  *
+ * A user creates or edits a chart-of-accounts account through
+ * `chartOfAccounts.create/update/suggestCode` (chart-of-accounts.ts,
+ * coa-standard.md §8, M2-C) — not a posting: no journal entry, no period, no
+ * idempotency key. `insertUserCreatedAccount`, `updateAccountRow` and
+ * `lockAccountForUpdate` (packages/database) are ESLint-fenced to this
+ * kernel; no module writes `accounts` (coa-standard.md §8.7).
+ *
  * Deliberately NOT exported:
  *  - `createPostingEngine` / `createReversalEngine`, `fixedClock`,
  *    `systemClock` and the `Clock` type: a caller choosing the clock would
@@ -31,6 +38,12 @@ export {
   type TenantScopeSeries,
 } from './document-numbers.ts'
 export { periodEngine, type PeriodEngine } from './periods.ts'
+export {
+  chartOfAccounts,
+  type ChartOfAccounts,
+  type CreateAccountCommand,
+  type UpdateAccountCommand,
+} from './chart-of-accounts.ts'
 export {
   postingEngine,
   type PostCommand,

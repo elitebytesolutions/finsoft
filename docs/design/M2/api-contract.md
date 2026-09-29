@@ -19,7 +19,7 @@ the M2-B brief. Later changes land as separate, clearly named commits on top of 
 | See an account's ledger with a running balance | **Built** — §3 |
 | Run a balanced trial balance | **Built** — §4 |
 | View accounts in the chart of accounts | **Built** — §5 (`GET /api/accounts`, `account.view`) |
-| Add an account | **Not built, staying that way.** Conflicts with `coa-standard.md` §5 ("the MVP ships the chart read-only to users"). See §5. |
+| Add / edit an account | **Built (M2-C, 2026-09-29)** — §5 (`POST /api/accounts`, `PATCH /api/accounts/:id`, `account.manage`). Superseded ruling below. |
 | See the fiscal periods, close/reopen where permitted | **Built** — §6 (`period.view`/`period.close`/`period.reopen`). There is no lock route in M2 (Council ruling). |
 
 **Update, 2026-09-29 — Council ruling closes the permission blocker.** All three Council seats
@@ -379,24 +379,59 @@ The full tree (headers and postable accounts), ordered by code. Build the tree c
 }
 ```
 
-### `POST /api/accounts` — NOT BUILT, staying that way
+### `POST /api/accounts` — create a postable account (M2-C, 2026-09-29)
 
-The brief asks for "create a postable leaf under a group." This was a scope ruling, not a permission
-gap, and the Council ruling that unblocked `GET /api/accounts` did not revisit it:
+**Update, 2026-09-29 — Product Owner scope decision, Accounting seat amendment (coa-standard.md §5
+amended, §8 added).** The read-only ruling above is superseded for create and edit. `POST /api/accounts`
+and `PATCH /api/accounts/:id` are now built, per `coa-standard.md` §8 and this lane's (M2-C) delivery
+brief. Deactivate stays Wave 2 remainder work (§8.4) and is still not built — there is no `isActive`
+field on either request, and no delete, ever.
 
-- `coa-standard.md` §5: *"The MVP ships the chart **read-only** to users; create, rename and
-  deactivate are Wave 2 remainder work, each audited."*
-- Migration 010's own grants: `REVOKE INSERT, UPDATE ON accounts FROM finsoft_app` followed by a
-  **column-scoped INSERT grant used only by tenant provisioning** (`seedChartOfAccounts`, which seeds
-  the whole template atomically at tenant creation) — there is no UPDATE grant at all, and no code path
-  for inserting one arbitrary account with business-rule validation (unique code/name, parent-header
-  type match, role assignment rules).
-- `packages/accounting-kernel`'s index does not export an account-creation function; its own header
-  lists what is deliberately not exported and account creation is not present anywhere in the kernel.
+**Permission:** `account.manage` (Owner, Accountant — not Viewer; not privileged, no MFA step-up).
+Added to the catalogue and backfilled to every existing tenant by migration 019
+(`database/migrations/019_add_account_manage_permission.sql`).
 
-Building this would mean inventing account-creation domain logic outside kernel/database boundaries
-that this lane is not authorised to add. Unblocking it needs an Accounting-seat amendment to
-`coa-standard.md` §5 — new kernel/database scope, not an `apps/api` task.
+**Not a posting — no Idempotency-Key.** coa-standard.md §8.7: a duplicate create fails the second time
+on `ACCOUNT_CODE_TAKEN` (the unique code constraint); a duplicate edit fails on
+`ACCOUNT_VERSION_CONFLICT`.
+
+```json
+// POST /api/accounts
+{ "parentId": "uuid-of-6000", "name": "Security Services", "code": "6600" }
+```
+
+`type` and `normalBalance` are never request fields — inherited from the parent header, derived from
+type. Response: the created `AccountDto` (§5's `GET /api/accounts` shape, now also carrying `version`).
+
+```json
+// PATCH /api/accounts/:id
+{ "name": "Security and Guard Services", "expectedVersion": 0 }
+```
+
+Only `name`, `code`, `parentId`, `expectedVersion` — any other key is `400 payload_invalid` (or the
+kernel's own `PAYLOAD_INVALID`, if it reaches the kernel). A protected account (header, role-holding,
+control, or restricted) cannot be edited at all (`409 account_protected`). `code`/`parentId` freeze once
+the account has a journal line (`409 account_has_postings`). See `coa-standard.md` §8.9 for the full
+error list and evaluation order.
+
+### `GET /api/accounts/suggest-code?parentId=`
+
+**Permission:** `account.manage`. Advisory only (coa-standard.md §8.1) — reserves nothing, and the
+submitted code is re-validated exactly like any typed code. `{ "code": "6600" }`, or `{ "code": null }`
+if the header's block (all 999 codes) is exhausted.
+
+**Where the code lives.** `chartOfAccounts.create` / `.update` / `.suggestCode`
+(`packages/accounting-kernel/src/chart-of-accounts.ts`) hold the validation, the §8.9 evaluation order
+and the audit write. This controller (`apps/api/src/accounting/accounts.controller.ts`) stays thin: DTO
+in, kernel command out, `posting-error.mapper.ts` turns the kernel's typed rejection into HTTP.
+
+**Known gap, reported not silently worked around (coa-standard.md §8.7 R2).** The database-privilege
+half of "a crafted request cannot insert a header/control/role/restricted account" is not yet built — it
+needs a `SECURITY DEFINER` seeding function owned by a dedicated `NOLOGIN`/`NOBYPASSRLS` database role
+that this lane could not provision (`infrastructure/docker/postgres/init/00-bootstrap.sh` is outside its
+`ALLOWED` paths). The application-layer half holds today: `chartOfAccounts.create` hardcodes
+`kind='POSTABLE'`, `control_kind='NONE'`, `role=NULL`, `restricted=false` — there is no field through
+which a request could ask for anything else. See `docs/TECH_DEBT.md` and this lane's report.
 
 ---
 

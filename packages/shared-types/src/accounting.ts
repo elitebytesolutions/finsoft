@@ -97,7 +97,7 @@ export interface TrialBalanceResponseDto {
   readonly totalCredit: string
 }
 
-/** GET /api/accounts. coa-standard.md. Read-only in M2 — see the contract doc §5. */
+/** GET /api/accounts, POST /api/accounts, PATCH /api/accounts/:id. coa-standard.md. */
 export interface AccountDto {
   readonly id: string
   readonly code: string
@@ -111,10 +111,39 @@ export interface AccountDto {
   /** Null for a HEADER account. The tree's edges. */
   readonly parentId: string | null
   readonly isActive: boolean
+  /**
+   * Optimistic concurrency (coa-standard.md §8.2) — PATCH sends it back as
+   * expectedVersion. Every real response carries a real number; typed
+   * optional only so a pre-M2-C fixture outside this lane's ALLOWED paths
+   * (e.g. apps/web's chart-of-accounts test, owned by the M2-UI lane) keeps
+   * compiling without this lane editing a forbidden file. Tighten to
+   * required once that fixture is updated.
+   */
+  readonly version?: number | undefined
 }
 
 export interface AccountsResponseDto {
   readonly accounts: readonly AccountDto[]
+}
+
+/** POST /api/accounts body. coa-standard.md §8.1. */
+export interface CreateAccountRequestDto {
+  readonly parentId: string
+  readonly name: string
+  readonly code: string
+}
+
+/** PATCH /api/accounts/:id body. coa-standard.md §8.2. Only these four keys — anything else is PAYLOAD_INVALID. */
+export interface UpdateAccountRequestDto {
+  readonly name?: string
+  readonly code?: string
+  readonly parentId?: string
+  readonly expectedVersion: number
+}
+
+/** GET /api/accounts/suggest-code?parentId=. coa-standard.md §8.1 — advisory, reserves nothing. */
+export interface SuggestAccountCodeResponseDto {
+  readonly code: string | null
 }
 
 /** GET /api/periods, POST /api/periods/:id/{close,reopen}. periods.md. */
