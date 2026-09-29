@@ -25,6 +25,22 @@
  * codes exist beyond what its caller passes in — it establishes tenant
  * context and runs the query, nothing more. The seed script owns every
  * decision; this file owns the mechanism.
+ *
+ * M1-X, Council re-review item 1 (Security F1 / Database C5): NONE of the
+ * functions in this file write an audit row. `createTenant` and
+ * `createProvisionedOwnerWithRoles` create a tenant and an ACTIVE user with
+ * a real role grant — exactly the kind of state change rule 9 elsewhere
+ * requires an append-only audit record for, in the SAME transaction — and
+ * this file does not do that, because its only sanctioned caller today is a
+ * demo/staging seed script whose own output (a printed or file-written
+ * summary) is the record, not the audit chain. Do NOT reuse these functions
+ * for a real onboarding flow, an admin "create tenant" endpoint, or
+ * anything else that provisions a REAL customer's tenant or user without
+ * first adding an audit write alongside every state change here — that is
+ * new work, not a call site change, and belongs in its own reviewed task.
+ * Import is restricted to `tools/seed/**` and test files
+ * (`eslint.config.mjs`'s `PROVISIONING_IMPORT_BAN`) specifically so that a
+ * future caller cannot reach this file by accident and inherit that gap.
  */
 
 import { sql } from 'kysely'
