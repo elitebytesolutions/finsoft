@@ -28,31 +28,80 @@ function delay(ms: number): Promise<void> {
 }
 
 /**
- * C1-sec, security re-review 2026-09-27: poll `pg_locks` for the real number
- * of backends actually blocked waiting for the row lock, instead of a fixed
- * `delay(300)` and hoping both calls got there in time (or that CI is never
- * slower than 300ms). `NOT granted` on a `finsoft-test`-attributed backend is
- * exactly "this connection issued a statement that is blocked behind another
- * session's lock" — which is what committing the locker is supposed to wait
- * for, not a guess at how long that takes.
+ * C1-sec, security re-review 2026-09-27; revised 2026-09-29 after CI flake
+ * M1-corr.
+ *
+ * ROOT CAUSE of the flake, found by reproducing it on demand (run this
+ * file's N2 test alone, repeatedly — it failed every time once isolated
+ * from the noise of a full suite run) and then bisecting with `docker exec
+ * ... psql` sessions against the live test cluster mid-block:
+ *
+ * The original code ran this poll query on the SAME connection (`locker`)
+ * that held `BEGIN; SELECT ... FOR UPDATE`. That connection has an open
+ * transaction with a real, lock-holding snapshot from before the two
+ * `spendRefreshToken` backends ever connected. Verified directly (a
+ * throwaway probe script, three concurrent `pg.Client`s: a locker doing
+ * `BEGIN` + a row lock, two blockers connecting and blocking afterward,
+ * and a THIRD "watcher" connection also polling `pg_stat_activity`): a
+ * fresh/short-lived connection sees the two new backends and their
+ * `pg_blocking_pids()` entries IMMEDIATELY; the locker's OWN connection
+ * never sees them appear in `pg_stat_activity` AT ALL, for as long as its
+ * transaction stays open — not "slow to notice", genuinely never, across
+ * 20 polls / 6 seconds. This reproduced with both the original `pg_locks`
+ * `NOT granted` count and a `pg_blocking_pids()`-based count: the query
+ * text was never the defect, the CONNECTION issuing it was. (Cause, per
+ * the Security seat's review: PostgreSQL snapshots the cumulative-stats
+ * views, `pg_stat_activity` included, ONCE per transaction and holds that
+ * snapshot until the transaction ends. Any open transaction does this, not
+ * specifically a row lock, so backends that connect after the first poll
+ * stay invisible to that session. That explains the flakiness: in a full
+ * run, pool connections that already existed were visible; in an isolated
+ * run, fresh ones were not.)
+ *
+ * The fix: poll from a connection that is NOT the lock holder — a plain,
+ * no-open-transaction connection, opened once and reused for every poll.
+ * `expected` counts DISTINCT backends with a non-empty
+ * `pg_blocking_pids()` (see the second, independently-caught bug below),
+ * not raw `pg_locks` rows.
+ *
+ * Second bug, caught while fixing the first: an intermediate version of
+ * this function required the LOCKER's own pid specifically inside every
+ * waiter's `pg_blocking_pids()` result
+ * (`pg_blocking_pids(pid) @> ARRAY[lockerPid]`), reasoning that the
+ * function "resolves the whole wait chain to its root". Verified against
+ * the same live two-waiter block that this is false for exactly the
+ * two-waiters-on-one-row case: Postgres's own fairness/anti-thundering-
+ * herd mechanism (`heap_lock_tuple`'s `LockTuple` before
+ * `XactLockTableWait`) makes the SECOND arrival queue on a heavyweight
+ * **tuple** lock held by the FIRST arrival, not on the true locker
+ * directly — a documented PostgreSQL "soft block", which
+ * `pg_blocking_pids()` reports as itself the blocker and does NOT recurse
+ * through. So `pg_blocking_pids(secondWaiterPid)` is `[firstWaiterPid]`,
+ * never `[lockerPid]`, and a query that demands `lockerPid` specifically
+ * can never see 2. Asking only "is this backend blocked on ANYTHING"
+ * (`cardinality(pg_blocking_pids(pid)) > 0`) avoids that false requirement
+ * — correct regardless of which of the two backends queues behind the
+ * other's tuple lock — while still being immune to the locktype reasoning
+ * (`transactionid` vs `tuple`) the original `pg_locks` version needed.
  */
 async function waitForBlockedWaiters(
-  client: Client,
+  observer: Client,
   expected: number,
   timeoutMs = 15_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs
   for (;;) {
-    const { rows } = await client.query<{ n: string }>(
-      `SELECT count(*)::text AS n FROM pg_locks l
-         JOIN pg_stat_activity a ON a.pid = l.pid
-        WHERE NOT l.granted AND a.application_name = $1`,
+    const { rows } = await observer.query<{ n: string }>(
+      `SELECT count(*)::text AS n
+         FROM pg_stat_activity a
+        WHERE a.application_name = $1
+          AND cardinality(pg_blocking_pids(a.pid)) > 0`,
       [TEST_TARGET.applicationName],
     )
     if (Number(rows[0]?.n ?? '0') >= expected) return
     if (Date.now() > deadline) {
       throw new Error(
-        `timed out after ${timeoutMs}ms waiting for ${expected} blocked waiter(s) in pg_locks`,
+        `timed out after ${timeoutMs}ms waiting for ${expected} blocked backend(s) (application_name=${TEST_TARGET.applicationName})`,
       )
     }
     await delay(15)
@@ -151,33 +200,94 @@ describe('refresh concurrency, through spendRefreshToken itself', () => {
     // than one finishing before the other starts.
     const locker = migrationClient()
     await locker.connect()
-    await locker.query('BEGIN')
-    const tokenRow = await locker.query<{ id: string }>(
-      'SELECT id FROM refresh_tokens WHERE token_hash = $1',
-      [token.hash],
+
+    // A FOURTH, separate connection does the polling. Not the locker's own
+    // connection: verified directly (three-plus-`docker exec psql`
+    // sessions against the live test cluster, root-caused above) that once
+    // `locker` has an open transaction holding a real row lock, ITS OWN
+    // queries against `pg_stat_activity` stop seeing backends that connect
+    // afterward — a fresh/idle connection sees them immediately. Using
+    // `locker` for both jobs is what made this wait unable to ever observe
+    // 2, on every run, once isolated from a full-suite run's incidental
+    // timing.
+    const observer = migrationClient()
+    await observer.connect()
+
+    // Both calls are started, and MUST be settled (never just awaited on
+    // the happy path), no matter what happens between here and there —
+    // including a `waitForBlockedWaiters` timeout. The earlier version of
+    // this test awaited them only after the wait succeeded: if the wait
+    // itself threw, the locker's transaction was never committed or rolled
+    // back, so the row lock was held forever — and whichever call(s) really
+    // were blocked on it then ran into their own 15s `statement_timeout`
+    // (`57014 canceling statement ... while locking tuple`), as an
+    // unhandled rejection, well after this test had already failed for a
+    // different reason. `try/finally` on the locker plus `Promise.allSettled`
+    // here means a wait timeout is reported once, cleanly, and never
+    // cascades into orphaned locks or unhandled-rejection noise for
+    // whatever test runs next.
+    let callA: ReturnType<typeof spendRefreshToken> | undefined
+    let callB: ReturnType<typeof spendRefreshToken> | undefined
+    let setupError: unknown
+
+    try {
+      await locker.query('BEGIN')
+      const tokenRow = await locker.query<{ id: string }>(
+        'SELECT id FROM refresh_tokens WHERE token_hash = $1',
+        [token.hash],
+      )
+      const tokenId = tokenRow.rows[0]?.id
+      expect(tokenId).toBeTruthy()
+      await locker.query('SELECT * FROM refresh_tokens WHERE id = $1 FOR UPDATE', [tokenId])
+
+      callA = spendRefreshToken({
+        presentedTokenHash: token.hash,
+        newTokenHash: hashRefreshToken(mintRefreshToken().raw),
+        deviceId: null,
+      })
+      callB = spendRefreshToken({
+        presentedTokenHash: token.hash,
+        newTokenHash: hashRefreshToken(mintRefreshToken().raw),
+        deviceId: null,
+      })
+
+      // Wait until Postgres itself reports both calls genuinely blocked,
+      // rather than guessing how long that takes.
+      await waitForBlockedWaiters(observer, 2)
+    } catch (error) {
+      // Recorded, not thrown yet: whichever of callA/callB DID get started
+      // must still be settled below before this test ends, win or lose, or
+      // a genuinely-blocked call left running past this point becomes an
+      // unhandled rejection once its own statement_timeout eventually fires.
+      setupError = error
+    } finally {
+      // No writes happened on either connection — COMMIT and ROLLBACK are
+      // equally correct for releasing the FOR UPDATE lock. Try COMMIT
+      // first (the expected path); fall back to ROLLBACK so an
+      // already-aborted transaction still releases the connection instead
+      // of throwing out of a finally.
+      await locker.query('COMMIT').catch(() => locker.query('ROLLBACK').catch(() => {}))
+      await locker.end().catch(() => {})
+      await observer.end().catch(() => {})
+    }
+
+    // Await whatever was actually started, regardless of setupError, so
+    // nothing is left an unhandled rejection — then surface the ORIGINAL
+    // failure (the meaningful one: e.g. "timed out waiting for 2 blocked
+    // backends") rather than a confusing downstream error.
+    const settled = await Promise.allSettled(
+      [callA, callB].filter((c): c is NonNullable<typeof c> => c !== undefined),
     )
-    const tokenId = tokenRow.rows[0]?.id
-    expect(tokenId).toBeTruthy()
-    await locker.query('SELECT * FROM refresh_tokens WHERE id = $1 FOR UPDATE', [tokenId])
+    if (setupError) throw setupError
 
-    const callA = spendRefreshToken({
-      presentedTokenHash: token.hash,
-      newTokenHash: hashRefreshToken(mintRefreshToken().raw),
-      deviceId: null,
-    })
-    const callB = spendRefreshToken({
-      presentedTokenHash: token.hash,
-      newTokenHash: hashRefreshToken(mintRefreshToken().raw),
-      deviceId: null,
-    })
-
-    // Wait until pg_locks itself reports both calls genuinely blocked on the
-    // row lock, rather than guessing how long that takes.
-    await waitForBlockedWaiters(locker, 2)
-    await locker.query('COMMIT')
-    await locker.end()
-
-    const [a, b] = await Promise.all([callA, callB])
+    const rejected = settled.find((s) => s.status === 'rejected')
+    if (rejected && rejected.status === 'rejected') throw rejected.reason
+    expect(settled, 'both calls must have been started and settled').toHaveLength(2)
+    const fulfilled = settled as [
+      PromiseFulfilledResult<Awaited<ReturnType<typeof spendRefreshToken>>>,
+      PromiseFulfilledResult<Awaited<ReturnType<typeof spendRefreshToken>>>,
+    ]
+    const [a, b] = [fulfilled[0].value, fulfilled[1].value]
 
     const outcomes = [a.outcome, b.outcome].sort()
     expect(outcomes, 'exactly one success and one reused').toEqual(['reused', 'success'])
