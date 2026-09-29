@@ -1,4 +1,5 @@
-import { assertIssuedTenantTx, TenantContext, type TenantTx } from '@finsoft/database'
+import { assertIssuedTenantTx, type TenantTx } from '@finsoft/database'
+import { requirePostingActor } from './actor.ts'
 import { PostingError } from './errors.ts'
 import { findPartyTypes, insertParty, type PartyTypeName } from './queries/parties.ts'
 import { isUuid } from './rules/shared.ts'
@@ -34,14 +35,8 @@ export async function registerParty(tx: TenantTx, partyType: PartyTypeName): Pro
       partyType: String(partyType),
     })
   }
-  const { tenantId, userId } = TenantContext.require()
-  if (userId === null) {
-    throw new PostingError(
-      'FORBIDDEN',
-      'No authenticated user in context. A party is registered by a user action (rule 22).',
-    )
-  }
-  return insertParty(tx, tenantId, partyType, userId)
+  const { tenantId, actorUserId } = requirePostingActor(tx)
+  return insertParty(tx, tenantId, partyType, actorUserId)
 }
 
 /**

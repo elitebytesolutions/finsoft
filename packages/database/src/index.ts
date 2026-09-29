@@ -208,6 +208,15 @@ export {
 } from './accounting/tenant-settings.ts'
 
 /*
+ * The kernel's acting-principal accessor. Council ruling (Architecture +
+ * Security seats, M2-A T3 final review): TenantContext stays importable
+ * only inside packages/database and packages/auth (M1-X T2); the kernel
+ * gets this narrow, read-only, frozen-copy accessor instead of importing
+ * TenantContext itself. See accounting/principal.ts's own header.
+ */
+export { postingPrincipalOf, type PostingPrincipal } from './accounting/principal.ts'
+
+/*
  * computeRequestFingerprint lives here, not in packages/accounting-kernel,
  * because it needs node:crypto — dependency-cruiser's kernel-imports-only-
  * allowed rule confines a kernel to packages/database, packages/validation

@@ -99,7 +99,7 @@ export interface ReversalEngine {
 export function createReversalEngine(clock: Clock = systemClock): ReversalEngine {
   async function reverse(command: ReverseCommand, tx: TenantTx): Promise<ReverseResult> {
     assertIssuedTenantTx(tx)
-    const { tenantId, actorUserId } = requirePostingActor()
+    const { tenantId, actorUserId } = requirePostingActor(tx)
 
     // --- 1. Shape. ---------------------------------------------------------------
     const reason = typeof command.reason === 'string' ? command.reason.trim() : ''
@@ -291,8 +291,6 @@ export function createReversalEngine(clock: Clock = systemClock): ReversalEngine
               reversedByEntryNumber: reversalEntry.entryNumber,
               reason,
             },
-            ip: null,
-            requestId: null,
           },
         ]
       },

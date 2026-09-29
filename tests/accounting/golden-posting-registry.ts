@@ -55,4 +55,6 @@ export const PENDING: readonly PendingScenario[] = [
   },
   { file: 'posting-p09-mvp-journey.json', steps: 'all', reason: M3_TABLES },
   { file: 'posting-p10-service-line-rounding.json', steps: 'all', reason: M3_TABLES },
+  { file: 'posting-p11-receipt-draft-lifecycle.json', steps: 'all', reason: M3_TABLES },
+  { file: 'posting-p12-inactive-customer.json', steps: 'all', reason: M3_TABLES },
 ]

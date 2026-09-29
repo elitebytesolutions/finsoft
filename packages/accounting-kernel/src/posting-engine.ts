@@ -10,7 +10,6 @@ import {
   findPeriodForDate,
   findTenantTimezone,
   recordAudit,
-  TenantContext,
   type AuditEventInput,
   type FiscalPeriodRow,
   type JournalEntryRow,
@@ -18,6 +17,7 @@ import {
   type NewJournalLine,
   type TenantTx,
 } from '@finsoft/database'
+import { requirePostingActor } from './actor.ts'
 import { systemClock, type Clock } from './clock.ts'
 import { isIsoCalendarDate, todayInTimezone } from './dates.ts'
 import { KernelInvariantError, PostingError } from './errors.ts'
@@ -68,10 +68,12 @@ import {
  *   10 audit record(s), same transaction, last
  *   11 return { journalEntryId, documentNumber, lines }
  *
- * TENANT AND ACTOR are not parameters. They come from TenantContext, which
- * the transaction `tx` was issued under (ADR-0004, rule 8): a caller cannot
- * substitute either. `userId === null` is FORBIDDEN — there is no service
- * account that posts (rule 22).
+ * TENANT AND ACTOR are not parameters. They come from `postingPrincipalOf(tx)`
+ * (packages/database — the kernel never imports `TenantContext` itself,
+ * M1-X T2), which reads the ambient TenantContext the transaction `tx` was
+ * issued under (ADR-0004, rule 8): a caller cannot substitute either.
+ * `userId === null` is FORBIDDEN — there is no service account that posts
+ * (rule 22).
  *
  * THE CALLER OWNS THE TRANSACTION. A rejection is a thrown PostingError; the
  * caller's transaction then rolls back and nothing — key, number, entry,
@@ -132,17 +134,14 @@ export interface PipelineRequest {
 
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/
 
-/** The acting principal. Throws unless there is an authenticated user (rule 22). */
-export function requirePostingActor(): { tenantId: string; actorUserId: string } {
-  const { tenantId, userId } = TenantContext.require()
-  if (userId === null) {
-    throw new PostingError(
-      'FORBIDDEN',
-      'No authenticated user in context. There is no service account that posts (rule 22).',
-    )
-  }
-  return { tenantId, actorUserId: userId }
-}
+/**
+ * The acting principal. Lives in ./actor.ts, a leaf module — parties.ts
+ * needs it too, and importing it from THIS file would close a cycle through
+ * the rule files (see actor.ts's own header). Re-exported here so every
+ * existing caller of `requirePostingActor` from posting-engine.ts keeps
+ * working unchanged.
+ */
+export { requirePostingActor }
 
 export function assertIdempotencyKey(key: unknown): asserts key is string {
   if (typeof key !== 'string' || !IDEMPOTENCY_KEY_PATTERN.test(key)) {
@@ -363,8 +362,6 @@ function postingAuditRecord(
         memo: line.memo,
       })),
     },
-    ip: null,
-    requestId: null,
   }
 }
 
@@ -499,7 +496,7 @@ export function createPostingEngine(clock: Clock = systemClock): PostingEngine {
   async function post(command: PostCommand, tx: TenantTx): Promise<PostResult> {
     // ADR-0005 Compliance: no transaction-less call; a forged handle throws.
     assertIssuedTenantTx(tx)
-    const { tenantId, actorUserId } = requirePostingActor()
+    const { tenantId, actorUserId } = requirePostingActor(tx)
 
     // --- 1. Command shape. -----------------------------------------------------
     const rule = (RULES as Record<string, RuleBinding | undefined>)[command.event]

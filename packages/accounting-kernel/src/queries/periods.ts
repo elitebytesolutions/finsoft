@@ -232,8 +232,6 @@ export async function closePeriodTransition(
     entityId: periodId,
     beforeJson: { status: 'OPEN' },
     afterJson: { status: 'CLOSED' },
-    ip: null,
-    requestId: null,
   })
   return row
 }
@@ -284,8 +282,6 @@ export async function reopenPeriodTransition(
     entityId: periodId,
     beforeJson: { status: 'CLOSED' },
     afterJson: { status: 'OPEN', reason },
-    ip: null,
-    requestId: null,
   })
   return row
 }
@@ -331,8 +327,6 @@ export async function lockPeriodTransition(
     entityId: periodId,
     beforeJson: { status: 'CLOSED' },
     afterJson: { status: 'LOCKED' },
-    ip: null,
-    requestId: null,
   })
   return row
 }

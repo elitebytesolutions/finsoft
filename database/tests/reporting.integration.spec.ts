@@ -12,9 +12,7 @@ import {
   type TenantFixture,
 } from '@finsoft/database/testing'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { accountLedger } from './ledger.ts'
-import { trialBalance } from './trial-balance.ts'
-import { customerSubledgerBalance } from './subledger.ts'
+import { accountLedger, customerSubledgerBalance, trialBalance } from '@finsoft/reporting'
 
 /*
  * Real-database tests for the reporting layer. No mocked database anywhere
@@ -24,10 +22,24 @@ import { customerSubledgerBalance } from './subledger.ts'
  * whatever the kernel's own posting path is doing) and then asserting what
  * accountLedger/trialBalance/customerSubledgerBalance compute from them.
  *
- * This file owns its own minimal fixtures rather than importing
- * database/tests/accounting-support.ts: packages/reporting's declared import
- * boundary (its own README) is packages/database, packages/validation and
- * packages/shared-types only — not the top-level database/tests directory.
+ * Council ruling (Architecture + Security seats, M2-A T3 final review, Item
+ * 2): moved here from packages/reporting/src/ — a package's own src/ may
+ * not import `@finsoft/database/testing` or `@finsoft/database/provisioning`
+ * (M1-X, Council re-review 1 / Security seat final check 3; no per-package
+ * exception). `database/tests/**` is where this repository already keeps a
+ * raw-SQL fixture that deliberately bypasses the kernel to test what the
+ * DATABASE itself enforces — see `accounting-support.ts`'s own header for
+ * the identical rationale — and it is the one location whose ESLint block
+ * (every file under database/tests, and under tests/security) already
+ * drops the journal/parties/period "written only by the kernel" rule for
+ * exactly this reason, with no new exemption added here. tests/accounting
+ * and tests/integration do not carry that exemption, so a raw
+ * `journal_entries`/`journal_lines` write from either is an ADR-0005
+ * violation the ESLint rule is right to catch. Picked up by `npm run
+ * test:schema` (`vitest run --dir database/tests`), part of `test:gate`.
+ * Imports `@finsoft/reporting`'s own public surface
+ * (`accountLedger`/`trialBalance`/`customerSubledgerBalance`) rather than a
+ * relative path into the package's internals.
  */
 
 beforeAll(prepareTestDatabase, 60_000)

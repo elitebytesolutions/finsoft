@@ -49,14 +49,14 @@ export interface PeriodEngine {
 export const periodEngine: PeriodEngine = {
   async close(label, tx) {
     assertIssuedTenantTx(tx)
-    const { tenantId, actorUserId } = requirePostingActor()
+    const { tenantId, actorUserId } = requirePostingActor(tx)
     const period = await resolve(tx, tenantId, label)
     return closePeriodTransition(tx, tenantId, period.id, actorUserId)
   },
 
   async reopen(label, reason, tx) {
     assertIssuedTenantTx(tx)
-    const { tenantId, actorUserId } = requirePostingActor()
+    const { tenantId, actorUserId } = requirePostingActor(tx)
     const trimmed = typeof reason === 'string' ? reason.trim() : ''
     if (trimmed.length === 0 || trimmed.length > REASON_MAX) {
       throw new PostingError(
@@ -70,7 +70,7 @@ export const periodEngine: PeriodEngine = {
 
   async lock(label, tx) {
     assertIssuedTenantTx(tx)
-    const { tenantId, actorUserId } = requirePostingActor()
+    const { tenantId, actorUserId } = requirePostingActor(tx)
     const period = await resolve(tx, tenantId, label)
     return lockPeriodTransition(tx, tenantId, period.id, actorUserId)
   },
