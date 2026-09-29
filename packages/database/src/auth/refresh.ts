@@ -136,7 +136,12 @@ export async function spendRefreshToken(
           'u.email',
           'u.full_name',
           'u.status as user_status',
-          's.permission_version',
+          // M1-X, L1: users.version (not sessions.permission_version, which
+          // nothing bumps) is the current permission version — see
+          // packages/database/src/auth/login.ts's LoginSuccess.permissionVersion
+          // doc comment and packages/auth/src/guard.ts for the guard-side
+          // comparison this feeds.
+          'u.version as permission_version',
           't.code as tenant_code',
           't.name as tenant_name',
           't.status as tenant_status',

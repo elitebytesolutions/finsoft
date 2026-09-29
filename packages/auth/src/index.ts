@@ -40,7 +40,12 @@ export {
 } from './jwt.ts'
 export type { AccessTokenClaims, VerifiedAccessToken, SignedAccessToken } from './jwt.ts'
 
-export { verifyBearerToken, SessionInactiveError } from './guard.ts'
+export {
+  verifyBearerToken,
+  AccountInactiveError,
+  PermissionVersionStaleError,
+  SessionInactiveError,
+} from './guard.ts'
 
 export {
   hashPassword,
@@ -56,6 +61,12 @@ export type { MintedRefreshToken } from './refresh-token.ts'
 export { ThrottleUnavailableError, closeThrottleClient } from './throttle.ts'
 
 export { closeSessionCacheClient, invalidateSessionCache } from './session-cache.ts'
+
+export {
+  closeAccountStateCacheClient,
+  getAccountStateCached,
+  invalidateAccountStateCache,
+} from './account-state-cache.ts'
 
 export { noopAuthAuditSink } from './audit-sink.ts'
 export type { AuthAuditEvent, AuthAuditSink } from './audit-sink.ts'

@@ -6,7 +6,13 @@ import {
   UnauthorizedException,
 } from '@nestjs/common'
 import { Reflector } from '@nestjs/core'
-import { SessionInactiveError, TokenVerificationError, verifyBearerToken } from '@finsoft/auth'
+import {
+  AccountInactiveError,
+  PermissionVersionStaleError,
+  SessionInactiveError,
+  TokenVerificationError,
+  verifyBearerToken,
+} from '@finsoft/auth'
 import type { AuthContext } from '@finsoft/shared-types'
 import type { Request } from 'express'
 
@@ -86,7 +92,19 @@ export class TenantGuard implements CanActivate {
       request.auth = await verifyBearerToken(token)
       return true
     } catch (error) {
-      if (error instanceof TokenVerificationError || error instanceof SessionInactiveError) {
+      if (
+        error instanceof TokenVerificationError ||
+        error instanceof SessionInactiveError ||
+        // M1-X, L1: an inactive user/tenant or a stale perm_ver claim are
+        // both, from the caller's point of view, an invalid credential —
+        // the identical 401 as every other rejection on this path. Neither
+        // is disclosed more specifically: "your account is suspended" would
+        // be exactly the enumeration/DoS-confirmation oracle ADR-0023 §4
+        // item 4 forbids at login, and the access-token path must not leak
+        // what login already refuses to.
+        error instanceof AccountInactiveError ||
+        error instanceof PermissionVersionStaleError
+      ) {
         throw new UnauthorizedException({
           statusCode: 401,
           error: 'unauthenticated',

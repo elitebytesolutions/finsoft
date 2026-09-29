@@ -68,6 +68,41 @@ export async function touchSessionLastSeen(sessionId: string): Promise<void> {
   })
 }
 
+export interface AccountState {
+  readonly userStatus: string
+  readonly tenantStatus: string
+  /** `users.version` — see login.ts's `LoginSuccess.permissionVersion` doc comment. */
+  readonly permissionVersion: number
+}
+
+/**
+ * M1-X, L1. The CURRENT account state for a user already carrying a
+ * verified access-token claim — read fresh, under the tenant's own RLS, so
+ * that a status flip or a permission change is visible on the very next
+ * request rather than only after the access token expires. Cached with a
+ * short TTL by `packages/auth`'s guard; PostgreSQL stays the source of
+ * truth. Returns `null` only if the user row itself is gone, which does not
+ * happen in this system (rule 4: no hard delete) but is handled rather than
+ * assumed impossible.
+ */
+export async function getAccountState(userId: string): Promise<AccountState | null> {
+  return withTenant(async (tx) => {
+    const row = await tx
+      .selectFrom('users as u')
+      .innerJoin('tenants as t', 't.id', 'u.tenant_id')
+      .select(['u.status as user_status', 'u.version as user_version', 't.status as tenant_status'])
+      .where('u.id', '=', userId)
+      .executeTakeFirst()
+
+    if (!row) return null
+    return {
+      userStatus: row.user_status,
+      tenantStatus: row.tenant_status,
+      permissionVersion: row.user_version,
+    }
+  })
+}
+
 export interface AuthenticatedProfile {
   readonly user: { readonly id: string; readonly email: string; readonly fullName: string }
   readonly tenant: { readonly id: string; readonly code: string; readonly name: string }

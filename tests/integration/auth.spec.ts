@@ -1,5 +1,5 @@
 import { INestApplication, Module } from '@nestjs/common'
-import { APP_GUARD } from '@nestjs/core'
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core'
 import { Test } from '@nestjs/testing'
 import cookieParser from 'cookie-parser'
 import { Redis } from 'ioredis'
@@ -10,6 +10,7 @@ import { prepareTestDatabase, teardownTestDatabase, unique } from '@finsoft/data
 import { initLogger, resetLoggerForTests } from '@finsoft/observability'
 import { resetVerificationCountForTests, verificationCountForTests } from '@finsoft/auth'
 import { AllExceptionsFilter } from '../../apps/api/src/common/all-exceptions.filter.ts'
+import { TenantContextInterceptor } from '../../apps/api/src/common/tenant-context.interceptor.ts'
 import { TenantGuard } from '../../apps/api/src/common/tenant.guard.ts'
 import { AuthModule } from '../../apps/api/src/auth/auth.module.ts'
 import {
@@ -32,7 +33,10 @@ import {
 
 @Module({
   imports: [AuthModule],
-  providers: [{ provide: APP_GUARD, useClass: TenantGuard }],
+  providers: [
+    { provide: APP_GUARD, useClass: TenantGuard },
+    { provide: APP_INTERCEPTOR, useClass: TenantContextInterceptor },
+  ],
 })
 class TestAuthAppModule {}
 
@@ -135,7 +139,13 @@ describe('POST /api/auth/login, /refresh, /logout, GET /me, /jwks', () => {
       expect(claims['tenant_id']).toBe(user.tenantId)
       expect(claims.sub).toBe(user.ownerId)
       expect(claims['session_id']).toEqual(expect.any(String))
-      expect(claims['perm_ver']).toBe(0)
+      // M1-X, L1: perm_ver is users.version, snapshotted AFTER this login's
+      // own increment — not a constant. `user` is a shared fixture across
+      // this describe block, so its exact value depends on how many prior
+      // tests in this file have already logged in as it; what this test
+      // asserts is the CLAIM'S SHAPE, not a specific count (that is
+      // tests/integration/account-state-guard.spec.ts's job).
+      expect(claims['perm_ver']).toEqual(expect.any(Number))
       expect(claims['mfa']).toBe(false)
     })
 
@@ -341,7 +351,12 @@ describe('POST /api/auth/login, /refresh, /logout, GET /me, /jwks', () => {
       expect(res.status).toBe(200)
       expect(res.body.user.id).toBe(u.ownerId)
       expect(res.body.tenant.id).toBe(u.tenantId)
-      expect(res.body.permissionVersion).toBe(0)
+      // M1-X, L1: permissionVersion is users.version, snapshotted AFTER
+      // login's own increment — not a constant. createActiveUserFixture's
+      // INVITED->ACTIVE transition already sets version to 1; login's own
+      // write increments it once more, to 2. See
+      // packages/database/src/auth/login.ts's LoginSuccess.permissionVersion.
+      expect(res.body.permissionVersion).toBe(2)
     })
 
     it('401s with no bearer token', async () => {

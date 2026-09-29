@@ -93,6 +93,18 @@ export interface LoginSuccess {
   readonly tenant: ResolvedTenantRow
   readonly user: { readonly id: string; readonly email: string; readonly fullName: string }
   readonly sessionId: string
+  /**
+   * M1-X, L1. `users.version` AS RETURNED BY THIS VERY LOGIN's own `UPDATE`
+   * — i.e. AFTER the increment this write already performs, never the
+   * pre-write value read in transaction one. `users.version` is bumped both
+   * as login's own optimistic lock (migration 002) and, via migration 008's
+   * trigger, whenever this user's effective permission set changes
+   * (008_create_rbac.sql's header). Snapshotting the pre-write value here
+   * would mint a token that is immediately one behind the version its own
+   * login just produced, and packages/auth's guard would refuse it on the
+   * very first request. See packages/auth/src/guard.ts for where this is
+   * compared against the CURRENT users.version on every subsequent request.
+   */
   readonly permissionVersion: number
   /** Computed by PostgreSQL (`now() + interval '14 days'`), never by the caller. See B5. */
   readonly refreshTokenExpiresAt: Date
@@ -236,9 +248,11 @@ async function writeLoginSuccess(
     .where('id', '=', user.id)
     .where('status', '=', 'ACTIVE')
     .where('password_hash', '=', write.verifiedPasswordHash)
+    // M1-X, L1: the post-increment value, for the token's permVer claim.
+    .returning(['version'])
     .executeTakeFirst()
 
-  if (updated.numUpdatedRows === 0n) {
+  if (!updated) {
     return { authenticated: false }
   }
 
@@ -253,7 +267,7 @@ async function writeLoginSuccess(
       created_by: user.id,
       updated_by: user.id,
     })
-    .returning(['id', 'permission_version'])
+    .returning(['id'])
     .executeTakeFirstOrThrow()
 
   const family = await tx
@@ -289,7 +303,7 @@ async function writeLoginSuccess(
     tenant,
     user: { id: user.id, email: user.email, fullName: user.fullName },
     sessionId: session.id,
-    permissionVersion: session.permission_version,
+    permissionVersion: updated.version,
     refreshTokenExpiresAt: token.expires_at,
   }
 }

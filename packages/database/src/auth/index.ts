@@ -33,9 +33,11 @@ export {
 } from './refresh.ts'
 
 export {
+  getAccountState,
   getAuthenticatedProfile,
   isSessionActive,
   revokeSession,
   touchSessionLastSeen,
+  type AccountState,
   type AuthenticatedProfile,
 } from './session.ts'
