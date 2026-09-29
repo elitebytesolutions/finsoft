@@ -1,7 +1,9 @@
 import { Module } from '@nestjs/common'
 import { APP_GUARD } from '@nestjs/core'
+import { AuditModule } from './audit/audit.module'
 import { TenantGuard } from './common/tenant.guard'
 import { HealthModule } from './health/health.module'
+import { AuthModule } from './auth/auth.module'
 
 /*
  * The API composition root.
@@ -13,7 +15,7 @@ import { HealthModule } from './health/health.module'
  * protected unless it explicitly opts out with @Public().
  */
 @Module({
-  imports: [HealthModule],
+  imports: [HealthModule, AuthModule, AuditModule],
   providers: [{ provide: APP_GUARD, useClass: TenantGuard }],
 })
 export class AppModule {}

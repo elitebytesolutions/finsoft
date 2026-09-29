@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { createHash } from 'node:crypto'
 
 import { withTenant } from '@finsoft/database'
+import { spendRefreshToken } from '@finsoft/database/auth'
+import { createActiveUserFixture } from './helpers/auth-seed.ts'
 import {
   createTenantFixture,
   prepareTestDatabase,
@@ -344,6 +346,84 @@ describe('tenant isolation', () => {
       ),
     )
     expect(stillLive, 'the neighbour’s attempt must not have spent it either').toBeNull()
+  })
+
+  /*
+   * D5 (docs/WAVE_1_REGISTER.md D-W1-004; ADR-0023 §2): the test above
+   * derives its ENTIRE guarantee from RLS being in force on a by-hash
+   * lookup executed under an ESTABLISHED tenant context (`withTenant`,
+   * `other`'s). The real refresh path has neither — it calls
+   * `spendRefreshToken` with NO tenant context at all, and the tenant is
+   * decided by migration 006's SECURITY DEFINER resolver, not by RLS on the
+   * caller's own connection. That guarantee has to be re-proved through the
+   * ACTUAL mechanism, or it silently stops testing anything the moment the
+   * production code path diverges from this test's assumptions — which it
+   * already has.
+   */
+  it('spendRefreshToken (the production mechanism) resolves and spends under the OWNING tenant only, with no tenant context established at all', async () => {
+    // spendRefreshToken now checks users.status/tenants.status ACTIVE (C4) —
+    // createTenantFixture's provisioned owner is INVITED, so this needs an
+    // ACTIVE fixture rather than the shared `tenant`/`other`, which the rest
+    // of this file uses for lower-level RLS/trigger tests that do not care
+    // about status.
+    const activeTenant = await createActiveUserFixture('RRC')
+    const activeOther = await createActiveUserFixture('RRD')
+    const mine = await login(activeTenant)
+
+    // No runAs/withTenant here — this is exactly what the real /auth/refresh
+    // handler does: no TenantContext exists yet when this is called.
+    const outcome = await spendRefreshToken({
+      presentedTokenHash: hashToken(mine.raw),
+      newTokenHash: hashToken(randomUUID() + randomUUID()),
+      deviceId: null,
+    })
+
+    expect(outcome.outcome).toBe('success')
+    if (outcome.outcome !== 'success') throw new Error('unreachable')
+    expect(outcome.tenant.id, 'must resolve to the OWNING tenant').toBe(activeTenant.tenantId)
+    expect(outcome.tenant.id, 'must never resolve to the neighbour').not.toBe(activeOther.tenantId)
+    expect(outcome.sessionId).toBe(mine.sessionId)
+
+    // And the neighbour's own chain is untouched by this call — the
+    // resolver never even considered the neighbour's rows.
+    const otherFamilyStillLive = await runAs(
+      { tenantId: activeOther.tenantId, userId: activeOther.ownerId },
+      () =>
+        withTenant((tx) =>
+          scalarOn<Date | null>(
+            tx,
+            `SELECT revoked_at FROM refresh_token_families WHERE tenant_id = $1`,
+            [activeOther.tenantId],
+          ),
+        ),
+    )
+    expect(otherFamilyStillLive ?? null).toBeNull()
+  })
+
+  it('spendRefreshToken cannot be steered into a different tenant by an ambient TenantContext', async () => {
+    // Defence in depth: even if some future caller mistakenly wrapped this
+    // in runAs({tenantId: other...}) — the shape a copy-pasted repository
+    // call might take — the resolver's own answer must still win, because
+    // withResolvedTenant sets app.tenant_id from the resolver's return
+    // value alone, never from whatever ambient TenantContext (if any)
+    // happens to be active.
+    const activeTenant = await createActiveUserFixture('RRE')
+    const activeOther = await createActiveUserFixture('RRF')
+    const mine = await login(activeTenant)
+
+    const outcome = await runAs(
+      { tenantId: activeOther.tenantId, userId: activeOther.ownerId },
+      () =>
+        spendRefreshToken({
+          presentedTokenHash: hashToken(mine.raw),
+          newTokenHash: hashToken(randomUUID() + randomUUID()),
+          deviceId: null,
+        }),
+    )
+
+    expect(outcome.outcome).toBe('success')
+    if (outcome.outcome !== 'success') throw new Error('unreachable')
+    expect(outcome.tenant.id).toBe(activeTenant.tenantId)
   })
 
   it('cannot plant a row under another tenant’s id', async () => {

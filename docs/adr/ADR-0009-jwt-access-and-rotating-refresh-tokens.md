@@ -7,25 +7,25 @@
 
 ---
 
-> ## ⛔ Partial supersession — the grace window is no longer in force
+> ## ⛔ Partial supersession — the grace window and per-user account lockout are no longer in force
 >
-> **This ADR is still in force**, and this notice is permanent. It annotates status only; the decision, rationale and consequences below are untouched and stay exactly as accepted, per [the ADR README](README.md) §4. Because the supersession is partial, this record does not become `Superseded by ADR-0022` — it stays `Accepted`, minus the three sites named here.
+> **This ADR is still in force**, and this notice is permanent. It annotates status only; the decision, rationale and consequences below are untouched and stay exactly as accepted, per [the ADR README](README.md) §4. Because the supersession is partial, this record does not become `Superseded by ADR-0022` or `ADR-0023` — it stays `Accepted`, minus the five sites named here.
 >
-> [ADR-0022](ADR-0022-no-grace-window-on-refresh-rotation.md) (**Accepted 2026-09-25**) supersedes **the grace window, and nothing else in this record**, at three sites. The body below still states the window as a decision; this notice is the only thing that says otherwise, which is why it is not removed:
+> [ADR-0022](ADR-0022-no-grace-window-on-refresh-rotation.md) (**Accepted 2026-09-25**) supersedes **the grace window** at three sites, and [ADR-0023](ADR-0023-pre-tenant-authentication-reads.md) (**Accepted 2026-09-27**) supersedes **account lockout** at two — and nothing else in this record. The body below still states both as decisions; this notice is the only thing that says otherwise, which is why it is not removed:
 >
-> | Provision | Superseded by ADR-0022 |
+> | Provision | Superseded |
 > |---|---|
-> | Line 83 — "A short grace window (a few seconds) tolerates a genuine network retry replaying the same refresh, returning the already-issued pair…" | **No longer in force. Do not build it.** There is no tolerance at any delay: a replay in the same millisecond as the spend revokes the family exactly as a replay an hour later does |
-> | Line 138 — "Handled by the grace window and…" | **No longer in force as to the window.** The *serialising refresh per session* half stands, and is implemented by the row lock on the spend statement |
-> | Line 162 — "…replaying a consumed refresh token **beyond the grace window** revokes the whole family…" | **No longer in force as to those four words.** Read the bullet without them: replaying a consumed refresh token revokes the whole family. The rest of the bullet stands |
+> | **ADR-0022.** Line 83 — "A short grace window (a few seconds) tolerates a genuine network retry replaying the same refresh, returning the already-issued pair…" | **No longer in force. Do not build it.** There is no tolerance at any delay: a replay in the same millisecond as the spend revokes the family exactly as a replay an hour later does |
+> | **ADR-0022.** Line 138 — "Handled by the grace window and…" | **No longer in force as to the window.** The *serialising refresh per session* half stands, and is implemented by the row lock on the spend statement |
+> | **ADR-0022.** Line 162 — "…replaying a consumed refresh token **beyond the grace window** revokes the whole family…" | **No longer in force as to those four words.** Read the bullet without them: replaying a consumed refresh token revokes the whole family. The rest of the bullet stands |
+> | **ADR-0023.** Line 121 — "Failed attempts feed the same lockout and alerting path as password failures" | **No longer in force as to lockout.** Failed MFA attempts feed the same *throttling* and alerting path as password failures — ADR-0023 §5's time-decaying layers, never a sticky state. `LOGIN_FAILED` as a logged business event stands |
+> | **ADR-0023.** Line 123 — "account lockout with progressive backoff" | **No longer in force as to those words.** Throttling is keyed on attacker-controllable input and always self-recovers without an administrator. A lockout may be keyed only on (user, device/IP), never on the user alone, and its state never lives in Redis. The rest of the sentence stands |
 >
-> Two reasons, found independently by the Architecture Guardian and the Database Guardian and rated blocking by both. First, the clause contradicts **line 85 of this record**: returning "the already-issued pair" requires re-sending the successor's *raw* value, and refresh tokens are stored only as SHA-256, so no implementation satisfies both lines. Second, a replayed stolen refresh token and a second browser tab present the **same evidence** to the server and cannot be distinguished; a window is therefore an interval in which a thief's replay is accepted and the family survives.
+> Why. **The window** (Architecture and Database Guardians, blocking): it contradicts **line 85 of this record** — returning "the already-issued pair" means re-sending the successor's *raw* value, and refresh tokens are stored only as SHA-256 — and a stolen token's replay and a second browser tab present the **same evidence**, so a window is an interval in which a thief's replay is accepted. **The lockout** (security review; the throttle/lockout split decided by the Product Owner, 2026-09-25): a sticky per-user lock triggered by an attacker-chosen key lets anyone who knows an employee's email address stop that employee working.
 >
-> Everything else here — rotation, reuse detection, family revocation, hash at rest, the signed `tenant_id` claim, revocation, MFA — is unaffected and in force.
+> Everything else here — rotation, reuse detection, family revocation, hash at rest, the signed `tenant_id` claim, revocation, MFA — is unaffected and in force. **Nothing is blocked by this record.** Build rotation with no window, to ADR-0022; a `grace`-named symbol, column, configuration key or environment variable on the refresh path fails the build under ADR-0022's Compliance. Build login and MFA throttling, not per-user lockout, to ADR-0023 §5.
 >
-> **Nothing is blocked by this record any longer.** `database/migrations/005_create_sessions.sql` and the `packages/auth` refresh endpoint are released; build rotation with no window, to ADR-0022. A `grace`-named symbol, column, configuration key or environment variable on the refresh path fails the build under ADR-0022's Compliance, so the window cannot return as a dead configuration surface.
->
-> **Line numbers.** Every `ADR-0009:NN` citation in the repository was written against the **as-accepted** text. This notice adds 24 lines at the head, so an as-accepted line NN is now at NN+24 — :83 → 107, :85 → 109, :138 → 162, :162 → 186. Citations are not rewritten: the as-accepted numbering is the stable reference, and the clauses are quoted verbatim above so the reference survives the shift. The notice is permanent, so the offset is permanent and fixed at +24; any later edit here must preserve its line count.
+> **Line numbers.** Every `ADR-0009:NN` citation in the repository was written against the **as-accepted** text. This notice adds 24 lines at the head, so an as-accepted line NN is now at NN+24 — :83 → 107, :85 → 109, :121 → 145, :123 → 147, :138 → 162, :162 → 186. Citations are not rewritten: the as-accepted numbering is the stable reference, and the clauses are quoted verbatim above so the reference survives the shift. The notice is permanent, so the offset is permanent and fixed at +24; any later edit here must preserve its line count.
 
 ---
 

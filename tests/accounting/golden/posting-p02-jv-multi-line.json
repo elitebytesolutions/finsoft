@@ -1,0 +1,122 @@
+{
+  "id": "P02",
+  "format": "posting-scenario/v1",
+  "name": "Manual journal voucher, four lines with fractional amounts",
+  "rules": ["JOURNAL_VOUCHER_POSTED@1", "REPORT/trial-balance@1"],
+  "source": "docs/posting-rules/journal-voucher.md",
+  "governedBy": ["ADR-0005", "ADR-0011", "ADR-0012"],
+  "executableFrom": "M2",
+  "status": "Specified, hand-computed. Not yet executed: the M2 QA lane writes the runner.",
+  "description": [
+    "Three debits against one credit, with amounts that are not whole rupees, so the",
+    "balance check is exercised below the paisa boundary.",
+    "",
+    "Hand computation of the voucher (step 2):",
+    "  debits  45000.0000 + 1249.5000 + 8750.5000 = 55000.0000",
+    "  credits 55000.0000",
+    "  difference 0.0000",
+    "",
+    "Trial balance as of 2026-09-27 (after step 1's capital and step 2):",
+    "  1120 Bank          500000.0000 − 55000.0000 = 445000.0000 Dr",
+    "  3100 Capital       500000.0000 Cr",
+    "  6200 Rent           45000.0000 Dr",
+    "  6300 Office          1249.5000 Dr",
+    "  6400 Utilities       8750.5000 Dr",
+    "  Σ Dr = 445000.0000 + 45000.0000 + 1249.5000 + 8750.5000 = 500000.0000",
+    "  Σ Cr = 500000.0000"
+  ],
+  "fixture": {
+    "coa": "standard-v1",
+    "timezone": "Asia/Karachi",
+    "fiscalYearStartMonth": 7,
+    "today": "2026-09-27",
+    "periods": { "fiscalYear": 2027, "status": "all OPEN" },
+    "tenants": ["GOLDEN_A"]
+  },
+  "steps": [
+    {
+      "step": 1,
+      "do": "post",
+      "event": "JOURNAL_VOUCHER_POSTED",
+      "idempotencyKey": "p02-capital",
+      "occurredAt": "2026-09-01",
+      "payload": {
+        "narration": "Owner's opening capital deposited to bank",
+        "lines": [
+          { "account": "1120", "debit": "500000.0000" },
+          { "account": "3100", "credit": "500000.0000" }
+        ]
+      },
+      "expect": { "outcome": "POSTED", "entryNumber": "JV-2027-000001", "period": "2026-09" }
+    },
+    {
+      "step": 2,
+      "do": "post",
+      "event": "JOURNAL_VOUCHER_POSTED",
+      "idempotencyKey": "p02-expenses",
+      "occurredAt": "2026-09-05",
+      "payload": {
+        "narration": "September rent, office supplies and utilities paid from bank",
+        "reference": "Bank statement 2026-09-05",
+        "lines": [
+          { "account": "6200", "debit": "45000.0000", "memo": "September rent" },
+          { "account": "6300", "debit": "1249.5000", "memo": "Stationery" },
+          { "account": "6400", "debit": "8750.5000", "memo": "Electricity and gas" },
+          { "account": "1120", "credit": "55000.0000" }
+        ]
+      },
+      "expect": {
+        "outcome": "POSTED",
+        "entryNumber": "JV-2027-000002",
+        "period": "2026-09",
+        "lines": [
+          { "account": "6200", "debit": "45000.0000", "credit": "0.0000" },
+          { "account": "6300", "debit": "1249.5000", "credit": "0.0000" },
+          { "account": "6400", "debit": "8750.5000", "credit": "0.0000" },
+          { "account": "1120", "debit": "0.0000", "credit": "55000.0000" }
+        ],
+        "totals": { "debit": "55000.0000", "credit": "55000.0000" }
+      }
+    },
+    {
+      "step": 3,
+      "do": "assert",
+      "trialBalance": {
+        "asOf": "2026-09-27",
+        "rows": [
+          { "account": "1120", "debit": "445000.0000", "credit": "0.0000" },
+          { "account": "3100", "debit": "0.0000", "credit": "500000.0000" },
+          { "account": "6200", "debit": "45000.0000", "credit": "0.0000" },
+          { "account": "6300", "debit": "1249.5000", "credit": "0.0000" },
+          { "account": "6400", "debit": "8750.5000", "credit": "0.0000" }
+        ],
+        "totals": { "debit": "500000.0000", "credit": "500000.0000" }
+      },
+      "accountLedger": {
+        "account": "1120",
+        "from": "2026-09-01",
+        "to": "2026-09-30",
+        "openingBalance": "0.0000",
+        "lines": [
+          {
+            "entryNumber": "JV-2027-000001",
+            "date": "2026-09-01",
+            "debit": "500000.0000",
+            "credit": "0.0000",
+            "runningBalance": "500000.0000"
+          },
+          {
+            "entryNumber": "JV-2027-000002",
+            "date": "2026-09-05",
+            "debit": "0.0000",
+            "credit": "55000.0000",
+            "runningBalance": "445000.0000"
+          }
+        ],
+        "closingBalance": "445000.0000"
+      },
+      "journalEntryCount": 2,
+      "roundingAccountBalance": "0.0000"
+    }
+  ]
+}

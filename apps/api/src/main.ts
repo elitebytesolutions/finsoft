@@ -1,11 +1,14 @@
 import 'reflect-metadata'
 import { NestFactory } from '@nestjs/core'
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger'
+import cookieParser from 'cookie-parser'
+import { preloadJwtKeys } from '@finsoft/auth'
 import { closeDatabase, openDatabase } from '@finsoft/database'
 import { initLogger } from '@finsoft/observability'
 import { FinsoftNestLogger } from './common/nest-logger'
 import { AllExceptionsFilter } from './common/all-exceptions.filter'
 import { AppModule } from './app.module'
+import { assertProductionCookieSecurity, refreshCookieName } from './auth/cookie'
 
 /*
  * The API process.
@@ -19,6 +22,26 @@ import { AppModule } from './app.module'
 const DEFAULT_PORT = 3001
 
 async function bootstrap(): Promise<void> {
+  /*
+   * Before anything else, including the logger and the database pool: a
+   * synchronous, dependency-free check of the refresh cookie configuration.
+   * assertProductionCookieSecurity() refuses to start in production without
+   * a __Host- or __Secure- prefix; refreshCookieName() (already called on
+   * every request) is called here too so a __Host- name paired with the
+   * wrong path fails at boot, on every environment, rather than on the
+   * first request that happens to touch it.
+   */
+  assertProductionCookieSecurity()
+  refreshCookieName()
+
+  /*
+   * C1: load (or generate, dev/test only) the RS256 key set before the
+   * server accepts a single connection — a malformed AUTH_JWT_PRIVATE_KEY/
+   * AUTH_JWT_PUBLIC_KEYS pair, or an ephemeral pair reached for outside
+   * development/test, is discovered here, not on the first login.
+   */
+  await preloadJwtKeys()
+
   /*
    * Before anything that might log. NestJS's own bootstrap messages are
    * routed through this logger below, and getLogger() throws if it has not
@@ -71,6 +94,14 @@ async function bootstrap(): Promise<void> {
    * travels the same path as real traffic, which is the point of a probe.
    */
   app.setGlobalPrefix('api')
+
+  /*
+   * ADR-0009: the refresh token travels only as an HttpOnly cookie, never in
+   * a header or body. Reading it back (`req.cookies`) needs this middleware;
+   * nothing here parses a *signed* cookie, because the refresh token is
+   * opaque and hashed at rest, not something this process signs.
+   */
+  app.use(cookieParser())
 
   /*
    * One error shape for every failure, and nothing internal in a response.

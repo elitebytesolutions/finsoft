@@ -52,6 +52,36 @@ services:
     environment:
       NODE_ENV: production
       API_PORT: 3001
+      # ADR-0023's Open list: the refresh cookie's __Host- vs __Secure-
+      # prefix is decided per environment, never left unprefixed in
+      # production-mode (apps/api/src/main.ts refuses to boot without one
+      # when NODE_ENV=production). This staging host,
+      # 31-220-74-159.sslip.io, shares the registrable domain sslip.io with
+      # every other sslip.io-hosted service — sslip.io is not on the Public
+      # Suffix List, so it is one registrable domain as far as cookies are
+      # concerned. That is exactly the case ADR-0023's own recommendation
+      # names as the exception: __Host-'s anti-subdomain-shadowing property
+      # wins over __Secure-'s scoped-path convenience. __Host- forces
+      # Path=/, hence both variables change together.
+      #
+      # PRODUCTION MUST NOT COPY THESE VALUES: it does not share a
+      # registrable domain with anything else, so ADR-0023's default
+      # recommendation applies there instead — __Secure-finsoft_rt with the
+      # scoped path /api/auth. See
+      # infrastructure/staging/RUNBOOK-finsoft-refresh-role.md.
+      AUTH_REFRESH_COOKIE_NAME: __Host-finsoft_rt
+      AUTH_REFRESH_COOKIE_PATH: /
+      # packages/auth/src/jwt.ts refuses to boot under NODE_ENV=production
+      # unless a real RSA key pair is supplied — the ephemeral in-process key
+      # path is an allowlist of exactly "development"/"test", not a denylist
+      # of "production", so this is not optional here. All three come from
+      # /opt/finsoft/.env on the host, never from this repo or from CI: see
+      # infrastructure/staging/RUNBOOK-jwt-keys.md for one-time generation.
+      # The `:?` guard makes a missing variable fail `docker compose config`
+      # itself, before the container ever starts, rather than crash-looping.
+      AUTH_JWT_PRIVATE_KEY: ${AUTH_JWT_PRIVATE_KEY:?see infrastructure/staging/RUNBOOK-jwt-keys.md}
+      AUTH_JWT_KID: ${AUTH_JWT_KID:?see infrastructure/staging/RUNBOOK-jwt-keys.md}
+      AUTH_JWT_PUBLIC_KEYS: ${AUTH_JWT_PUBLIC_KEYS:?see infrastructure/staging/RUNBOOK-jwt-keys.md}
       # finsoft_app ONLY. An earlier version of this file also passed
       # MIGRATION_DATABASE_URL here, which handed finsoft_migration's
       # BYPASSRLS credential to the long-running, web-facing process — the one

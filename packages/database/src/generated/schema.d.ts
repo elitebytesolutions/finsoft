@@ -23,6 +23,42 @@ export type JsonValue = JsonArray | JsonObject | JsonPrimitive;
 
 export type Timestamp = ColumnType<Date, Date | string, Date | string>;
 
+export interface AuditLog {
+  action: string;
+  actor_user_id: string | null;
+  after_json: Json | null;
+  before_json: Json | null;
+  entity_id: string | null;
+  entity_type: string;
+  /**
+   * hex(SHA-256(previous_hash || 0x1F || hash_version || 0x1F || JCS(record))) — ADR-0020 §4. Computed by the application before insert.
+   */
+  hash: string;
+  /**
+   * The canonicalisation scheme that produced hash, hashed as part of its own input. A future v2 does not invalidate v1 rows; the verifier reads this column rather than the calendar.
+   */
+  hash_version: string;
+  id: Generated<string>;
+  /**
+   * text, not inet (ADR-0020 §4): inet renders with a /32 or /128 prefix and abbreviates IPv6, which would put an unstated normalisation rule between the writer and the verifier. The application renders addresses normatively (lowercase, RFC 5952) before hashing; this column stores exactly that.
+   */
+  ip: string | null;
+  /**
+   * Application-generated, never DEFAULT now(). Formatted to exactly six fractional digits before hashing (ADR-0020 §4) — Date.prototype.toISOString() yields three.
+   */
+  occurred_at: Timestamp;
+  /**
+   * The parent row's hash. NULL only for the seq=0 anchor. 64 zeros for the row at seq=1 (audit_log_genesis_ties).
+   */
+  previous_hash: string | null;
+  request_id: string | null;
+  /**
+   * Gapless per tenant, from 1, allocated by the application under the terminal advisory lock (LOCK_REGISTRY.md position 6). Never a PostgreSQL sequence: a seq gap is what the verifier reads as evidence of tampering, and a sequence would manufacture that on every rollback. 0 is the per-tenant anchor.
+   */
+  seq: ColumnType<string, string, string>;
+  tenant_id: string;
+}
+
 export interface Outbox {
   /**
    * A human has taken responsibility for this FAILED row. The ADR-0019 alert is defined over UNACKNOWLEDGED failed rows; without this it would fire forever from the first one and be muted.
@@ -126,6 +162,43 @@ export interface RefreshTokens {
   version: Generated<number>;
 }
 
+export interface RolePermissions {
+  created_at: Generated<Timestamp>;
+  created_by: string;
+  id: Generated<string>;
+  /**
+   * Shape-checked only (namespace.action). packages/permissions is the catalogue of which codes exist.
+   */
+  permission_code: string;
+  revoked_at: Timestamp | null;
+  revoked_by: string | null;
+  role_id: string;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+  updated_by: string;
+  version: Generated<number>;
+}
+
+export interface Roles {
+  code: string;
+  created_at: Generated<Timestamp>;
+  created_by: string;
+  id: Generated<string>;
+  /**
+   * Seeded by seedSystemRoles() at provisioning (Owner/Accountant/Viewer). Immutable once set.
+   */
+  is_system: Generated<boolean>;
+  name: string;
+  /**
+   * ACTIVE | INACTIVE. A retired role keeps its role_permissions and user_roles history.
+   */
+  status: Generated<string>;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+  updated_by: string;
+  version: Generated<number>;
+}
+
 export interface SchemaMigrations {
   applied_at: Generated<Timestamp>;
   checksum: string;
@@ -172,6 +245,9 @@ export interface Tenants {
    * PKR only in v1 (ADR-0011). Widening this requires a reviewed migration.
    */
   base_currency: Generated<string>;
+  /**
+   * Business identifier and a login input (ADR-0023 §1). finsoft_app holds no UPDATE grant on this column as of migration 007 — renaming a tenant is a separately permissioned, separately audited action, not a side effect of a profile edit.
+   */
   code: string;
   created_at: Generated<Timestamp>;
   id: Generated<string>;
@@ -179,12 +255,26 @@ export interface Tenants {
   name: string;
   ntn: string | null;
   /**
-   * ACTIVE | SUSPENDED | CLOSED. Tenants are never deleted (rule 4).
+   * ACTIVE | SUSPENDED | CLOSED, and a login input (ADR-0023 §1). finsoft_app holds no UPDATE grant on this column as of migration 007 — see the comment on tenants.code.
    */
   status: Generated<string>;
   strn: string | null;
   timezone: Generated<string>;
   updated_at: Generated<Timestamp>;
+}
+
+export interface UserRoles {
+  created_at: Generated<Timestamp>;
+  created_by: string;
+  id: Generated<string>;
+  revoked_at: Timestamp | null;
+  revoked_by: string | null;
+  role_id: string;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+  updated_by: string;
+  user_id: string;
+  version: Generated<number>;
 }
 
 export interface Users {
@@ -212,17 +302,21 @@ export interface Users {
   updated_at: Generated<Timestamp>;
   updated_by: string | null;
   /**
-   * Optimistic lock. Incremented by the application in the UPDATE predicate, never by a trigger.
+   * Optimistic lock, incremented by the application in the UPDATE predicate (migration 002). ALSO bumped by 008_create_rbac.sql's permission_version cascade whenever this user's effective permissions change — a role grant/revocation, a change to a role's permission set, or a change to a held role's status. Both uses share one counter deliberately: any change to what this row means is a legitimate reason for a concurrent writer to re-read before it writes again. See 008's header for why this is not a dedicated column.
    */
   version: Generated<number>;
 }
 
 export interface DB {
+  audit_log: AuditLog;
   outbox: Outbox;
   refresh_token_families: RefreshTokenFamilies;
   refresh_tokens: RefreshTokens;
+  role_permissions: RolePermissions;
+  roles: Roles;
   schema_migrations: SchemaMigrations;
   sessions: Sessions;
   tenants: Tenants;
+  user_roles: UserRoles;
   users: Users;
 }

@@ -28,6 +28,7 @@ const ENTRYPOINTS = [
   ['@finsoft/validation', 'packages/validation/src/index.ts'],
   ['@finsoft/database', 'packages/database/src/index.ts'],
   ['@finsoft/database/testing', 'packages/database/src/testing/harness.ts'],
+  ['@finsoft/auth', 'packages/auth/src/index.ts'],
   ['migration runner', 'packages/database/src/migrate/apply.ts'],
   ['migration verifier', 'packages/database/src/migrate/verify.ts'],
   ['codegen guard', 'packages/database/src/generate/cli.ts'],

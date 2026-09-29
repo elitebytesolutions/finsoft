@@ -26,7 +26,7 @@ import { readSchemaHealth } from '@finsoft/database'
  * silently — while the running container still needs no access to the
  * migration files.
  */
-export const REQUIRED_SCHEMA_VERSION = 5
+export const REQUIRED_SCHEMA_VERSION = 9
 
 /**
  * A readiness probe must answer quickly or it is useless: an orchestrator

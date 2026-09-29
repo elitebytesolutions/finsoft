@@ -77,6 +77,181 @@ describe('apps/** may not construct queries (ADR-0013)', () => {
   })
 })
 
+describe('packages/auth may not construct queries either (ADR-0023, M1-A)', () => {
+  /*
+   * The same gap as apps/**, in the one other package where it is realistic:
+   * a transaction handle arrives through a callback from a
+   * @finsoft/database export, not an import of kysely or pg, so
+   * dependency-cruiser's module-graph view sees nothing. packages/auth is
+   * not on ADR-0013's kysely allowlist (.dependency-cruiser.cjs), so it
+   * must never build a query on a handle it is handed.
+   */
+  it('catches a query built on a handle received through a callback', async () => {
+    const messages = await messagesFor(
+      'packages/auth/src/login.ts',
+      `import { findLoginCandidate } from '@finsoft/database/auth'
+       export function check() {
+         return findLoginCandidate('CODE', 'x@example.test', async (tx) => {
+           return tx.selectFrom('users').select('id').execute()
+         })
+       }`,
+    )
+
+    expect(
+      matching(messages, 'packages/auth/** contains no query construction'),
+      'a query built on a callback-supplied handle must be caught in packages/auth/**',
+    ).toHaveLength(1)
+  })
+
+  it.each(['insertInto', 'updateTable', 'deleteFrom'])('catches %s too', async (method) => {
+    const messages = await messagesFor(
+      'packages/auth/src/thing.ts',
+      `export function w(tx: any) { return tx.${method}('users') }`,
+    )
+    expect(matching(messages, 'packages/auth/** contains no query construction')).toHaveLength(1)
+  })
+
+  it('leaves the same code alone inside packages/database, which owns it', async () => {
+    const messages = await messagesFor(
+      'packages/database/src/auth/login.ts',
+      `export function read(tx: any) { return tx.selectFrom('users').select('id').execute() }`,
+    )
+    expect(matching(messages, 'packages/auth/** contains no query construction')).toEqual([])
+  })
+
+  it('does not fire on a spec file, so a fixture test like this one can call selectFrom', async () => {
+    const messages = await messagesFor(
+      'packages/auth/src/login.spec.ts',
+      `export function w(tx: any) { return tx.selectFrom('users') }`,
+    )
+    expect(matching(messages, 'packages/auth/** contains no query construction')).toEqual([])
+  })
+})
+
+describe('TenantContext is forbidden in login.ts and refresh.ts (architecture re-review C2, 2026-09-27)', () => {
+  /*
+   * ADR-0023 A2: the tenant for every transaction these two files open
+   * enters through withResolvedTenant(tenantByCodeResolver(...)) — never
+   * TenantContext, which carries a bare, unbranded id and was the exact
+   * shape of the login TOCTOU items 1a/1b/N1 fixed once already. This rule
+   * has never been observed to fire; these fixtures fire it.
+   */
+  it('catches the relative import in login.ts', async () => {
+    const messages = await messagesFor(
+      'packages/database/src/auth/login.ts',
+      `import { TenantContext } from '../tenant-context.ts'
+       export function use() { return TenantContext.run }`,
+    )
+    expect(
+      matching(messages, 'architecture re-review C2, 2026-09-27'),
+      'importing TenantContext by its relative path in login.ts must be caught',
+    ).toHaveLength(1)
+  })
+
+  it('catches the relative import in refresh.ts', async () => {
+    const messages = await messagesFor(
+      'packages/database/src/auth/refresh.ts',
+      `import { TenantContext } from '../tenant-context.ts'
+       export function use() { return TenantContext.run }`,
+    )
+    expect(
+      matching(messages, 'architecture re-review C2, 2026-09-27'),
+      'importing TenantContext by its relative path in refresh.ts must be caught',
+    ).toHaveLength(1)
+  })
+
+  it('catches TenantContext named off the package surface too, not just the relative path', async () => {
+    const messages = await messagesFor(
+      'packages/database/src/auth/login.ts',
+      `import { TenantContext } from '@finsoft/database'
+       export function use() { return TenantContext.run }`,
+    )
+    expect(
+      matching(messages, 'architecture re-review C2, 2026-09-27'),
+      'importing the named export from the package surface must be caught too, not only the relative path',
+    ).toHaveLength(1)
+  })
+
+  it('leaves every OTHER import from that surface alone (withTenant is not TenantContext)', async () => {
+    const messages = await messagesFor(
+      'packages/database/src/auth/login.ts',
+      `import { withTenant } from '@finsoft/database'
+       export function use() { return withTenant }`,
+    )
+    expect(matching(messages, 'architecture re-review C2, 2026-09-27')).toEqual([])
+  })
+
+  it('does not fire on a sibling file in the same directory (session.ts), which is not in scope', async () => {
+    const messages = await messagesFor(
+      'packages/database/src/auth/session.ts',
+      `import { TenantContext } from '../tenant-context.ts'
+       export function use() { return TenantContext.run }`,
+    )
+    expect(matching(messages, 'architecture re-review C2, 2026-09-27')).toEqual([])
+  })
+})
+
+describe('auth_lookup is restricted to packages/database (Architecture seat A1)', () => {
+  it('catches the identifier in a string literal outside packages/database', async () => {
+    const messages = await messagesFor(
+      'apps/api/src/thing.ts',
+      `export const q = "select * from auth_lookup.resolve_refresh($1)"`,
+    )
+    expect(matching(messages, 'auth_lookup is migration 006')).toHaveLength(1)
+  })
+
+  it('catches the identifier in a template literal (the sql tag form)', async () => {
+    const messages = await messagesFor(
+      'packages/auth/src/thing.ts',
+      "import { sql } from 'kysely'\n" +
+        'export const q = sql`select * from auth_lookup.resolve_refresh(${1})`',
+    )
+    expect(matching(messages, 'auth_lookup is migration 006')).not.toHaveLength(0)
+  })
+
+  it('leaves packages/database alone, which is the one place it belongs', async () => {
+    const messages = await messagesFor(
+      'packages/database/src/auth/resolvers.ts',
+      `export const q = 'select tenant_id, token_id from auth_lookup.resolve_refresh($1)'`,
+    )
+    expect(matching(messages, 'auth_lookup is migration 006')).toEqual([])
+  })
+})
+
+describe('packages/permissions may not construct queries either (Architecture seat ruling, M1-R)', () => {
+  /*
+   * packages/permissions is not on depcruise's kysely-is-allowlisted list
+   * (docs/briefs/M1-R-rbac.md) — the RBAC query bodies live in
+   * packages/database/src/rbac/*.ts, and packages/permissions calls them. A
+   * transaction handle arriving through a callback is invisible to
+   * dependency-cruiser's module graph exactly the way apps/**'s was, so this
+   * is the same rule, extended to a second directory.
+   */
+  it('catches a query built on a transaction handle received through a callback', async () => {
+    const messages = await messagesFor(
+      'packages/permissions/src/resolve.ts',
+      `import { withTenant } from '@finsoft/database'
+       export function resolve(userId: string) {
+         return withTenant(async (tx) => {
+           return tx.selectFrom('role_permissions').select('permission_code').execute()
+         })
+       }`,
+    )
+    expect(
+      matching(messages, 'apps/** contains no query construction'),
+      'packages/permissions must call packages/database/src/rbac, never build the query itself',
+    ).toHaveLength(1)
+  })
+
+  it('leaves packages/database alone, which is where the query body actually lives', async () => {
+    const messages = await messagesFor(
+      'packages/database/src/rbac/resolve-permissions.ts',
+      `export function read(tx: any) { return tx.selectFrom('role_permissions').select('permission_code').execute() }`,
+    )
+    expect(matching(messages, 'apps/** contains no query construction')).toEqual([])
+  })
+})
+
 describe('connection ownership (ADR-0013, ADR-0004)', () => {
   it('catches a transaction opened outside packages/database', async () => {
     const messages = await messagesFor(

@@ -102,7 +102,17 @@ jobs:
         env:
           GITHUB_REF: ${{ github.ref }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
-        run: node tools/ci/classify.mjs --github-output
+        # "full" is decided HERE from GitHub's own context expressions and
+        # passed in explicitly, rather than inferred inside the script from
+        # environment variables. The PR #22 develop run reported full=false with
+        # no changed files; deciding it in the workflow removes that failure
+        # mode, and the script now echoes the event and ref it received.
+        run: |
+          if [[ "${{ github.event_name }}" != "pull_request" && ( "${{ github.ref }}" == "refs/heads/develop" || "${{ github.ref }}" == refs/heads/release/* || "${{ github.event_name }}" == "schedule" || "${{ github.event_name }}" == "workflow_dispatch" ) ]]; then
+            node tools/ci/classify.mjs --github-output --full
+          else
+            node tools/ci/classify.mjs --github-output
+          fi
 
   # ------------------------------------------------------------------ #
   # Everything that needs no database. Runs first and fails fast: a lint
@@ -541,9 +551,21 @@ jobs:
     if: needs.classify.outputs.run_codeql == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # No `security-events: write` and no upload. Code scanning (the SARIF
+    # upload target) needs GitHub Advanced Security, which this private
+    # repository on the Free plan does not have — the same plan limit as
+    # GAP-001's secret scanning. With the default upload the analyze step
+    # failed on EVERY run, and because deploy-staging needs this job, no
+    # develop merge deployed from OPS-002 (99e7118) until this fix. The scan
+    # itself still runs in full; the gate is enforced here instead: any
+    # result at SARIF level "error" fails the job, and the SARIF is kept as
+    # an artifact for review.
     permissions:
       contents: read
-      security-events: write
+      # The analyze step reads its own workflow run (telemetry and run
+      # metadata) and fails with "Resource not accessible by integration"
+      # without this. Read-only; it grants nothing to write.
+      actions: read
 
     steps:
       - uses: actions/checkout@v4
@@ -553,6 +575,27 @@ jobs:
           languages: javascript-typescript
 
       - uses: github/codeql-action/analyze@v3
+        id: analyze
+        with:
+          upload: never
+
+      - name: upload SARIF as an artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeql-sarif
+          path: ${{ steps.analyze.outputs.sarif-output }}
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: fail on error-level findings
+        run: |
+          set -euo pipefail
+          count=$(jq -s '[.[].runs[].results[]? | select((.level // "warning") == "error")] | length' "${{ steps.analyze.outputs.sarif-output }}"/*.sarif)
+          total=$(jq -s '[.[].runs[].results[]?] | length' "${{ steps.analyze.outputs.sarif-output }}"/*.sarif)
+          echo "CodeQL: ${total} result(s), ${count} at level error"
+          jq -r '.runs[].results[]? | select((.level // "warning") == "error") | "::error file=\(.locations[0].physicalLocation.artifactLocation.uri),line=\(.locations[0].physicalLocation.region.startLine)::\(.ruleId): \(.message.text)"' "${{ steps.analyze.outputs.sarif-output }}"/*.sarif
+          test "$count" -eq 0
 
   # ------------------------------------------------------------------ #
   # The deployable artefacts. "One artefact" (INFRASTRUCTURE.md): the image

@@ -9,6 +9,17 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@finsoft/database": "*",
+    "@finsoft/shared-types": "*",
+    "@node-rs/argon2": "2.2.1",
+    "ioredis": "5.11.1",
+    "jose": "6.2.12"
+  },
+  "devDependencies": {
+    "vitest": "4.1.11"
   }
 }

@@ -198,6 +198,7 @@ export function classify({ files, config, cliFull, eventName, ref }) {
   const reasons = [
     `tier ${tier}`,
     `full: ${full} (${fullReason})`,
+    `context: event=${eventName ?? '(none)'} ref=${ref ?? '(none)'}`,
     ...tierReasons,
     `images to (re)build: ${images.length ? images.join(', ') : 'none'}`,
     `webChanged=${webChanged} apiChanged=${apiChanged} workerChanged=${workerChanged}`,

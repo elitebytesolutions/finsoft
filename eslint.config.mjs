@@ -156,6 +156,33 @@ const appsQuerySyntax = [
   },
 ]
 
+/*
+ * packages/auth builds no queries either. ADR-0023 (M1-A): the Architecture
+ * seat ruled that ALL query construction for login/refresh stays in
+ * packages/database, and packages/auth is not on ADR-0013's kysely
+ * allowlist (.dependency-cruiser.cjs `kysely-is-allowlisted`) — so it must
+ * never receive a transaction handle and build a query on it.
+ *
+ * dependency-cruiser cannot see this class of violation: a handle arrives
+ * through a CALLBACK from a `@finsoft/database` export, not an import of
+ * `kysely` or `pg`, so the module graph looks clean either way. This is the
+ * same gap `appsQuerySyntax` above exists to close for apps/**, applied to
+ * the one package where an auth-shaped "just read the row here" temptation
+ * is realistic. A separate array (not a reuse of `appsQuerySyntax`) so its
+ * message names the right boundary instead of pointing someone at apps/**.
+ */
+const packagesAuthQuerySyntax = [
+  {
+    selector:
+      'CallExpression[callee.property.name=/^(selectFrom|insertInto|updateTable|deleteFrom|replaceInto|with)$/]',
+    message:
+      "ADR-0023: packages/auth/** contains no query construction. It is not on ADR-0013's " +
+      'kysely allowlist. A transaction handle received through a callback from ' +
+      '@finsoft/database is not an import dependency-cruiser can see — put the query behind a ' +
+      'named export in packages/database and call that.',
+  },
+]
+
 const stripOnlySyntax = [
   {
     selector: 'TSParameterProperty',
@@ -232,6 +259,31 @@ const connectionOwnershipSyntax = [
     message:
       'ADR-0013: a brand is forgeable with `as`. Obtain the handle from withTenant or ' +
       'withGlobal — they are the only issuers, and the runtime registry checks it.',
+  },
+]
+
+/*
+ * `auth_lookup` is migration 006's schema, owned by `finsoft_refresh` and
+ * read only through `packages/database/src/auth/resolvers.ts`'s raw call to
+ * `auth_lookup.resolve_refresh`. Restricting the identifier to
+ * `packages/database` (and, for the SQL side, `database/migrations`, which
+ * ESLint cannot see) is the Architecture seat's A1 condition: nothing
+ * outside the one package that owns query construction for auth should even
+ * be ABLE to reference the schema by name, whether in a raw SQL string or a
+ * comment that later gets copy-pasted into real code.
+ */
+const authLookupIdentifierSyntax = [
+  {
+    selector: 'Literal[value=/auth_lookup/]',
+    message:
+      "ADR-0023 §2 / Architecture seat A1: auth_lookup is migration 006's schema, read only " +
+      'through packages/database/src/auth/resolvers.ts. No other package or app may name it.',
+  },
+  {
+    selector: 'TemplateElement[value.raw=/auth_lookup/]',
+    message:
+      "ADR-0023 §2 / Architecture seat A1: auth_lookup is migration 006's schema, read only " +
+      'through packages/database/src/auth/resolvers.ts. No other package or app may name it.',
   },
 ]
 
@@ -336,7 +388,12 @@ export default tseslint.config(
       'database/tests/**',
     ],
     rules: {
-      'no-restricted-syntax': ['error', ...invariantSyntax, ...connectionOwnershipSyntax],
+      'no-restricted-syntax': [
+        'error',
+        ...invariantSyntax,
+        ...connectionOwnershipSyntax,
+        ...authLookupIdentifierSyntax,
+      ],
     },
   },
 
@@ -380,7 +437,88 @@ export default tseslint.config(
         'error',
         ...invariantSyntax,
         ...connectionOwnershipSyntax,
+        ...authLookupIdentifierSyntax,
         ...stripOnlySyntax,
+      ],
+    },
+  },
+
+  /* ---------------------------------------------------------------- *
+   * packages/auth builds no queries. ADR-0023 (M1-A), Architecture seat
+   * ruling 2026-09-27 — see packagesAuthQuerySyntax above.
+   *
+   * A later, more specific block: flat config REPLACES no-restricted-syntax
+   * per matching file rather than merging it, so this restates the full set
+   * (invariant + connection ownership + strip-only) alongside the new
+   * selector instead of losing the earlier three for this one package.
+   * ---------------------------------------------------------------- */
+  {
+    files: ['packages/auth/**/*.ts'],
+    ignores: ['packages/auth/**/*.spec.ts', 'packages/auth/**/*.test.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        ...invariantSyntax,
+        ...connectionOwnershipSyntax,
+        ...authLookupIdentifierSyntax,
+        ...stripOnlySyntax,
+        ...packagesAuthQuerySyntax,
+      ],
+    },
+  },
+
+  /* ---------------------------------------------------------------- *
+   * packages/database/src/auth/{login,refresh}.ts — TenantContext is
+   * forbidden here. C2, architecture re-review 2026-09-27.
+   *
+   * ADR-0023 A2: the tenant for every transaction these two files open
+   * enters through `withResolvedTenant(tenantByCodeResolver(...))`
+   * exclusively — resolved and branded fresh, every time, never carried
+   * forward as a bare string. `TenantContext.run` is exactly the shape of
+   * the bug items 1a/1b/N1 (security/database/architecture re-review,
+   * 2026-09-27) fixed once already in login.ts: a plain string principal
+   * that compiles wherever a `ResolvedTenantId` is expected, with nothing
+   * to stop a future edit from threading transaction one's tenant id into
+   * transaction two through it instead of re-resolving. Importing
+   * `TenantContext` — from the relative path or from the package's own
+   * public surface — in either file is the shape of that regression, not
+   * merely a style preference.
+   *
+   * Restates DECIMAL_LIBS from the repo-wide block above: flat config
+   * REPLACES a rule's options per matching file rather than merging them,
+   * and neither login.ts nor refresh.ts has any legitimate reason to import
+   * a decimal library either.
+   * ---------------------------------------------------------------- */
+  {
+    files: ['packages/database/src/auth/login.ts', 'packages/database/src/auth/refresh.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            ...DECIMAL_LIBS.map((name) => ({
+              name,
+              message:
+                'ADR-0011/ADR-0014: import Money from @finsoft/validation. The decimal library ' +
+                'lives there and nowhere else.',
+            })),
+            {
+              name: '../tenant-context.ts',
+              message:
+                'ADR-0023 A2 / architecture re-review C2, 2026-09-27: the tenant for this file ' +
+                'enters ONLY through withResolvedTenant(tenantByCodeResolver(...)) — never ' +
+                'TenantContext, which carries a bare, unbranded tenant id across the read/write ' +
+                'boundary and was the exact shape of the login TOCTOU this file already fixed once.',
+            },
+            {
+              name: '@finsoft/database',
+              importNames: ['TenantContext'],
+              message:
+                'ADR-0023 A2 / architecture re-review C2, 2026-09-27: TenantContext is forbidden ' +
+                "in this file by any import path — see this block's own comment.",
+            },
+          ],
+        },
       ],
     },
   },
@@ -406,6 +544,7 @@ export default tseslint.config(
         'error',
         ...invariantSyntax,
         ...connectionOwnershipSyntax,
+        ...authLookupIdentifierSyntax,
         ...appsQuerySyntax,
       ],
     },
@@ -437,8 +576,37 @@ export default tseslint.config(
         'error',
         ...invariantSyntax,
         ...connectionOwnershipSyntax,
+        ...authLookupIdentifierSyntax,
         ...appsQuerySyntax,
         ...stripOnlySyntax,
+      ],
+    },
+  },
+
+  /* ---------------------------------------------------------------- *
+   * packages/permissions builds no queries either. Architecture seat
+   * ruling, M1-R (docs/briefs/M1-R-rbac.md): it is not on depcruise's
+   * kysely-is-allowlisted list, so a `tx.selectFrom(...)` reached through a
+   * transaction handle packages/database hands it via callback would be
+   * invisible to the module graph in exactly the way apps/**'s was — no
+   * import of kysely, no import of pg, just a parameter. The query bodies
+   * live in packages/database/src/rbac/*.ts; this package calls them.
+   *
+   * A separate block rather than folding this into the shared per-package
+   * block above: the auth lane is making the identical addition for
+   * packages/auth at the same time, and two edits adding their own block
+   * merge cleanly where two edits to the same array or object do not.
+   * ---------------------------------------------------------------- */
+  {
+    files: ['packages/permissions/src/**/*.ts'],
+    ignores: ['packages/permissions/src/**/*.spec.ts', 'packages/permissions/src/**/*.test.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        ...invariantSyntax,
+        ...connectionOwnershipSyntax,
+        ...stripOnlySyntax,
+        ...appsQuerySyntax,
       ],
     },
   },
