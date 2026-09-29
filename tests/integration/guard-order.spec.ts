@@ -61,13 +61,16 @@ describe('global guard order (app.module.ts): TenantGuard, then PermissionGuard'
     expect(callOrder).toEqual(['TenantGuard', 'PermissionGuard'])
   })
 
-  it('on an authenticated, permission-protected route with NO credentials, ' +
-    'TenantGuard rejects before PermissionGuard ever runs', async () => {
-    const res = await request(app.getHttpServer()).get('/api/audit')
-    expect(res.status).toBe(401)
-    // PermissionGuard is never invoked: had it run first (the wrong order),
-    // it would 401 on the missing req.auth without TenantGuard ever having
-    // been called at all, and this array would read the other way round.
-    expect(callOrder).toEqual(['TenantGuard'])
-  })
+  it(
+    'on an authenticated, permission-protected route with NO credentials, ' +
+      'TenantGuard rejects before PermissionGuard ever runs',
+    async () => {
+      const res = await request(app.getHttpServer()).get('/api/audit')
+      expect(res.status).toBe(401)
+      // PermissionGuard is never invoked: had it run first (the wrong order),
+      // it would 401 on the missing req.auth without TenantGuard ever having
+      // been called at all, and this array would read the other way round.
+      expect(callOrder).toEqual(['TenantGuard'])
+    },
+  )
 })

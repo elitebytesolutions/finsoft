@@ -14,7 +14,12 @@
  *                                 by application code (ADR-0013:51)
  */
 
-export { withGlobal, withTenant, withTenantAsPrincipal, TransactionScopeError } from './transaction.ts'
+export {
+  withGlobal,
+  withTenant,
+  withTenantAsPrincipal,
+  TransactionScopeError,
+} from './transaction.ts'
 export type { GlobalTx, TenantTx } from './transaction.ts'
 
 /*

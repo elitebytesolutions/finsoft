@@ -118,7 +118,7 @@ afterAll(async () => {
 })
 
 describe('the guard refuses a stale perm_ver claim', () => {
-  it('401s once users.version has moved past the token\'s snapshot', async () => {
+  it("401s once users.version has moved past the token's snapshot", async () => {
     const user = await createActiveUserFixture('PV1')
     const token = await loginAndGetToken(user)
 

@@ -57,7 +57,11 @@ const AUDIT_VIEW_WINDOW_SECONDS = 60
 
 function auditViewLayers(tenantId: string, userId: string): readonly ThrottleLayer[] {
   return [
-    { key: `audit:view:${tenantId}:${userId}`, limit: AUDIT_VIEW_LIMIT, windowSeconds: AUDIT_VIEW_WINDOW_SECONDS },
+    {
+      key: `audit:view:${tenantId}:${userId}`,
+      limit: AUDIT_VIEW_LIMIT,
+      windowSeconds: AUDIT_VIEW_WINDOW_SECONDS,
+    },
   ]
 }
 
@@ -112,7 +116,11 @@ export class AuditController {
     if (throttle.throttled) {
       res.set('Retry-After', String(Math.max(1, Math.ceil(throttle.retryAfterSeconds))))
       throw new HttpException(
-        { statusCode: 429, error: 'rate_limited', message: 'Too many audit reads. Try again later.' },
+        {
+          statusCode: 429,
+          error: 'rate_limited',
+          message: 'Too many audit reads. Try again later.',
+        },
         429,
       )
     }

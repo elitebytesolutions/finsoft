@@ -106,8 +106,9 @@ export class PermissionGuard implements CanActivate {
       throw new UnauthorizedException()
     }
 
-    const granted = await withTenantAsPrincipal({ tenantId: auth.tenantId, userId: auth.userId }, (tx) =>
-      resolvePermissions(tx, auth.userId),
+    const granted = await withTenantAsPrincipal(
+      { tenantId: auth.tenantId, userId: auth.userId },
+      (tx) => resolvePermissions(tx, auth.userId),
     )
     const missing = required.filter((code) => !granted.has(code))
 
