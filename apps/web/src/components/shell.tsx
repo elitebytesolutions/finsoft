@@ -175,6 +175,10 @@ const API_BACKED_ROUTES: string[] = [
   '/vouchers',
   '/vouchers/*',
   '/period-close',
+  // M4-W
+  '/customers',
+  '/customers/*',
+  '/admin-audit',
 ]
 
 function isApiBackedRoute(path: string): boolean {

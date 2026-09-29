@@ -17,6 +17,7 @@ import {
 } from '@finsoft/ui'
 import { useNavigate, useParams } from '@/lib/router'
 import { getJournal, listAccounts, postJournal, reverseJournal } from '@/lib/api/accounting-client'
+import { useAuth } from '@/lib/api/auth-context'
 import { useApiQuery } from '@/lib/api/use-api-query'
 import { useIdempotencyKey } from '@/lib/api/idempotency-key'
 import { postableJournalAccounts } from '@/lib/accounting/account-tree'
@@ -109,13 +110,17 @@ function VoucherDetailReady({
   onReversed: () => void
 }) {
   const navigate = useNavigate()
+  const { can } = useAuth()
   const [reverseOpen, setReverseOpen] = useState(false)
   const nameOf = (accountId: string) => {
     const a = accounts.find((x) => x.id === accountId)
     return a ? `${a.name} (${a.code})` : accountId
   }
   const isReversal = entry.reversalOf !== null
-  const canReverse = entry.status === 'POSTED' && !isReversal
+  // M4-W: `voucher.reverse` is a privileged permission (catalog.ts) — offered only to a
+  // holder, same UI-affordance-only reasoning as PeriodTable's Close/Reopen. The route's
+  // own 403 on POST /journals/:id/reverse is still the real gate.
+  const canReverse = entry.status === 'POSTED' && !isReversal && can('voucher.reverse')
 
   return (
     <>

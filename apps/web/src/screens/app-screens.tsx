@@ -61,6 +61,12 @@ import { MasterModal, ProductFormModal } from './master-form'
 import { EmployeeFormModal } from './employee-form'
 import { Button, Badge, PageHead, Kpi, Panel, SearchField, Modal, Table } from '@finsoft/ui'
 import { money } from '@finsoft/ui'
+import { useAuth } from '@/lib/api/auth-context'
+import { useApiQuery } from '@/lib/api/use-api-query'
+import { listAuditEvents } from '@/lib/api/audit-client'
+import type { AuditEvent, AuditPage } from '@/lib/api/audit-types'
+import { humanizeAction, actorLabel, entityLabel } from '@/lib/adapters/audit'
+import { todayIso } from '@/lib/date/local-date'
 
 export function Dashboard({
   go,
@@ -1655,21 +1661,7 @@ export function Admin({
           />
         </Panel>
       ) : tab === 'Audit log' ? (
-        <Panel title="Audit log" sub="Security-sensitive actions across the organisation">
-          <Table
-            headers={['Date', 'User', 'Action', 'Detail']}
-            rows={users.flatMap((u) =>
-              u.audit.map((a) => [
-                a.date,
-                <button className="linkable" onClick={() => navigate(`/admin/users/${u.id}`)}>
-                  {u.name}
-                </button>,
-                a.action,
-                a.detail,
-              ]),
-            )}
-          />
-        </Panel>
+        <AuditLogPanel />
       ) : (
         <Panel title={tab} sub="Administration records">
           <Table
@@ -1687,5 +1679,143 @@ export function Admin({
         </Panel>
       )}
     </>
+  )
+}
+
+/**
+ * The "Audit log" tab of `Admin`, wired to the real `GET /api/audit` (M4-W). The mock's
+ * `Panel` + `Table` structure stays; only the data source, and the filters/pagination the
+ * real contract needs, are new — audit-trail/README.md §2's FilterBar and cursor pager.
+ * Viewers hold no `audit.view` (a privileged permission, catalog.ts), so this checks
+ * `can('audit.view')` before ever calling the API and shows a Denied panel instead — never
+ * a blank table that quietly 403s and redirects (docs/design-system/04-states.md §5).
+ */
+function AuditLogPanel() {
+  const { can } = useAuth()
+  const allowed = can('audit.view')
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
+  const [action, setAction] = useState('')
+  const [entityType, setEntityType] = useState('')
+  const [actor, setActor] = useState('')
+  const [pages, setPages] = useState<AuditPage[]>([])
+
+  const { state, reload } = useApiQuery(
+    () =>
+      allowed
+        ? listAuditEvents({
+            from: from ? new Date(from).toISOString() : undefined,
+            to: to ? new Date(to).toISOString() : undefined,
+            action: action || undefined,
+            entityType: entityType || undefined,
+            actor: actor || undefined,
+            limit: 50,
+          })
+        : Promise.reject(new Error('denied')),
+    [allowed, from, to, action, entityType, actor],
+  )
+
+  useEffect(() => {
+    if (state.status === 'ready') setPages([state.data])
+  }, [state])
+
+  if (!allowed) {
+    return (
+      <Panel title="Audit log" sub="Security-sensitive actions across the organisation">
+        <div className="empty-state" role="alert">
+          Your role does not have permission to view the audit trail.
+        </div>
+      </Panel>
+    )
+  }
+
+  const lastPage = pages[pages.length - 1]
+  const items = pages.flatMap((p) => p.items)
+  const loadMore = () => {
+    if (!lastPage?.nextCursor) return
+    listAuditEvents({
+      from: from ? new Date(from).toISOString() : undefined,
+      to: to ? new Date(to).toISOString() : undefined,
+      action: action || undefined,
+      entityType: entityType || undefined,
+      actor: actor || undefined,
+      limit: 50,
+      cursor: lastPage.nextCursor,
+    }).then((page) => setPages((prev) => [...prev, page]))
+  }
+  const outcomeOf = (ev: AuditEvent): 'good' | 'warn' | 'danger' => {
+    const a = ev.action.toUpperCase()
+    if (a.includes('DENIED') || a.includes('FAIL')) return 'danger'
+    return 'good'
+  }
+
+  return (
+    <Panel title="Audit log" sub="Security-sensitive actions across the organisation, newest first">
+      <div className="toolbar" style={{ flexWrap: 'wrap', gap: 8 }}>
+        <label>
+          From{' '}
+          <input aria-label="From date" type="date" value={from} onChange={(e) => setFrom(e.target.value)} max={to || todayIso()} />
+        </label>
+        <label>
+          To{' '}
+          <input aria-label="To date" type="date" value={to} onChange={(e) => setTo(e.target.value)} max={todayIso()} />
+        </label>
+        <input
+          aria-label="Filter by action"
+          placeholder="Action (e.g. CUSTOMER_CREATED)"
+          value={action}
+          onChange={(e) => setAction(e.target.value)}
+        />
+        <input
+          aria-label="Filter by entity type"
+          placeholder="Entity type (e.g. customer)"
+          value={entityType}
+          onChange={(e) => setEntityType(e.target.value)}
+        />
+        <input
+          aria-label="Filter by actor id"
+          placeholder="Actor id"
+          value={actor}
+          onChange={(e) => setActor(e.target.value)}
+        />
+      </div>
+
+      {state.status === 'loading' && <div className="empty-state">Loading audit events…</div>}
+      {state.status === 'error' && (
+        <div className="empty-state" role="alert">
+          We could not load the audit trail.{' '}
+          <button className="linkable" onClick={reload}>
+            Try again
+          </button>
+        </div>
+      )}
+      {state.status === 'ready' && items.length === 0 && (
+        <div className="empty-state">
+          No audit events for {from || 'the start'} to {to || 'today'} with these filters.
+        </div>
+      )}
+      {state.status === 'ready' && items.length > 0 && (
+        <>
+          <Table
+            headers={['Timestamp', 'User', 'Action', 'Entity', 'Detail', 'Outcome']}
+            rows={items.map((ev) => [
+              <time dateTime={ev.occurredAt}>{ev.occurredAt.replace('T', ' ').slice(0, 19)}</time>,
+              actorLabel(ev.actorUserId),
+              humanizeAction(ev.action),
+              `${ev.entityType} · ${entityLabel(ev.entityId)}`,
+              humanizeAction(ev.action),
+              <Badge tone={outcomeOf(ev)}>{outcomeOf(ev) === 'danger' ? 'Denied' : 'Success'}</Badge>,
+            ])}
+          />
+          {lastPage?.nextCursor && (
+            <div style={{ textAlign: 'center', margin: '12px 0' }}>
+              <Button kind="secondary" onClick={loadMore}>
+                Load more
+              </Button>
+            </div>
+          )}
+        </>
+      )}
+    </Panel>
   )
 }

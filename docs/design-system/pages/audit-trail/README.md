@@ -8,6 +8,29 @@
 | **Prototype source** | `ui-prototype/src/App.tsx` (`Admin`, Audit log tab) |
 | **Posts to the ledger** | no — it **is** the record of everything that did |
 
+## API note — M4-W (2026-09-29)
+
+Wired to the real `GET /api/audit` (`apps/api/src/audit/audit.controller.ts`,
+`audit.view` — a privileged permission, `catalog.ts`). The "Audit log" tab of `Admin`
+(`apps/web/src/screens/app-screens.tsx`, `AuditLogPanel`) replaced its mock `users[].audit`
+table with the real, cursor-paginated feed: Timestamp · User (actor id, truncated — no
+user-directory lookup exists yet, see this lane's OBSERVED) · Action (humanized from the real
+`UPPER_SNAKE_CASE` code, e.g. `CUSTOMER_CREATED` → "Customer created") · Entity · Detail · Outcome
+(`good`/`danger` from the action name containing `DENIED`/`FAIL`). Filters (From/To, Action,
+Entity type, Actor id) and a "Load more" cursor pager were **added** — the mock had none. Users,
+Roles & permissions, Fiscal periods, Security and Active sessions tabs are untouched, still mock,
+out of this lane's scope.
+
+**Denied before it asks.** A caller without `audit.view` never issues the request — the panel
+checks `can('audit.view')` (`GET /api/me/permissions`) first and shows the Denied state directly,
+rather than calling the API and racing `apiFetch`'s global 403 → `/unauthorized` redirect (the
+same reasoning as this lane's `period-close`/`vouchers` fixes).
+
+**Not yet wired:** the KpiRow (Events / Financial mutations / Security events / Failed attempts —
+no aggregate endpoint exists), the event-detail Drawer (before/after diff — the real fields exist
+on `AuditEvent` but the drawer itself was not built this lane, given time), `Verify integrity`, and
+Export. Flagged as OBSERVED, not silently dropped.
+
 ## 1. Purpose
 
 Every financial mutation and every security-sensitive action, in order, attributable, immutable.

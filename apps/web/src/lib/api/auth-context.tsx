@@ -20,6 +20,7 @@ import { RotateCw, ShieldAlert } from 'lucide-react'
 import { Button } from '@finsoft/ui'
 import { usePathname, useNavigate } from '@/lib/router'
 import { logout as apiLogout, me } from './client'
+import { getMyPermissions } from './permissions-client'
 import { rawSearchParam, safeNextPath } from './safe-next-path'
 import { onForbidden } from './session'
 import { ApiError, type SessionTenant, type SessionUser } from './types'
@@ -32,6 +33,13 @@ interface AuthState {
   tenant: SessionTenant | null
   sessionId: string | null
   permissionVersion: number | null
+  /**
+   * The caller's effective permission codes (`GET /api/me/permissions`, S1) — `null` until
+   * the first load resolves, `[]` if the caller genuinely holds none OR the load itself
+   * failed (a UI affordance, so a transport hiccup here degrades to "show nothing" rather
+   * than blocking sign-in — see the comment on the fetch below).
+   */
+  permissions: string[] | null
   /** Set only when `status === 'error'` — a transport failure, not "no session". */
   errorMessage: string | null
 }
@@ -49,6 +57,13 @@ export interface AuthContextValue extends AuthState {
   syncAfterLogin: () => Promise<void>
   /** Calls `POST /auth/logout`, clears local state, and sends the user to /login. */
   signOut: () => Promise<void>
+  /**
+   * Whether the caller holds permission `code` (`packages/permissions/src/catalog.ts`).
+   * `false` while `permissions` is still `null` (nothing is offered before the real answer
+   * is known) — a UI affordance ONLY: hiding an action is a courtesy, the server's own
+   * `@RequirePermission` check on the route is the real gate (CLAUDE.md rule 18).
+   */
+  can: (code: string) => boolean
 }
 
 const initialState: AuthState = {
@@ -57,6 +72,7 @@ const initialState: AuthState = {
   tenant: null,
   sessionId: null,
   permissionVersion: null,
+  permissions: null,
   errorMessage: null,
 }
 
@@ -92,12 +108,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setState((prev) => ({ ...prev, status: 'loading', errorMessage: null }))
     try {
       const session = await me()
+      // Fetched in its own try/catch, deliberately separate from the one around `me()`
+      // above: S1 is a UI affordance (api-contract.md §2), and a transport hiccup on it
+      // must not fail the whole sign-in — it degrades to "offer nothing" (permissions: []),
+      // with every real gate still enforced server-side regardless.
+      let permissions: string[] = []
+      try {
+        const granted = await getMyPermissions()
+        permissions = Array.isArray(granted.permissions) ? granted.permissions : []
+      } catch {
+        permissions = []
+      }
       setState({
         status: 'authenticated',
         user: session.user,
         tenant: session.tenant,
         sessionId: session.sessionId,
         permissionVersion: session.permissionVersion,
+        permissions,
         errorMessage: null,
       })
     } catch (err) {
@@ -176,9 +204,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     navigate('/login', { replace: true })
   }, [navigate])
 
+  const can = useCallback(
+    (code: string) => state.permissions !== null && state.permissions.includes(code),
+    [state.permissions],
+  )
+
   const value = useMemo<AuthContextValue>(
-    () => ({ ...state, retry, syncAfterLogin: checkSession, signOut }),
-    [state, retry, checkSession, signOut],
+    () => ({ ...state, retry, syncAfterLogin: checkSession, signOut, can }),
+    [state, retry, checkSession, signOut, can],
   )
 
   // /login and /unauthorized render immediately regardless of session status — the login
