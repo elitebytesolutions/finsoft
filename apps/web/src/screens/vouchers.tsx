@@ -22,7 +22,9 @@ import { useMemo, useState, type FormEvent } from 'react'
 import {
   ArrowLeft,
   Banknote,
+  CalendarDays,
   Check,
+  ChevronDown,
   ChevronRight,
   CloudUpload,
   FileSpreadsheet,
@@ -583,16 +585,24 @@ function VoucherFormReady({ accounts }: { accounts: AccountDto[] }) {
             <h1>New Voucher</h1>
             <p>Enter a balanced voucher — every debit has a matching credit.</p>
           </div>
+          {/* Only Journal is real — a manual JV is the only thing POST /api/journals accepts in
+           * this release. The other five stay visible (never deleted) but disabled, not wired
+           * to a preset, per the coordinator's review: cash/bank JV presets were separately
+           * approved for the Cash Book screen (with a line preview, restricted picker and role-
+           * based account resolution — see cashbook.tsx), not for this generic entries table,
+           * which has no equivalent per-preset direction control to preview safely. */}
           <div className="vn-types">
             {typeCards.map((card) => {
               const Icon = card.icon
+              const enabled = card.type === 'JV'
               return (
                 <button
                   type="button"
                   key={card.type}
                   className={preset === card.type ? 'active' : ''}
-                  title="A preset label only — every voucher posts as a Journal Voucher in this release"
-                  onClick={() => setPreset(card.type)}
+                  disabled={!enabled}
+                  title={enabled ? undefined : 'Coming soon — every voucher posts as a Journal Voucher for now'}
+                  onClick={() => enabled && setPreset(card.type)}
                 >
                   <Icon />
                   <b>{card.label}</b>
@@ -620,18 +630,44 @@ function VoucherFormReady({ accounts }: { accounts: AccountDto[] }) {
             </span>
           </div>
           <div className="vn-grid4">
-            <Field label="Voucher date" htmlFor="jv-date" required error={fieldErrors.date}>
-              <input
-                id="jv-date"
-                type="date"
-                value={date}
-                max={todayIso()}
-                onChange={(e) => setDate(e.target.value)}
-              />
-            </Field>
-            <Field label="Reference" htmlFor="jv-reference" helper="Optional, up to 100 characters">
-              <TextInput id="jv-reference" value={reference} onChange={setReference} />
-            </Field>
+            <label className="vn-fld">
+              <span>
+                Voucher date<em>*</em>
+              </span>
+              <span className="vn-in">
+                <i>
+                  <CalendarDays />
+                </i>
+                <input
+                  id="jv-date"
+                  type="date"
+                  value={date}
+                  max={todayIso()}
+                  onChange={(e) => setDate(e.target.value)}
+                  aria-invalid={!!fieldErrors.date}
+                  aria-describedby={fieldErrors.date ? 'jv-date-error' : undefined}
+                />
+              </span>
+              {fieldErrors.date && (
+                <p className="field-message error" id="jv-date-error" role="alert">
+                  {fieldErrors.date}
+                </p>
+              )}
+            </label>
+            <label className="vn-fld">
+              <span>Reference</span>
+              <span className="vn-in">
+                <i>
+                  <ReceiptText />
+                </i>
+                <input
+                  id="jv-reference"
+                  value={reference}
+                  onChange={(e) => setReference(e.target.value)}
+                  placeholder="Optional"
+                />
+              </span>
+            </label>
             <label className="vn-fld">
               <span>Branch</span>
               <span className="vn-in sel">
@@ -699,57 +735,73 @@ function VoucherFormReady({ accounts }: { accounts: AccountDto[] }) {
                     <tr key={i}>
                       <td className="n">{i + 1}</td>
                       <td>
-                        <select
-                          aria-label={`Account line ${i + 1}`}
-                          value={line.accountId}
-                          onChange={(e) => setLine(i, { accountId: e.target.value })}
-                        >
-                          <option value="">Select an account</option>
-                          {accounts.map((a) => (
-                            <option key={a.id} value={a.id}>
-                              {a.name} ({a.code})
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                      <td>{account?.code ?? '—'}</td>
-                      <td>
-                        <input
-                          aria-label={`Memo line ${i + 1}`}
-                          value={line.memo}
-                          onChange={(e) => setLine(i, { memo: e.target.value })}
-                        />
+                        <span className="vn-in sel sm">
+                          <select
+                            aria-label={`Account line ${i + 1}`}
+                            value={line.accountId}
+                            onChange={(e) => setLine(i, { accountId: e.target.value })}
+                          >
+                            <option value="">Select an account</option>
+                            {accounts.map((a) => (
+                              <option key={a.id} value={a.id}>
+                                {a.name} ({a.code})
+                              </option>
+                            ))}
+                          </select>
+                          <ChevronDown className="chev" />
+                        </span>
                       </td>
                       <td>
-                        <input
-                          aria-label={`Debit line ${i + 1}`}
-                          inputMode="decimal"
-                          value={line.debit}
-                          onChange={(e) =>
-                            setLine(i, {
-                              debit: e.target.value,
-                              credit: e.target.value ? '' : line.credit,
-                            })
-                          }
-                        />
+                        <span className="vn-in sm">
+                          <input readOnly value={account?.code ?? '—'} />
+                        </span>
                       </td>
                       <td>
-                        <input
-                          aria-label={`Credit line ${i + 1}`}
-                          inputMode="decimal"
-                          value={line.credit}
-                          onChange={(e) =>
-                            setLine(i, {
-                              credit: e.target.value,
-                              debit: e.target.value ? '' : line.debit,
-                            })
-                          }
-                        />
+                        <span className="vn-in sm">
+                          <input
+                            aria-label={`Memo line ${i + 1}`}
+                            value={line.memo}
+                            onChange={(e) => setLine(i, { memo: e.target.value })}
+                          />
+                        </span>
                       </td>
                       <td>
-                        <select disabled title="Coming soon">
-                          <option>—</option>
-                        </select>
+                        <span className="vn-in sm num">
+                          <input
+                            aria-label={`Debit line ${i + 1}`}
+                            inputMode="decimal"
+                            value={line.debit}
+                            onChange={(e) =>
+                              setLine(i, {
+                                debit: e.target.value,
+                                credit: e.target.value ? '' : line.credit,
+                              })
+                            }
+                          />
+                        </span>
+                      </td>
+                      <td>
+                        <span className="vn-in sm num">
+                          <input
+                            aria-label={`Credit line ${i + 1}`}
+                            inputMode="decimal"
+                            value={line.credit}
+                            onChange={(e) =>
+                              setLine(i, {
+                                credit: e.target.value,
+                                debit: e.target.value ? '' : line.debit,
+                              })
+                            }
+                          />
+                        </span>
+                      </td>
+                      <td>
+                        <span className="vn-in sel sm">
+                          <select disabled title="Coming soon">
+                            <option>—</option>
+                          </select>
+                          <ChevronDown className="chev" />
+                        </span>
                       </td>
                       <td className="act">
                         <button
