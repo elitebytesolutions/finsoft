@@ -1,6 +1,7 @@
 import { assertIssuedTenantTx, type TenantTx } from '../transaction.ts'
 import { TenantContext } from '../tenant-context.ts'
 import { recordAudit } from '../audit/writer.ts'
+import { auditRequestId, auditVia, type AuditOrigin } from './audit-origin.ts'
 import { COA_TEMPLATE_ID, STANDARD_V1, type ControlKind } from './coa-standard-v1.ts'
 
 /*
@@ -67,6 +68,7 @@ export async function seedChartOfAccounts(
   tx: TenantTx,
   tenantId: string,
   template: readonly (typeof STANDARD_V1)[number][] = STANDARD_V1,
+  origin?: AuditOrigin,
 ): Promise<ReadonlyMap<string, string>> {
   assertIssuedTenantTx(tx)
 
@@ -84,6 +86,10 @@ export async function seedChartOfAccounts(
         'created provisioned owner, never with no author (rule 9).',
     )
   }
+
+  // Validated before any write, so a bad origin fails with nothing inserted.
+  const auditRequest = auditRequestId(origin)
+  const auditLabel = auditVia(origin)
 
   const idByCode = new Map<string, string>()
 
@@ -148,9 +154,13 @@ export async function seedChartOfAccounts(
     entityType: 'accounts',
     entityId: null,
     beforeJson: null,
-    afterJson: { template: COA_TEMPLATE_ID, accountCount: String(template.length) },
+    afterJson: {
+      template: COA_TEMPLATE_ID,
+      accountCount: String(template.length),
+      ...auditLabel,
+    },
     ip: null,
-    requestId: null,
+    requestId: auditRequest,
   })
 
   return idByCode

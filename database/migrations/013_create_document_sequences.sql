@@ -32,10 +32,22 @@
 -- explicit SELECT ... FOR UPDATE would: two concurrent callers for the same
 -- counter serialise on the conflicting row (including the first-ever call,
 -- where both race to INSERT and the loser waits on the winner's index entry
--- and then takes the UPDATE path). Gaps are acceptable (a rolled-back
--- posting consumes a number, README §4); duplicates are not — and the
+-- and then takes the UPDATE path). Duplicates are impossible, and the
 -- unique constraints on the numbered documents themselves
 -- (journal_entries_tenant_number_key) are the backstop.
+--
+-- GAPS — the true behaviour, not the SEQUENCE folklore. Unlike nextval(),
+-- which is non-transactional, this counter is an ordinary row: its advance
+-- is undone by the ROLLBACK of the transaction (or savepoint) that made it.
+-- A rejected or rolled-back posting therefore consumes NO number (README
+-- §4), and the kernel's replay path rolls back its numbering savepoint
+-- (packages/accounting-kernel/src/queries/journal-writes.ts), so a replay
+-- consumes none either. A gap can arise only if a transaction COMMITS a
+-- counter advance without committing the numbered document; the kernel
+-- never does, and the database does not itself forbid it. NON_NEGOTIABLES
+-- rule 12 tolerates gaps; this design does not produce them on any kernel
+-- path. The price is that concurrent posters of one series serialise on the
+-- counter row until COMMIT (LOCK_REGISTRY 5c).
 --
 -- `last_number` is the number most recently handed out. A new row is born
 -- with DEFAULT 1 — its insertion IS the assignment of number 1 — and every
@@ -46,7 +58,7 @@
 --
 -- Lock footprint: CREATE TABLE locks only its foreign-key targets (SHARE ROW
 -- EXCLUSIVE on tenants and users, transaction-scoped). The runtime row lock
--- is registered in docs/LOCK_REGISTRY.md at position 5b.
+-- is registered in docs/LOCK_REGISTRY.md at position 5c.
 --
 -- How this is reversed: it is not, in place (ADR-0013, forward-only).
 -- ---------------------------------------------------------------------------
@@ -96,7 +108,7 @@ CREATE UNIQUE INDEX document_sequences_tenant_series_key
 COMMENT ON TABLE document_sequences IS
   'Server-side document numbering (rule 12, K7). One counter per tenant/series/fiscal year (scope FISCAL_YEAR) or per tenant/series for life (scope TENANT), incremented via INSERT ... ON CONFLICT DO UPDATE (packages/database/src/accounting/sequences.ts) — never MAX(id)+1. Tenant-owned, RLS enabled and forced.';
 COMMENT ON COLUMN document_sequences.last_number IS
-  'The number most recently assigned. Gaps are acceptable (a rolled-back posting consumes a number); duplicates are not.';
+  'The number most recently assigned. Transactional: a rolled-back caller''s increment rolls back with it, so a rejected or rolled-back posting consumes no number. A gap arises only if a caller commits an increment without committing the numbered document (never on a kernel path). Duplicates are impossible.';
 
 -- The counter row is only ever advanced; the transition trigger keeps it
 -- that way for every role, not just finsoft_app's column grant.

@@ -1,6 +1,12 @@
 import { prepareTestDatabase, rawOn, teardownTestDatabase } from '@finsoft/database/testing'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { asTenant, createLedgerTenant, registerPartyRaw, stateOf } from './accounting-support.ts'
+import {
+  asTenant,
+  createLedgerTenant,
+  migrationClient,
+  registerPartyRaw,
+  stateOf,
+} from './accounting-support.ts'
 import { tables } from './catalog.ts'
 
 /*
@@ -99,5 +105,97 @@ describe('parties', () => {
       ),
     )
     expect(state).toBe('42501')
+  })
+
+  it('refuses UPDATE, DELETE and TRUNCATE to the OWNING migration role — the trigger, not the grants (42501)', async () => {
+    const t = await createLedgerTenant('PTO')
+    const id = await asTenant(t, (tx) => registerPartyRaw(tx, t, 'CUSTOMER'))
+
+    const client = migrationClient()
+    await client.connect()
+    try {
+      // finsoft_migration owns parties (roles.spec.ts): the privilege layer
+      // does not apply to it, so each refusal below is parties_forbid_mutation.
+      const owner = await client.query<{ owner: string }>(
+        `select relowner::regrole::text as owner from pg_class where oid = 'parties'::regclass`,
+      )
+      expect(owner.rows[0]?.owner).toBe('finsoft_migration')
+
+      for (const statement of [
+        `update parties set party_type = 'VENDOR' where id = '${id}'`,
+        `update parties set version = version + 1 where id = '${id}'`,
+        `delete from parties where id = '${id}'`,
+        // Listed first so ITS before-truncate trigger fires first; journal_lines
+        // is included only because the FK forbids truncating parties alone.
+        'truncate parties, journal_lines',
+      ]) {
+        await client.query('BEGIN')
+        try {
+          // Take both tables in the order a posting does (journal_lines, then
+          // parties via the FK check) so TRUNCATE's own parties-first
+          // acquisition can never deadlock (40P01) against a concurrent
+          // posting on a shared test cluster. Observed once without this.
+          await client.query('lock table journal_lines, parties in access exclusive mode')
+          await expect(client.query(statement), statement).rejects.toMatchObject({
+            code: '42501',
+            message: expect.stringMatching(/^parties is insert-only/),
+          })
+        } finally {
+          await client.query('ROLLBACK')
+        }
+      }
+    } finally {
+      await client.end()
+    }
+
+    const still = await asTenant(t, (tx) =>
+      rawOn<{ party_type: string }>(tx, 'select party_type from parties where id = $1', [id]),
+    )
+    expect(still).toEqual([{ party_type: 'CUSTOMER' }])
+  })
+
+  it('has all three forbid-mutation triggers ENABLED (tgenabled = O), not merely present', async () => {
+    // The owner can ALTER TABLE parties DISABLE TRIGGER; presence alone is
+    // not the assertion (same doctrine as audit_log, ADR-0020 Compliance).
+    const client = migrationClient()
+    await client.connect()
+    try {
+      const r = await client.query<{ tgname: string; tgenabled: string }>(
+        `select t.tgname, t.tgenabled
+           from pg_trigger t
+          where t.tgrelid = 'parties'::regclass and not t.tgisinternal
+          order by t.tgname`,
+      )
+      expect(r.rows.map((x) => x.tgname)).toEqual([
+        'parties_no_delete',
+        'parties_no_truncate',
+        'parties_no_update',
+      ])
+      for (const row of r.rows) {
+        expect(row.tgenabled, `${row.tgname} is not enabled ('O')`).toBe('O')
+      }
+    } finally {
+      await client.end()
+    }
+  })
+
+  it('carries the ADR-0026 Compliance 8 index exactly: (tenant_id, party_id, account_id) WHERE party_id IS NOT NULL', async () => {
+    const client = migrationClient()
+    await client.connect()
+    try {
+      const r = await client.query<{ indexname: string; indexdef: string }>(
+        `select indexname, indexdef from pg_indexes
+          where tablename = 'journal_lines' and indexdef ilike '%party_id%'`,
+      )
+      expect(r.rows).toEqual([
+        {
+          indexname: 'journal_lines_tenant_party_account_idx',
+          indexdef:
+            'CREATE INDEX journal_lines_tenant_party_account_idx ON public.journal_lines USING btree (tenant_id, party_id, account_id) WHERE (party_id IS NOT NULL)',
+        },
+      ])
+    } finally {
+      await client.end()
+    }
   })
 })

@@ -4,7 +4,7 @@ import { assertIssuedTenantTx, type TenantTx } from '../transaction.ts'
 /*
  * Server-side document numbering. NON_NEGOTIABLES rule 12, migration
  * 013_create_document_sequences.sql, PO decision K7, docs/LOCK_REGISTRY.md
- * position 5b.
+ * position 5c.
  *
  * Two scopes (013's header):
  *   FISCAL_YEAR  SERIES-FY-NNNNNN   JV-2027-000001   reset each fiscal year
@@ -18,8 +18,13 @@ import { assertIssuedTenantTx, type TenantTx } from '../transaction.ts'
  * application code. Concurrent callers for the same counter serialise on the
  * conflicting row: the first-ever pair races to INSERT, the loser waits on
  * the winner's index entry and then takes the UPDATE path against the
- * committed row. Duplicates are impossible; gaps (a rolled-back caller) are
- * accepted (README §4).
+ * committed row. Duplicates are impossible. The counter is a row, not a
+ * SEQUENCE, so its increment is transactional: a caller that rolls back (its
+ * transaction or an enclosing savepoint) returns its number, and a rejected
+ * or rolled-back posting consumes none (README §4). A gap arises only if a
+ * caller COMMITS an assignment without committing the numbered document —
+ * which is why these functions are lint-fenced to the kernel (eslint
+ * finsoft/kernel-only-numbering).
  */
 
 const SERIES_PATTERN = /^[A-Z]{2,10}$/

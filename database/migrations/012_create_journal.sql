@@ -29,7 +29,9 @@
 --      name/status columns. UNIQUE (tenant_id, id) and UNIQUE (tenant_id,
 --      party_type, id). RLS enabled and forced. INSERT-only: finsoft_app
 --      gets SELECT and INSERT, no UPDATE, no DELETE — a party's identity
---      and type never change.
+--      and type never change. (Council T3, DB R2: additionally a
+--      forbid-mutation trigger for UPDATE/DELETE/TRUNCATE on every role,
+--      mirroring journal_lines — below.)
 --   2. journal_lines references a party ONLY via composite FK
 --      (tenant_id, party_type, party_id) REFERENCES parties (tenant_id,
 --      party_type, id) MATCH SIMPLE ON DELETE RESTRICT. MATCH SIMPLE is
@@ -108,12 +110,21 @@
 -- The period check: a trigger on journal_entries, reading fiscal_periods
 --
 -- ADR-0012 / periods.md §7: no journal entry posts into a non-OPEN period,
--- for any actor. The trigger reads the period row FOR SHARE, which blocks on
--- a concurrent close's FOR UPDATE and re-reads the committed status when it
--- releases (periods.md §10: "the voucher either commits before the close or
--- is rejected after it"). The posting path has already taken the same FOR
--- SHARE earlier (findPeriodForDate, LOCK_REGISTRY position 5a), so on that
+-- for any actor, and no entry names a period its business date is not in.
+-- The trigger reads the period row FOR SHARE, which blocks on a concurrent
+-- close's FOR UPDATE and re-reads the committed status when it releases
+-- (journal-voucher.md edge cases: "the voucher either commits before the
+-- close or is rejected after it"; database/tests/accounting-triggers.spec.ts
+-- proves both orders). The posting path has already taken the same FOR
+-- SHARE earlier (findPeriodForDate, LOCK_REGISTRY position 5b), so on that
 -- path this re-lock is of a row the transaction already holds.
+--
+-- The date check (occurred_at within [period_start, period_end]) closes a
+-- bypass the status check alone leaves open: a caller pairing a CLOSED
+-- month's occurred_at with the next OPEN month's fiscal_period_id. Both
+-- columns are immutable after insert (journal_entries_enforce_immutability),
+-- so checking at INSERT is sufficient. Triggers bind every role, including
+-- the BYPASSRLS migration role.
 --
 -- ---------------------------------------------------------------------------
 -- Partitioning — flagged now, not built
@@ -147,9 +158,8 @@ CREATE TABLE parties (
 
   -- The standard audit columns (IMPLEMENTATION §11). updated_at/updated_by/
   -- version are kept for schema-wide consistency (schema.spec.ts's mandatory
-  -- column set) but can never change: there is no UPDATE grant, and a
-  -- referenced party's (tenant_id, party_type, id) is additionally pinned by
-  -- journal_lines' FK (ON UPDATE RESTRICT) for every role.
+  -- column set) but can never change: there is no UPDATE grant, and
+  -- parties_forbid_mutation (below) refuses UPDATE for every role.
   created_at  timestamptz NOT NULL DEFAULT now(),
   created_by  uuid        NOT NULL,
   updated_at  timestamptz NOT NULL DEFAULT now(),
@@ -167,7 +177,35 @@ CREATE TABLE parties (
 );
 
 COMMENT ON TABLE parties IS
-  'ADR-0026. Kernel-owned register of the parties a control-account journal line may name. INSERT-only; written only by packages/accounting-kernel (registerParty). Module tables (customers, vendors) reference it 1:1 by shared id. Tenant-owned, RLS enabled and forced.';
+  'ADR-0026. Kernel-owned register of the parties a control-account journal line may name. INSERT-only for every role (grants + parties_forbid_mutation); written only by packages/accounting-kernel (registerParty). Module tables (customers, vendors) reference it 1:1 by shared id. Tenant-owned, RLS enabled and forced.';
+
+-- ---------------------------------------------------------------------------
+-- INSERT-only: no UPDATE, no DELETE, no TRUNCATE, for any role including the
+-- owner. The same doctrine and shape as journal_lines_forbid_mutation below
+-- (and audit_log, 009): the privilege layer stops finsoft_app, this stops
+-- the migration role and anything else that owns or is granted the table.
+-- Disabling it needs ALTER TABLE by the owner, which parties.spec.ts's
+-- tgenabled assertion turns into a CI failure.
+-- ---------------------------------------------------------------------------
+CREATE FUNCTION parties_forbid_mutation() RETURNS trigger
+LANGUAGE plpgsql AS $fn$
+BEGIN
+  RAISE EXCEPTION 'parties is insert-only (ADR-0026 statement 1, rule 4): % is forbidden, on every role including the table owner. A party''s identity and type never change.', TG_OP
+    USING ERRCODE = 'insufficient_privilege';
+END;
+$fn$;
+
+CREATE TRIGGER parties_no_update
+  BEFORE UPDATE ON parties
+  FOR EACH ROW EXECUTE FUNCTION parties_forbid_mutation();
+
+CREATE TRIGGER parties_no_delete
+  BEFORE DELETE ON parties
+  FOR EACH ROW EXECUTE FUNCTION parties_forbid_mutation();
+
+CREATE TRIGGER parties_no_truncate
+  BEFORE TRUNCATE ON parties
+  FOR EACH STATEMENT EXECUTE FUNCTION parties_forbid_mutation();
 
 -- ===========================================================================
 -- journal_entries
@@ -357,8 +395,10 @@ CREATE FUNCTION journal_entries_enforce_open_period() RETURNS trigger
 LANGUAGE plpgsql AS $fn$
 DECLARE
   period_status text;
+  p_start       date;
+  p_end         date;
 BEGIN
-  SELECT status INTO period_status
+  SELECT status, period_start, period_end INTO period_status, p_start, p_end
     FROM fiscal_periods
    WHERE tenant_id = NEW.tenant_id AND id = NEW.fiscal_period_id
    FOR SHARE;
@@ -366,6 +406,11 @@ BEGIN
   IF NOT FOUND THEN
     RAISE EXCEPTION 'journal_entries: fiscal_period_id % does not belong to tenant % (PERIOD_NOT_FOUND)', NEW.fiscal_period_id, NEW.tenant_id
       USING ERRCODE = 'foreign_key_violation';
+  END IF;
+
+  IF NEW.occurred_at < p_start OR NEW.occurred_at > p_end THEN
+    RAISE EXCEPTION 'journal_entries: occurred_at % is outside period % [%, %] (entry %) — the period is resolved from the date, never chosen independently of it (periods.md §1)', NEW.occurred_at, NEW.fiscal_period_id, p_start, p_end, NEW.id
+      USING ERRCODE = 'check_violation';
   END IF;
 
   IF period_status <> 'OPEN' THEN
@@ -378,7 +423,7 @@ END;
 $fn$;
 
 COMMENT ON FUNCTION journal_entries_enforce_open_period() IS
-  'ADR-0012 / periods.md §7: no journal entry may post into a non-OPEN period, for any actor. FOR SHARE serialises against a concurrent close (FOR UPDATE) of the same period row — periods.md §10.';
+  'ADR-0012 / periods.md §1, §7: no journal entry may post into a non-OPEN period, or name a period that does not contain its occurred_at, for any actor including the migration role. FOR SHARE serialises against a concurrent close (FOR UPDATE) of the same period row — LOCK_REGISTRY 5b.';
 
 CREATE TRIGGER journal_entries_enforce_open_period
   BEFORE INSERT ON journal_entries
@@ -467,10 +512,17 @@ CREATE TABLE journal_lines (
 -- referencing-side index accounts' FK check needs on an UPDATE of
 -- (id, control_kind) — a prefix of the FK's columns is enough.
 CREATE INDEX journal_lines_tenant_account_idx ON journal_lines (tenant_id, account_id);
--- The party subledger (Invariant 9's GL half), and the referencing-side
--- index for parties' FK.
-CREATE INDEX journal_lines_tenant_party_idx
-  ON journal_lines (tenant_id, party_type, party_id) WHERE party_id IS NOT NULL;
+-- The party subledger (Invariant 9's GL half: a customer's balance on the
+-- AR control account) — exactly ADR-0026 Compliance row 8, built while the
+-- table is empty. Leads tenant_id, then party_id (the customer-ledger
+-- predicate), then account_id (the control account). It also serves the
+-- referencing-side lookup for journal_lines_party_fkey: (tenant_id, party_id)
+-- is a prefix and party_type is a residual filter on one party's rows — and
+-- parties rows are never updated or deleted, so that FK action check does
+-- not run in practice. The M3 customer-ledger EXPLAIN (ANALYZE, BUFFERS)
+-- against production-sized data is the Database seat's M3 gate.
+CREATE INDEX journal_lines_tenant_party_account_idx
+  ON journal_lines (tenant_id, party_id, account_id) WHERE party_id IS NOT NULL;
 
 COMMENT ON TABLE journal_lines IS
   'Debit/credit rows of a journal entry. Append-only from insert, for every role. Party and control kind are tied structurally (ADR-0026): composite FKs to accounts(tenant_id,id,control_kind) and parties(tenant_id,party_type,id), plus CHECKs. Tenant-owned, RLS enabled and forced.';

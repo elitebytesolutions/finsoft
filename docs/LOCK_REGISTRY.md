@@ -64,7 +64,7 @@ may not go backwards.
 | 3 | `stock_location_balances (tenant, product, location)`, ascending | row | xact | *not built* | ADR-0018 §4(b) |
 | 4 | `stock_batch_balances`, FEFO order | row | xact | *not built* | ADR-0018 §4(b) |
 | 5a | `journal_entries (tenant, id)` row of the entry being reversed, `FOR UPDATE` — reversal only | row | xact | `lockEntryForReversal`, `packages/database/src/accounting/journal.ts` | [ADR-0006](adr/ADR-0006-immutable-posted-transactions.md), reversal.md §8 |
-| 5b | `fiscal_periods` rows — the posting date's period `FOR SHARE`; or, for a period transition, **every** period of the tenant `FOR UPDATE` in ascending `period_start` | row | xact | `findPeriodForDate` / `lockTenantCalendar`, `packages/database/src/accounting/periods.ts`; re-read by triggers in migrations 011, 012 | [ADR-0012](adr/ADR-0012-fiscal-period-locking.md), periods.md §7, §10 |
+| 5b | `fiscal_periods` rows — the posting date's period `FOR SHARE`; or, for a period transition, **every** period of the tenant `FOR UPDATE` in ascending `period_start` | row | xact | Posting gate: `findPeriodForDate`, `packages/database/src/accounting/periods.ts`. Transitions: `periodEngine.close/reopen/lock` → `lockedTarget` (whole-calendar lock), `packages/accounting-kernel/src/queries/periods.ts`. Re-read by triggers in migrations 011, 012 | [ADR-0012](adr/ADR-0012-fiscal-period-locking.md), periods.md §7, journal-voucher.md edge cases ("commits before the close or is rejected after it"; both orders tested in `database/tests/accounting-triggers.spec.ts`) |
 | 5c | `document_sequences` counter row, via `INSERT ... ON CONFLICT DO UPDATE` on its scope's partial unique index | row | xact | `assignDocumentNumber` / `assignTenantDocumentNumber`, `packages/database/src/accounting/sequences.ts` | NON_NEGOTIABLES rule 12, README §4, K7 |
 | **6** | `pg_advisory_xact_lock(fold(tenant_id))` — **TERMINAL** | 1-arg | xact | migration 007, the audit append path | [ADR-0020](adr/ADR-0020-audit-hash-chain-canonicalisation.md) §5 |
 
@@ -154,10 +154,10 @@ in `findPeriodForDate`, which the engine already calls before numbering.
 concurrent reversals of E serialise; the loser then reads `REVERSED`. No
 other path locks a `journal_entries` row, so 5a cannot close a cycle.
 
-**Period transitions** (`closePeriod` / `reopenPeriod` / `lockPeriod`): 5b in
+**Period transitions** (`periodEngine.close` / `.reopen` / `.lock`, packages/accounting-kernel): 5b in
 its calendar form, then 6. Before touching the target, the transaction locks
 **every** period of the tenant `FOR UPDATE` in ascending `period_start`
-(`lockTenantCalendar`). Without that, migration 011's trigger locks siblings
+(`lockedTarget` in `packages/accounting-kernel/src/queries/periods.ts`). Without that, migration 011's trigger locks siblings
 `FOR SHARE` in directions that differ by transition — `close P2` holds P2 and
 wants P1 while `reopen P1` holds P1 and wants P2 — a `40P01` cycle. The
 single ascending pass makes a tenant's transitions strictly serial (rare,
@@ -166,11 +166,11 @@ period blocks a transition only for that posting's duration. A posting never
 waits on a transition while holding anything the transition needs: a
 transition takes no 5c lock and takes 6 only after all of 5b.
 
-**Callers outside `periods.ts`.** A raw `UPDATE fiscal_periods` (an admin
-script as the migration role) skips `lockTenantCalendar`. It stays *correct*
+**Callers outside `periodEngine`.** A raw `UPDATE fiscal_periods` (an admin
+script as the migration role) skips that calendar lock. It stays *correct*
 (the 011 trigger still enforces order) but can hit `40P01` against a
 concurrent transition. That is a safe failure, and a reason such scripts go
-through `periods.ts`.
+through `periodEngine` — which the ESLint fiscal-period rule enforces for code.
 
 ---
 

@@ -32,3 +32,4 @@
 export { createAuditChainAnchor } from './audit/anchor.ts'
 export { hasChartOfAccounts, seedChartOfAccounts } from './accounting/accounts.ts'
 export { createFiscalYear, hasFiscalYear } from './accounting/periods.ts'
+export type { AuditOrigin } from './accounting/audit-origin.ts'

@@ -91,7 +91,7 @@ export interface DocumentSequences {
   fiscal_year: number | null;
   id: Generated<string>;
   /**
-   * The number most recently assigned. Gaps are acceptable (a rolled-back posting consumes a number); duplicates are not.
+   * The number most recently assigned. Transactional: a rolled-back caller's increment rolls back with it, so a rejected or rolled-back posting consumes no number. A gap arises only if a caller commits an increment without committing the numbered document (never on a kernel path). Duplicates are impossible.
    */
   last_number: Generated<ColumnType<string, string, string>>;
   scope: string;

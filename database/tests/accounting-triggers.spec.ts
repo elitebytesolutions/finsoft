@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import { closePeriod, lockPeriod, reopenPeriod, type TenantTx } from '@finsoft/database'
+import { periodEngine } from '@finsoft/accounting-kernel'
+import { closeDatabase, openDatabase } from '@finsoft/database'
 import {
   prepareTestDatabase,
   rawOn,
   scalarOn,
   teardownTestDatabase,
+  TEST_TARGET,
 } from '@finsoft/database/testing'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
@@ -35,32 +37,21 @@ import {
 beforeAll(prepareTestDatabase, 60_000)
 afterAll(teardownTestDatabase)
 
-async function versionOf(tx: TenantTx, periodId: string): Promise<number> {
-  const v = await scalarOn<number>(tx, 'select version from fiscal_periods where id = $1', [
-    periodId,
-  ])
-  if (v === undefined) throw new Error(`no period ${periodId}`)
-  return v
-}
-
 function close(t: LedgerTenant, label: string) {
   return asTenant(t, async (tx) => {
-    const id = period(t, label)
-    return closePeriod(tx, t.tenantId, id, await versionOf(tx, id), t.ownerId)
+    return periodEngine.close(label, tx)
   })
 }
 
 function lock(t: LedgerTenant, label: string) {
   return asTenant(t, async (tx) => {
-    const id = period(t, label)
-    return lockPeriod(tx, t.tenantId, id, await versionOf(tx, id), t.ownerId)
+    return periodEngine.lock(label, tx)
   })
 }
 
 function reopen(t: LedgerTenant, label: string) {
   return asTenant(t, async (tx) => {
-    const id = period(t, label)
-    return reopenPeriod(tx, t.tenantId, id, await versionOf(tx, id), t.ownerId, 'test reopen')
+    return periodEngine.reopen(label, 'test reopen', tx)
   })
 }
 
@@ -211,6 +202,216 @@ describe('journal_entries: the period gate (migration 012, ADR-0012)', () => {
       ),
     ).toBe('23514')
   })
+
+  it("rejects a closed month's date filed under the next OPEN period's id (23514, Council T3 R1)", async () => {
+    const t = await createLedgerTenant('JPD')
+    await close(t, '2026-07')
+    // 2026-08 is OPEN; the date is in CLOSED July. Status alone would pass.
+    expect(
+      await stateOf(
+        postBalancedRaw(t, ...cashCapital(t), { periodLabel: '2026-08', occurredAt: '2026-07-10' }),
+      ),
+    ).toBe('23514')
+    // Both boundaries of the named period are inclusive; one day either side is not.
+    expect(
+      await stateOf(
+        postBalancedRaw(t, ...cashCapital(t), { periodLabel: '2026-08', occurredAt: '2026-09-01' }),
+      ),
+    ).toBe('23514')
+    for (const d of ['2026-08-01', '2026-08-31']) {
+      expect(
+        await stateOf(
+          postBalancedRaw(t, ...cashCapital(t), { periodLabel: '2026-08', occurredAt: d }),
+        ),
+      ).toBe('resolved')
+    }
+  })
+})
+
+/**
+ * The period gate as the BYPASSRLS, table-owning migration role. RLS is not
+ * what stops these; the trigger is. Each attempt runs in a transaction that
+ * is rolled back whatever happens.
+ */
+async function migrationRoleEntryInto(
+  t: LedgerTenant,
+  periodLabel: string,
+  occurredAt: string,
+): Promise<string | undefined> {
+  const client = migrationClient()
+  await client.connect()
+  try {
+    await client.query('BEGIN')
+    return await stateOf(
+      client.query(
+        `insert into journal_entries (tenant_id, entry_number, posting_rule, event, occurred_at,
+           fiscal_period_id, narration, source_type, source_id, idempotency_key,
+           request_fingerprint, created_by, updated_by)
+         values ($1, 'JV-2027-900001', 'JOURNAL_VOUCHER_POSTED@1', 'JOURNAL_VOUCHER_POSTED',
+           $2, $3, 'migration-role bypass attempt', 'journal_voucher', gen_random_uuid(),
+           $4, $5, $6, $6)`,
+        [
+          t.tenantId,
+          occurredAt,
+          period(t, periodLabel),
+          `mig-${randomUUID()}`,
+          'd'.repeat(64),
+          t.ownerId,
+        ],
+      ),
+    )
+  } finally {
+    await client.query('ROLLBACK').catch(() => undefined)
+    await client.end()
+  }
+}
+
+describe('the period gate binds the migration role too (Council T3 Acct R2 / DB R6)', () => {
+  it('refuses finsoft_migration an entry into a CLOSED period, and into a LOCKED one (23514)', async () => {
+    const t = await createLedgerTenant('JMB')
+    // Positive control: the same statement, same role, into an OPEN period, is accepted
+    // (at the INSERT; the deferred completeness check never runs because we roll back).
+    expect(await migrationRoleEntryInto(t, '2026-07', '2026-07-10')).toBe('resolved')
+
+    await close(t, '2026-07')
+    expect(await migrationRoleEntryInto(t, '2026-07', '2026-07-10')).toBe('23514')
+    await lock(t, '2026-07')
+    expect(await migrationRoleEntryInto(t, '2026-07', '2026-07-10')).toBe('23514')
+    // And the mismatched-period route around it, as the migration role.
+    expect(await migrationRoleEntryInto(t, '2026-08', '2026-07-10')).toBe('23514')
+  })
+})
+
+/**
+ * Poll until some backend in this database is waiting on a heavyweight lock.
+ * Reads pg_locks (ungranted entries), NOT pg_stat_activity: the latter hides
+ * wait_event_type for backends of other roles unless the viewer holds
+ * pg_read_all_stats, so finsoft_migration could never see finsoft_app wait.
+ */
+async function waitUntilSomeoneIsBlocked(): Promise<void> {
+  const client = migrationClient()
+  await client.connect()
+  try {
+    for (let i = 0; i < 200; i += 1) {
+      const r = await client.query<{ n: string }>(
+        // No join to pg_database: a row-lock waiter's ungranted lock is on
+        // the holder's transactionid, whose pg_locks.database is NULL.
+        // Measured: that was the ONLY ungranted row, and a database join
+        // hid it. database/tests runs files sequentially, so nothing else
+        // is in flight to produce a false positive.
+        `select count(*)::text as n from pg_locks l
+          where not l.granted and l.locktype in ('transactionid', 'tuple')
+            and l.pid <> pg_backend_pid()`,
+      )
+      if (r.rows[0]?.n !== '0') return
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+    throw new Error('no backend became blocked within 5s')
+  } finally {
+    await client.end()
+  }
+}
+
+function gate(): { open: () => void; wait: Promise<void> } {
+  let open!: () => void
+  const wait = new Promise<void>((resolve) => {
+    open = resolve
+  })
+  return { open, wait }
+}
+
+describe('posting vs close, concurrently (ADR-0012; journal-voucher.md: "commits before the close or is rejected after it")', () => {
+  // Two transactions must be in flight at once. On the default pool of ONE
+  // connection the second would queue for the connection rather than block
+  // on the row lock — nothing ever shows as blocked, the first never
+  // releases, and every later test in the file inherits the hang.
+  beforeAll(async () => {
+    await closeDatabase()
+    process.env['DATABASE_POOL_MAX'] = '4'
+    await openDatabase(TEST_TARGET)
+  })
+  afterAll(async () => {
+    await closeDatabase()
+    process.env['DATABASE_POOL_MAX'] = '1'
+    await openDatabase(TEST_TARGET)
+  })
+
+  it('POST FIRST: the close waits on the posting, and the posting commits into the period', async () => {
+    const t = await createLedgerTenant('JCP')
+    await close(t, '2026-07') // §4.1 order: August can close only after July.
+
+    const release = gate()
+    const inserted = gate()
+    let entryId: string | undefined
+    const posting = asTenant(t, async (tx) => {
+      entryId = await insertEntryRaw(tx, t, { periodLabel: '2026-08', occurredAt: '2026-08-20' })
+      await insertLinesRaw(tx, t, entryId, cashCapital(t))
+      inserted.open() // the trigger now holds 2026-08 FOR SHARE
+      await release.wait
+    })
+    await inserted.wait
+
+    let closeSettled = false
+    const closing = close(t, '2026-08').finally(() => {
+      closeSettled = true
+    })
+    try {
+      await waitUntilSomeoneIsBlocked()
+      expect(closeSettled, 'the close must wait on the posting').toBe(false)
+    } finally {
+      release.open()
+    }
+    await posting
+    expect((await closing).status).toBe('CLOSED')
+
+    const committed = await asTenant(t, (tx) =>
+      rawOn<{ fiscal_period_id: string }>(
+        tx,
+        'select fiscal_period_id from journal_entries where id = $1',
+        [entryId],
+      ),
+    )
+    expect(committed).toEqual([{ fiscal_period_id: period(t, '2026-08') }])
+  }, 20_000)
+
+  it('CLOSE FIRST: the posting waits on the close, then is rejected against the committed CLOSED status (23514)', async () => {
+    const t = await createLedgerTenant('JCC')
+    await close(t, '2026-07')
+
+    const release = gate()
+    const closed = gate()
+    const closing = asTenant(t, async (tx) => {
+      const result = await periodEngine.close('2026-08', tx)
+      closed.open() // CLOSED written, uncommitted; the calendar is held FOR UPDATE
+      await release.wait
+      return result
+    })
+    await closed.wait
+
+    let postSettled = false
+    const posting = stateOf(
+      postBalancedRaw(t, ...cashCapital(t), { periodLabel: '2026-08', occurredAt: '2026-08-20' }),
+    ).finally(() => {
+      postSettled = true
+    })
+    try {
+      await waitUntilSomeoneIsBlocked()
+      expect(postSettled, 'the posting must wait on the close').toBe(false)
+    } finally {
+      release.open()
+    }
+    expect((await closing).status).toBe('CLOSED')
+    expect(await posting).toBe('23514')
+
+    const count = await asTenant(t, (tx) =>
+      scalarOn<string>(
+        tx,
+        'select count(*)::text from journal_entries where fiscal_period_id = $1',
+        [period(t, '2026-08')],
+      ),
+    )
+    expect(count).toBe('0')
+  }, 20_000)
 })
 
 describe('journal balance and completeness, at COMMIT (Invariant 1)', () => {

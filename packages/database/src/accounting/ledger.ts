@@ -284,8 +284,10 @@ export async function partyControlBalance(
       join.onRef('je.id', '=', 'jl.entry_id').on('je.tenant_id', '=', tenantId),
     )
     // ADR-0026: the line carries its account's control kind and its party
-    // type, so no join to accounts — and (tenant_id, party_type, party_id)
-    // is journal_lines_tenant_party_idx exactly.
+    // type, so no join to accounts. Access path: journal_lines_tenant_party_
+    // account_idx (tenant_id, party_id, account_id) WHERE party_id IS NOT
+    // NULL — ADR-0026 Compliance 8; party_type/account_control are residual
+    // filters on one party's rows.
     .where('jl.tenant_id', '=', tenantId)
     .where('jl.party_type', '=', controlKind === 'AR' ? 'CUSTOMER' : 'VENDOR')
     .where('jl.party_id', '=', partyId)
