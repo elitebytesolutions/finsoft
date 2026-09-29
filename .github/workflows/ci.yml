@@ -102,7 +102,17 @@ jobs:
         env:
           GITHUB_REF: ${{ github.ref }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
-        run: node tools/ci/classify.mjs --github-output
+        # "full" is decided HERE from GitHub's own context expressions and
+        # passed in explicitly, rather than inferred inside the script from
+        # environment variables. The PR #22 develop run reported full=false with
+        # no changed files; deciding it in the workflow removes that failure
+        # mode, and the script now echoes the event and ref it received.
+        run: |
+          if [[ "${{ github.event_name }}" != "pull_request" && ( "${{ github.ref }}" == "refs/heads/develop" || "${{ github.ref }}" == refs/heads/release/* || "${{ github.event_name }}" == "schedule" || "${{ github.event_name }}" == "workflow_dispatch" ) ]]; then
+            node tools/ci/classify.mjs --github-output --full
+          else
+            node tools/ci/classify.mjs --github-output
+          fi
 
   # ------------------------------------------------------------------ #
   # Everything that needs no database. Runs first and fails fast: a lint
