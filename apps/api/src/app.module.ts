@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common'
 import { APP_GUARD, APP_INTERCEPTOR, DiscoveryModule } from '@nestjs/core'
+import { AccountingModule } from './accounting/accounting.module'
 import { AuditModule } from './audit/audit.module'
 import { PermissionGuard } from './common/permission.guard'
 import { RouteDecorationCheck } from './common/route-decoration.check'
@@ -36,7 +37,7 @@ import { AuthModule } from './auth/auth.module'
  * aborts `app.init()` rather than serving a single request.
  */
 @Module({
-  imports: [DiscoveryModule, HealthModule, AuthModule, AuditModule],
+  imports: [DiscoveryModule, HealthModule, AuthModule, AuditModule, AccountingModule],
   providers: [
     { provide: APP_GUARD, useClass: TenantGuard },
     { provide: APP_GUARD, useClass: PermissionGuard },

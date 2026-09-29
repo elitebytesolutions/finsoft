@@ -174,11 +174,16 @@ export {
   findEntryByIdempotencyKey,
   findEntryBySource,
   findLinesByEntryId,
+  JOURNAL_REGISTER_PAGE_MAX,
+  listJournalEntries,
   lockEntryForReversal,
   sqlstate as journalSqlstate,
   UNIQUE_VIOLATION,
 } from './accounting/journal.ts'
 export type {
+  JournalEntryCursor,
+  JournalEntryFilter,
+  JournalEntryPage,
   JournalEntryRow,
   JournalLineRow,
   NewJournalEntry,
