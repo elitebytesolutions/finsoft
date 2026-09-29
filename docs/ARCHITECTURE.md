@@ -88,7 +88,8 @@ finsoft/
 │   ├── customers/   vendors/   banking/    cheques/
 │   ├── products/    inventory/ procurement/ sales/
 │   ├── tax/         hr/        administration/
-│   └── ...          Each: domain/ · application/ · infrastructure/ · api/ · ui/
+│   └── ...          Each a workspace package @finsoft/<name>: domain/ · application/ ·
+│                    infrastructure/ · api/ · index.ts. No ui/ layer (ADR-0028)
 │
 ├── database/
 │   ├── migrations/          Immutable, numbered, forward-only
@@ -110,20 +111,33 @@ finsoft/
 
 ### Module internal structure
 
-Every module in `modules/` follows the same four-layer shape:
+Every module in `modules/` is a workspace package, `@finsoft/<name>`, shipping TypeScript source under Node type stripping, with its layers at the package root ([ADR-0028](adr/ADR-0028-module-packaging-and-runtime.md) statements 1–2):
 
 ```
 modules/sales/
 ├── domain/          Entities, value objects, domain services, invariants.
 │                    Pure TypeScript. No NestJS, no ORM, no HTTP.
-├── application/     Use cases / command handlers. Orchestrates domain +
-│                    kernels + repositories inside a transaction.
-├── infrastructure/  Repository implementations, external adapters, mappers.
-├── api/             Controllers, DTOs, guards, OpenAPI decorators.
-└── ui/              Route segments and components (re-exported to apps/web).
+├── application/     Use cases. Opens the one withTenant unit of work and
+│                    orchestrates domain + kernels + repositories inside it.
+│                    ports.ts declares repository interfaces; published.ts is
+│                    the only file another module may import.
+├── infrastructure/  Repository implementations (the module's own tables only).
+├── api/             Framework-free HTTP contract: zod request schemas, response
+│                    mappers into packages/shared-types, error-code → status table.
+└── index.ts         Composition root; the "." export for apps/api, apps/worker, tests.
 ```
 
-The dependency direction inside a module is strictly inward: `api → application → domain`, `infrastructure → domain`. `domain` imports nothing from the other three.
+There is **no `ui/` layer**. Screens live in `apps/web/src/screens`, and the response types they consume live in `packages/shared-types`. **Controllers live in `apps/api/src/<module>/`** as thin NestJS adapters. A controller validates input with the module's schema, calls one use case, maps the result, and declares `@RequirePermission`. It opens no transaction and constructs no query (ADR-0028 statement 4).
+
+Dependencies point inward (ADR-0028 statement 5):
+
+- `api → application → domain`;
+- `infrastructure → domain`, plus a **type-only** import of `application/ports.ts`;
+- `index.ts` → any of its own layers;
+- `application` never imports `infrastructure` or `api`. `domain` imports only its own files, `@finsoft/validation`, `@finsoft/shared-types`, and the `@finsoft/accounting-kernel` index **type-only**;
+- across modules, only `modules/<other>/application/published.ts` is reachable.
+
+A module may import the kernels' public index, `@finsoft/database` (root only, not in `domain/`), `@finsoft/validation`, `@finsoft/shared-types`, `@finsoft/reporting` and `@finsoft/observability` (not in `domain/`). It never imports `@finsoft/auth`, `@finsoft/permissions`, `@finsoft/ui` or `apps/**`. Enforced by `.dependency-cruiser.cjs` and `eslint.config.mjs`.
 
 ---
 
