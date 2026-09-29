@@ -116,3 +116,88 @@ export type { AuditEventFilter, AuditEventPage, AuditEventRow } from './audit/qu
 export { selectEffectivePermissionCodes } from './rbac/resolve-permissions.ts'
 export { insertSeededRoles } from './rbac/seed-roles.ts'
 export type { RoleSeed } from './rbac/seed-roles.ts'
+
+/*
+ * Accounting query surface. M2-A, ADR-0023 A1: "all query construction lives
+ * in packages/database ... the kernel calls those functions." Everything
+ * below is row access and SQL only — no posting rule, no rounding, no
+ * account-role policy. `seedChartOfAccounts`/`createFiscalYear` are
+ * deliberately NOT re-exported here a second time; they live only on
+ * `@finsoft/database/provisioning` (see that file's header for why).
+ */
+export {
+  findAccountsByIds,
+  listAllAccounts,
+  listPostableAccounts,
+  resolveAccountsByRole,
+} from './accounting/accounts.ts'
+export type { AccountRow } from './accounting/accounts.ts'
+
+export {
+  closePeriod,
+  findPeriodById,
+  findPeriodForDate,
+  lockPeriod,
+  PeriodAlreadyClosedError,
+  PeriodCloseOutOfOrderError,
+  PeriodConcurrentModificationError,
+  PeriodLockedError,
+  PeriodLockOutOfOrderError,
+  PeriodNotClosedError,
+  PeriodNotFoundError,
+  PeriodReopenOutOfOrderError,
+  reopenPeriod,
+} from './accounting/periods.ts'
+export type { FiscalPeriodRow, PeriodStatus } from './accounting/periods.ts'
+
+export { assignDocumentNumber, assignTenantDocumentNumber } from './accounting/sequences.ts'
+
+export {
+  constraintName as journalConstraintName,
+  findEntryById,
+  findEntryByIdempotencyKey,
+  findEntryBySource,
+  findLinesByEntryId,
+  lockEntryForReversal,
+  sqlstate as journalSqlstate,
+  UNIQUE_VIOLATION,
+} from './accounting/journal.ts'
+export type {
+  JournalEntryRow,
+  JournalLineRow,
+  NewJournalEntry,
+  NewJournalLine,
+} from './accounting/journal.ts'
+
+export {
+  accountLedgerLines,
+  LEDGER_PAGE_MAX,
+  accountOpeningBalance,
+  partyControlBalance,
+  trialBalanceRawSums,
+} from './accounting/ledger.ts'
+export type {
+  LedgerCursor,
+  LedgerLineRow,
+  LedgerPage,
+  TrialBalanceRow,
+} from './accounting/ledger.ts'
+
+export { COA_TEMPLATE_ID, STANDARD_V1 } from './accounting/coa-standard-v1.ts'
+export type { AccountTemplateEntry, ControlKind } from './accounting/coa-standard-v1.ts'
+
+export {
+  DEFAULT_FISCAL_YEAR_START_MONTH,
+  findTenantTimezone,
+} from './accounting/tenant-settings.ts'
+
+/*
+ * computeRequestFingerprint lives here, not in packages/accounting-kernel,
+ * because it needs node:crypto — dependency-cruiser's kernel-imports-only-
+ * allowed rule confines a kernel to packages/database, packages/validation
+ * and packages/shared-types, with NO node builtin escape hatch (ADR-0001,
+ * ARCHITECTURE §5). The canonicalisation itself has no SQL and no tenant
+ * concern; it lives on this package's surface purely so the kernel can reach
+ * it at all.
+ */
+export { computeRequestFingerprint, type FingerprintInput } from './accounting/fingerprint.ts'

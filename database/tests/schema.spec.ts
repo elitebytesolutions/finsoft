@@ -111,6 +111,29 @@ const MANDATORY_COLUMNS = [
  */
 const MANDATORY_COLUMN_SET_ALLOWLIST = new Set(['audit_log'])
 
+/**
+ * Tables owned by the kernels (ARCHITECTURE §5: kernels know nothing about
+ * feature modules). ADR-0026 statement 4: module tables reference kernel
+ * tables — `customers.id` -> `parties.id` — never the reverse. A kernel
+ * table with a foreign key into a module table would make the kernel's
+ * schema depend on a module's, the dependency direction dependency-cruiser
+ * forbids in TypeScript, reintroduced one layer down where nothing checks it.
+ *
+ * Adding a table here is an Architecture Guardian and Database Guardian
+ * decision — it is a claim that the table belongs to a kernel.
+ */
+const KERNEL_TABLES = new Set([
+  'accounts',
+  'fiscal_periods',
+  'parties',
+  'journal_entries',
+  'journal_lines',
+  'document_sequences',
+])
+
+/** Platform tables every tenant-owned table may reference: the tenant and the author. */
+const PLATFORM_TABLES = new Set(['tenants', 'users'])
+
 describe('schema', () => {
   beforeAll(prepareTestDatabase, 60_000)
   afterAll(teardownTestDatabase)
@@ -320,6 +343,30 @@ describe('schema', () => {
         `GLOBALLY_UNIQUE_INDEX_ALLOWLIST names ${e.table}.${e.index} (${e.adr}), which does not ` +
           `exist in the database. Remove the entry — an exemption must not outlive its index.`,
       ).toBe(true)
+    }
+  })
+
+  it('a kernel-owned table references only kernel or platform tables (ADR-0026 §4)', async () => {
+    const offenders = (await constraints())
+      .filter((c) => c.contype === 'f' && KERNEL_TABLES.has(c.table_name))
+      .filter(
+        (c) =>
+          c.referenced_table === null ||
+          !(KERNEL_TABLES.has(c.referenced_table) || PLATFORM_TABLES.has(c.referenced_table)),
+      )
+      .map((c) => `${c.table_name}.${c.constraint_name} -> ${String(c.referenced_table)}`)
+
+    expect(
+      offenders,
+      'a kernel table has a foreign key into a non-kernel, non-platform table. Module tables ' +
+        'reference kernel tables (customers.id -> parties.id), never the reverse (ADR-0026).',
+    ).toEqual([])
+  })
+
+  it('carries no stale entry in KERNEL_TABLES', async () => {
+    const names = new Set((await tables()).map((t) => t.table_name))
+    for (const table of KERNEL_TABLES) {
+      expect(names.has(table), `KERNEL_TABLES names "${table}", which does not exist`).toBe(true)
     }
   })
 
