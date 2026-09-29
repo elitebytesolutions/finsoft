@@ -1,5 +1,6 @@
+import { sql } from 'kysely'
 import { assertIssuedTenantTx, type TenantTx } from '../transaction.ts'
-import { calendarDate } from './calendar-date.ts'
+import { calendarDate, sqlDate } from './calendar-date.ts'
 import type { ControlKind } from './coa-standard-v1.ts'
 
 /*
@@ -266,4 +267,114 @@ export async function lockEntryForReversal(
     .forUpdate()
     .executeTakeFirst()
   return row ? mapEntry(row) : null
+}
+
+/** Hard ceiling on one register page. A caller asking for more gets this many. */
+export const JOURNAL_REGISTER_PAGE_MAX = 200
+
+/**
+ * Keyset cursor: the last row of the previous page, in register order
+ * (occurred_at DESC, created_at DESC, id DESC — newest first,
+ * docs/design-system/pages/voucher-register/README.md §2). Opaque to
+ * callers in spirit; apps/api base64-encodes it for the wire.
+ */
+export interface JournalEntryCursor {
+  readonly occurredAt: string
+  readonly createdAt: string
+  readonly id: string
+}
+
+export interface JournalEntryFilter {
+  readonly status?: 'POSTED' | 'REVERSED'
+  /** Inclusive, filters occurred_at. */
+  readonly from?: string
+  /** Inclusive, filters occurred_at. */
+  readonly to?: string
+}
+
+export interface JournalEntryPage {
+  readonly rows: readonly JournalEntryRow[]
+  /** Null when this page is the last. */
+  readonly next: JournalEntryCursor | null
+}
+
+/**
+ * The journal register: a page of entries for the caller's tenant, newest
+ * first, filtered and keyset-paginated with a hard maximum of
+ * JOURNAL_REGISTER_PAGE_MAX rows — an unbounded result set on a list read is
+ * rejected outright, same discipline as accountLedgerLines.
+ *
+ * Line detail is deliberately NOT included here (apps/api's contract,
+ * docs/design/M2/api-contract.md §2): the register lists entry headers, and
+ * a caller fetches one entry's lines via findLinesByEntryId /
+ * GET /api/journals/:id.
+ */
+export async function listJournalEntries(
+  tx: TenantTx,
+  tenantId: string,
+  filter: JournalEntryFilter,
+  page: { readonly limit: number; readonly after: JournalEntryCursor | null },
+): Promise<JournalEntryPage> {
+  assertIssuedTenantTx(tx)
+  const limit = Math.max(1, Math.min(Math.trunc(page.limit), JOURNAL_REGISTER_PAGE_MAX))
+
+  let query = tx.selectFrom('journal_entries').where('tenant_id', '=', tenantId)
+
+  if (filter.status !== undefined) query = query.where('status', '=', filter.status)
+  if (filter.from !== undefined) query = query.where('occurred_at', '>=', sqlDate(filter.from))
+  if (filter.to !== undefined) query = query.where('occurred_at', '<=', sqlDate(filter.to))
+
+  if (page.after !== null) {
+    const a = page.after
+    query = query.where(
+      sql<boolean>`(occurred_at, created_at, id) < (${a.occurredAt}::date, ${a.createdAt}::timestamptz, ${a.id}::uuid)`,
+    )
+  }
+
+  const rows = await query
+    .select([
+      'id',
+      'tenant_id',
+      'entry_number',
+      'posting_rule',
+      'event',
+      'occurred_at',
+      'fiscal_period_id',
+      'status',
+      'narration',
+      'reference',
+      'source_type',
+      'source_id',
+      'idempotency_key',
+      'request_fingerprint',
+      'reversal_of',
+      'reversal_reason',
+      'reversed_by',
+      'reversed_at',
+      'version',
+      // Microsecond-exact, UTC, as text — same reasoning as
+      // accountLedgerLines: a JS Date would truncate to milliseconds and the
+      // keyset cursor would skip or repeat rows.
+      sql<string>`to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.as(
+        'cursor_created_at',
+      ),
+    ])
+    .orderBy('occurred_at', 'desc')
+    .orderBy('created_at', 'desc')
+    .orderBy('id', 'desc')
+    .limit(limit + 1)
+    .execute()
+
+  const pageRows = rows.slice(0, limit)
+  const mapped = pageRows.map(mapEntry)
+  const lastRaw = pageRows.at(-1)
+  const next =
+    rows.length > limit && lastRaw !== undefined
+      ? {
+          occurredAt: calendarDate(lastRaw.occurred_at),
+          createdAt: lastRaw.cursor_created_at,
+          id: lastRaw.id,
+        }
+      : null
+  return { rows: mapped, next }
 }
