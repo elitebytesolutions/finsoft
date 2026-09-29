@@ -624,7 +624,7 @@ describe('seedSystemRoles', () => {
     await expect(attempt).rejects.toThrow(/does not match the transaction's tenant/)
   })
 
-  it('gives Owner every MVP permission, Accountant all but admin.user_manage, Viewer three read-only ones', async () => {
+  it('gives Owner every MVP permission, Accountant all but admin.user_manage and period.reopen, Viewer five read-only ones', async () => {
     const tenant = await seedTenant()
     const [owner, accountant, viewer] = await Promise.all([
       createUser(tenant),
@@ -641,6 +641,7 @@ describe('seedSystemRoles', () => {
 
     expect([...ownerPerms].sort()).toEqual(
       [
+        'account.view',
         'admin.user_manage',
         'audit.view',
         'customer.create',
@@ -648,6 +649,9 @@ describe('seedSystemRoles', () => {
         'invoice.create',
         'invoice.post',
         'payment.receive',
+        'period.close',
+        'period.reopen',
+        'period.view',
         'report.financial',
         'voucher.post',
         'voucher.reverse',
@@ -655,13 +659,22 @@ describe('seedSystemRoles', () => {
       ].sort(),
     )
 
+    // Council ruling 2026-09-29: reopening a closed period is Owner-only.
     expect(accountantPerms.has('admin.user_manage')).toBe(false)
+    expect(accountantPerms.has('period.reopen')).toBe(false)
     expect([...accountantPerms].sort()).toEqual(
-      [...ownerPerms].filter((c) => c !== 'admin.user_manage').sort(),
+      [...ownerPerms].filter((c) => c !== 'admin.user_manage' && c !== 'period.reopen').sort(),
     )
 
-    expect([...viewerPerms].sort()).toEqual(['customer.view', 'report.financial', 'voucher.view'])
+    expect([...viewerPerms].sort()).toEqual([
+      'account.view',
+      'customer.view',
+      'period.view',
+      'report.financial',
+      'voucher.view',
+    ])
     expect(viewerPerms.has('voucher.post')).toBe(false)
+    expect(viewerPerms.has('period.close')).toBe(false)
   })
 
   it('gives a user with no role assignment an empty set, not an error', async () => {
