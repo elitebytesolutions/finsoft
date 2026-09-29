@@ -60,6 +60,9 @@ describe('tools/seed/demo-tenants.mjs', () => {
     // this test actually proves is that run A leaves the database in the
     // correct shape, and that run B (guaranteed to follow an already-seeded
     // database) is a true no-op.
+    const freshDatabase = !(await withGlobal((tx) =>
+      tx.selectFrom('tenants').select('id').where('code', '=', 'BHATTI1').executeTakeFirst(),
+    ))
     const credentialsOut = join(credentialsDir, 'run-a.txt')
     const runA = await runSeed({}, ['--credentials-out', credentialsOut])
     expect(runA.stdout).toContain('BHATTI1 (Bhatti Demo 1)')
@@ -67,6 +70,8 @@ describe('tools/seed/demo-tenants.mjs', () => {
 
     // When run A generated passwords (a fresh database — every CI run), they
     // went to the file and never to stdout, and the file is 0600 on POSIX.
+    // A fresh database MUST have produced the file; never skip this silently.
+    if (freshDatabase) expect(existsSync(credentialsOut), 'credentials file written').toBe(true)
     if (existsSync(credentialsOut)) {
       const generated = readFileSync(credentialsOut, 'utf8')
         .split('\n')
@@ -80,8 +85,9 @@ describe('tools/seed/demo-tenants.mjs', () => {
       expect(generated.length).toBeGreaterThan(0)
       for (const password of generated) {
         expect(password.length).toBeGreaterThanOrEqual(16)
-        expect(runA.stdout).not.toContain(password)
-        expect(runA.stderr).not.toContain(password)
+        // Boolean checks, so a failure never echoes the password into the CI log.
+        expect(runA.stdout.includes(password), 'generated password leaked to stdout').toBe(false)
+        expect(runA.stderr.includes(password), 'generated password leaked to stderr').toBe(false)
       }
       if (process.platform !== 'win32') {
         expect(statSync(credentialsOut).mode & 0o777).toBe(0o600)
