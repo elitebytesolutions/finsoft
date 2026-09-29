@@ -272,6 +272,27 @@ const connectionOwnershipSyntax = [
  * be ABLE to reference the schema by name, whether in a raw SQL string or a
  * comment that later gets copy-pasted into real code.
  */
+/*
+ * M1-X, Council condition C5: TenantContext.run establishes the
+ * AsyncLocalStorage tenant scope, and is confined to the request-wide
+ * interceptor (apps/api/src/common/tenant-context.interceptor.ts),
+ * packages/auth, packages/database, tenant provisioning and the job runner
+ * (apps/worker). `apps/api` guards and services call `withTenantAsPrincipal`
+ * (packages/database) instead of `TenantContext.run` directly — see
+ * `permission.guard.ts`'s own header for why PermissionGuard in particular
+ * needs this (it runs as a GUARD, strictly before any interceptor, so it
+ * cannot depend on the interceptor having run yet).
+ */
+const tenantContextRunSyntax = [
+  {
+    selector: "CallExpression[callee.object.name='TenantContext'][callee.property.name='run']",
+    message:
+      'M1-X C5: TenantContext.run is confined to the request-scoping interceptor, packages/auth, ' +
+      'packages/database, tenant provisioning and the job runner. Call withTenantAsPrincipal ' +
+      '(packages/database) instead of establishing a context directly here.',
+  },
+]
+
 const authLookupIdentifierSyntax = [
   {
     selector: 'Literal[value=/auth_lookup/]',
@@ -539,6 +560,28 @@ export default tseslint.config(
   {
     files: ['apps/**/*.ts', 'apps/**/*.tsx'],
     ignores: ['apps/**/*.spec.ts', 'apps/**/*.test.ts', 'apps/worker/**'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        ...invariantSyntax,
+        ...connectionOwnershipSyntax,
+        ...authLookupIdentifierSyntax,
+        ...appsQuerySyntax,
+        ...tenantContextRunSyntax,
+      ],
+    },
+  },
+
+  /* ---------------------------------------------------------------- *
+   * The one apps/api file allowed to call TenantContext.run: the
+   * request-wide interceptor itself (M1-X C5). A later, more specific
+   * block — flat config REPLACES no-restricted-syntax per matching file
+   * rather than merging it, so this restates the full apps/** set minus
+   * tenantContextRunSyntax, the same pattern used elsewhere in this file
+   * for a narrower carve-out from a broader rule.
+   * ---------------------------------------------------------------- */
+  {
+    files: ['apps/api/src/common/tenant-context.interceptor.ts'],
     rules: {
       'no-restricted-syntax': [
         'error',

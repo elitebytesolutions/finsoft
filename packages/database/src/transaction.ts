@@ -1,7 +1,7 @@
 import { CompiledQuery, sql, type Transaction } from 'kysely'
 import { fullDb, globalDb } from './kysely.ts'
 import type { Database, GlobalDatabase } from './schema.ts'
-import { TenantContext } from './tenant-context.ts'
+import { TenantContext, type TenantPrincipal } from './tenant-context.ts'
 
 /*
  * withTenant and withGlobal. ADR-0013:80-104, ADR-0004:63-79.
@@ -113,6 +113,32 @@ export async function withTenant<T>(fn: (tx: TenantTx) => Promise<T>): Promise<T
       issuedTenant.add(trx)
       return fn(trx as TenantTx)
     })
+}
+
+/**
+ * Establish `TenantContext` from an already-verified `principal` and run
+ * `fn` inside a tenant transaction, in one call. M1-X / C5.
+ *
+ * WHY THIS EXISTS: the request-wide `TenantContext` is normally established
+ * once, by `apps/api/src/common/tenant-context.interceptor.ts`, for the
+ * whole request. But NestJS runs every GUARD before any interceptor — there
+ * is no way to interleave them — so a guard that itself needs a
+ * `TenantTx` (as `PermissionGuard` does, to resolve the caller's permission
+ * set) cannot rely on that interceptor: it has not run yet. `PermissionGuard`
+ * calls this instead of `TenantContext.run` directly, which is what keeps
+ * `TenantContext.run`'s call sites confined to this package, `packages/auth`,
+ * tenant provisioning and the job runner (the ESLint rule in
+ * `eslint.config.mjs`) — `apps/api` never calls `TenantContext.run` itself.
+ *
+ * `principal` MUST already be verified — this performs no verification of
+ * its own, exactly like `TenantContext.run`. The only legitimate source is
+ * `req.auth`, set by `TenantGuard` from a signature-checked JWT claim.
+ */
+export async function withTenantAsPrincipal<T>(
+  principal: TenantPrincipal,
+  fn: (tx: TenantTx) => Promise<T>,
+): Promise<T> {
+  return TenantContext.run(principal, () => withTenant(fn))
 }
 
 /* ------------------------------------------------------------------ *

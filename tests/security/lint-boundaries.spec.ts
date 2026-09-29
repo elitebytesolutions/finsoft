@@ -191,6 +191,53 @@ describe('TenantContext is forbidden in login.ts and refresh.ts (architecture re
   })
 })
 
+describe('TenantContext.run is confined to five places (M1-X, Council C5)', () => {
+  it('catches TenantContext.run in an ordinary apps/api file', async () => {
+    const messages = await messagesFor(
+      'apps/api/src/thing.ts',
+      `import { TenantContext } from '@finsoft/database'
+       export function use() { return TenantContext.run({ tenantId: 'x', userId: null }, () => 1) }`,
+    )
+    expect(matching(messages, 'M1-X C5')).toHaveLength(1)
+  })
+
+  it('leaves the request-wide interceptor alone, the one apps/api file allowed to call it', async () => {
+    const messages = await messagesFor(
+      'apps/api/src/common/tenant-context.interceptor.ts',
+      `import { TenantContext } from '@finsoft/database'
+       export function use() { return TenantContext.run({ tenantId: 'x', userId: null }, () => 1) }`,
+    )
+    expect(matching(messages, 'M1-X C5')).toEqual([])
+  })
+
+  it('leaves packages/auth alone, an allowed caller', async () => {
+    const messages = await messagesFor(
+      'packages/auth/src/thing.ts',
+      `import { TenantContext } from '@finsoft/database'
+       export function use() { return TenantContext.run({ tenantId: 'x', userId: null }, () => 1) }`,
+    )
+    expect(matching(messages, 'M1-X C5')).toEqual([])
+  })
+
+  it('leaves packages/database alone, an allowed caller', async () => {
+    const messages = await messagesFor(
+      'packages/database/src/thing.ts',
+      `import { TenantContext } from './tenant-context.ts'
+       export function use() { return TenantContext.run({ tenantId: 'x', userId: null }, () => 1) }`,
+    )
+    expect(matching(messages, 'M1-X C5')).toEqual([])
+  })
+
+  it('leaves the job runner alone, an allowed caller', async () => {
+    const messages = await messagesFor(
+      'apps/worker/src/thing.ts',
+      `import { TenantContext } from '@finsoft/database'
+       export function use() { return TenantContext.run({ tenantId: 'x', userId: null }, () => 1) }`,
+    )
+    expect(matching(messages, 'M1-X C5')).toEqual([])
+  })
+})
+
 describe('auth_lookup is restricted to packages/database (Architecture seat A1)', () => {
   it('catches the identifier in a string literal outside packages/database', async () => {
     const messages = await messagesFor(

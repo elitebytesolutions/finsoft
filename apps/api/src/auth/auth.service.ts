@@ -11,7 +11,6 @@ import {
   type RefreshResult,
 } from '@finsoft/auth'
 import { getAuthenticatedProfile } from '@finsoft/database/auth'
-import { TenantContext, type TenantPrincipal } from '@finsoft/database'
 import type { AuthContext } from '@finsoft/shared-types'
 import type { JWK } from 'jose'
 
@@ -53,8 +52,14 @@ export class AuthService {
     sessionId: string
     permissionVersion: number
   } | null> {
-    const principal: TenantPrincipal = { tenantId: auth.tenantId, userId: auth.userId }
-    const profile = await TenantContext.run(principal, () => getAuthenticatedProfile(auth.userId))
+    /*
+     * M1-X, C5: no TenantContext.run here. TenantContextInterceptor already
+     * established the request-wide tenant scope, from the same req.auth,
+     * before this method's handler ran — re-establishing it here would be
+     * redundant (apps/api never calls TenantContext.run directly; see the
+     * ESLint rule in eslint.config.mjs).
+     */
+    const profile = await getAuthenticatedProfile(auth.userId)
     if (!profile) return null
     return { ...profile, sessionId: auth.sessionId, permissionVersion: auth.permissionVersion }
   }

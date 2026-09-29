@@ -15,6 +15,7 @@ import {
 import type { Request, Response } from 'express'
 import { HashingQueueFullError, ThrottleUnavailableError } from '@finsoft/auth'
 import { logCommittedBusinessEvent } from '@finsoft/observability'
+import { AuthenticatedOnly } from '../common/authenticated-only.decorator'
 import { Public } from '../common/tenant.guard'
 import { ZodValidationPipe } from '../common/zod-validation.pipe'
 import { AuthService } from './auth.service'
@@ -186,6 +187,7 @@ export class AuthController {
     }
   }
 
+  @AuthenticatedOnly()
   @Post('logout')
   @HttpCode(204)
   async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response): Promise<void> {
@@ -206,6 +208,7 @@ export class AuthController {
     clearRefreshCookie(res)
   }
 
+  @AuthenticatedOnly()
   @Get('me')
   async me(@Req() req: Request) {
     const auth = req.auth

@@ -7,7 +7,7 @@
 - **Decisions needed** name the decider and the date asked; each closes within 2 working days.
 - **Demo ready** holds only workflows running against the real API on staging. Mock screens never go here.
 
-*Last updated: 2026-09-27 (M1-000f: ADR-0025 Accepted, with the Database/Security seat signed; ADR-0023's conflict notice replaced by the permanent scope notice; TD-006 booked).*
+*Last updated: 2026-09-28 (Product Owner: demos held per-increment rather than on a fixed weekly day; M1 exit row restated as "Demo 1 = when M1-X + Web are merged and verified on staging"). Previously 2026-09-27 (M1-000f: ADR-0025 Accepted, with the Database/Security seat signed; ADR-0023's conflict notice replaced by the permanent scope notice; TD-006 booked).*
 
 ---
 
@@ -29,7 +29,7 @@
 | ID | Item | Tier | Seat |
 |---|---|---|---|
 | **M2-000 Posting-rules spec** | `docs/posting-rules/` — standard COA (`standard-v1`), JV, reversal, periods, ledger + trial balance, service sale, customer receipt · golden scenarios P01–P10 in `tests/accounting/golden/`. Documents only. **In review** on `feature/M2-000-posting-rules-spec` | T3 | Accounting (author) · Architecture (event surface, hand-offs in `docs/posting-rules/README.md` §5) |
-| **M1-X Exit** | W1-006 exit suite — authorised access succeeds, cross-tenant fails, at API and SQL · seed for the demo tenants `BHATTI1` / `BHATTI2` · **demo 1** (login into each tenant on staging) | T2 | Database/Security |
+| **M1-X Exit** | W1-006 exit suite — authorised access succeeds, cross-tenant fails, at API and SQL · seed for the demo tenants `BHATTI1` / `BHATTI2` · **Demo 1 = when M1-X + Web are merged and verified on staging** | T2 | Database/Security |
 
 Then **M2** accounting core · **M3** customers, service invoice, receipts · **M4** API-backed journey + Product Owner demo ([IMPLEMENTATION.md](IMPLEMENTATION.md) §13).
 
@@ -61,8 +61,9 @@ Then **M2** accounting core · **M3** customers, service invoice, receipts · **
 
 | Date | Decider | Decision |
 |---|---|---|
+| 2026-09-28 | **Product Owner** | **Demos are held when each increment is complete (M1, then M2, …), not on a fixed weekly day.** Supersedes the 2026-09-27 "Weekly demo day: Monday" row below (kept, marked superseded) |
 | 2026-09-27 | **Council — Architecture + `devops-guardian`**, Security seat concurring | **Refresh-cookie prefix; the ADR-0023 *Open* gate is lifted.** Staging: `__Host-finsoft_rt`, `Path=/`, because `sslip.io` is not on the Public Suffix List. Production: `__Secure-finsoft_rt`, `Path=/api/auth`, provided no untrusted host shares its registrable domain (otherwise `__Host-` there too), confirmed by `devops-guardian` when the domain is chosen. Recorded in the [ADR-0023](adr/ADR-0023-pre-tenant-authentication-reads.md) addendum |
-| 2026-09-27 | **Product Owner** | **Weekly demo day: Monday.** The weekly status page (`docs/status/YYYY-Www.md`) is written the day before, Sunday |
+| ~~2026-09-27~~ | ~~**Product Owner**~~ | ~~**Weekly demo day: Monday.** The weekly status page (`docs/status/YYYY-Www.md`) is written the day before, Sunday~~ — **superseded 2026-09-28** (see row above) |
 | 2026-09-27 | **Council — Architecture** | ADR-0023 addendum: **A1 widened** (every auth and RBAC query body in `packages/database`), **A4 withdrawn** (no ADR-0013 extension), **A5 delivered** (head notices on ADR-0009 and ADR-0004) |
 | 2026-09-27 | **Product Owner** | **Demo tenants: `bhatti1` and `bhatti2`** — tenant codes; staging demo data only. Stored as `BHATTI1` / `BHATTI2`: `tenants.code` is `^[A-Z][A-Z0-9_]{1,15}$` (`001_create_tenants.sql:43`) and the login form upper-cases input (ADR-0023 §5), so users may type either case |
 | 2026-09-27 | **Council — Architecture + Database/Security**, Security seat concurring | [ADR-0025](adr/ADR-0025-login-read-and-write-transactions.md) Accepted. Login read and write are separate transactions, both via `withResolvedTenant`, and the write re-asserts user status, the verified `password_hash`, tenant identity and tenant status. Supersedes ADR-0023:191 only. The test-only hooks are booked as [TD-006](TECH_DEBT.md) |
