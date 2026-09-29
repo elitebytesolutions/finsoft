@@ -6,6 +6,7 @@ import type { NextFunction, Request, Response } from 'express'
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { listAuditEvents, TenantContext, withTenant } from '@finsoft/database'
+import { documentNumbers, registerParty } from '@finsoft/accounting-kernel'
 import {
   migrateTestDatabase,
   prepareTestDatabase,
@@ -92,6 +93,31 @@ function idemKey(): string {
   return `cust-test-${keyCounter}-${Date.now()}`
 }
 
+/**
+ * S5: "a cross-tenant id returns the same 404 as a missing one" — compared
+ * on everything the ERROR carries (statusCode, error, message, details),
+ * never on `path`/`timestamp` (apps/api/src/common/all-exceptions.filter.ts),
+ * which legitimately differ between two different requests and are not
+ * part of what "the same answer" means here.
+ *
+ * `a`/`b` also each carry the id THAT request named (`message` and
+ * `details.customerId` legitimately echo it back, and the unknown-id and
+ * cross-tenant-id cases are necessarily two DIFFERENT id values) — those
+ * are normalised to a shared placeholder before comparing, so this proves
+ * the response SHAPE and TEMPLATE are identical, which is what "the same
+ * 404" means, not that two different ids serialise to the same bytes.
+ */
+function sameErrorBody(
+  a: { readonly body: Record<string, unknown>; readonly id: string },
+  b: { readonly body: Record<string, unknown>; readonly id: string },
+): void {
+  const normalize = (input: { body: Record<string, unknown>; id: string }) => {
+    const { path: _path, timestamp: _timestamp, ...rest } = input.body
+    return JSON.parse(JSON.stringify(rest).split(input.id).join('<ID>')) as unknown
+  }
+  expect(normalize(a)).toEqual(normalize(b))
+}
+
 beforeAll(async () => {
   await prepareTestDatabase()
   await migrateTestDatabase()
@@ -158,6 +184,36 @@ describe('POST /api/customers', () => {
     expect(secondN).toBe(firstN + 1)
   })
 
+  it('Accounting seat C3 (rule 12): a rollback AFTER the CUST number is assigned consumes no number', async () => {
+    const tenant = await createCustomersTenant('MCPC')
+
+    // Replicates CreateCustomer's own first two steps — registerParty then
+    // documentNumbers.next(tx, { series: 'CUST' }) — the SAME kernel calls
+    // the real use case makes, then forces a rollback instead of an INSERT.
+    // If the counter's advance were not transactional, the number this
+    // assigns (CUST-000001) would be "spent" and the next real create below
+    // would get CUST-000002 — a gap, which rule 12 forbids.
+    const rollbackError = new Error('deliberate rollback after number assignment')
+    await expect(
+      runAs({ tenantId: tenant.tenantId, userId: tenant.ownerId }, () =>
+        withTenant(async (tx) => {
+          await registerParty(tx, 'CUSTOMER')
+          await documentNumbers.next(tx, { series: 'CUST' })
+          throw rollbackError
+        }),
+      ),
+    ).rejects.toBe(rollbackError)
+
+    const res = await request(app.getHttpServer())
+      .post('/api/customers')
+      .set(authHeaders(tenant.tenantId, tenant.ownerId))
+      .set('Idempotency-Key', idemKey())
+      .send(createBody({ name: 'First Real Customer' }))
+      .expect(201)
+
+    expect(res.body.code).toBe('CUST-000001')
+  })
+
   it('rejects a request with no Idempotency-Key header', async () => {
     await request(app.getHttpServer())
       .post('/api/customers')
@@ -212,6 +268,39 @@ describe('POST /api/customers', () => {
       .send(createBody({ name: 'Different Name' }))
       .expect(409)
     expect(res.body.error).toBe('idempotency_key_reused')
+  })
+
+  it('two truly concurrent creates with the same key never 500, and produce one customer (S5)', async () => {
+    const key = idemKey()
+    const body = createBody({ name: 'Concurrent Customer' })
+
+    const [first, second] = await Promise.all([
+      request(app.getHttpServer())
+        .post('/api/customers')
+        .set(asOwner(alpha))
+        .set('Idempotency-Key', key)
+        .send(body),
+      request(app.getHttpServer())
+        .post('/api/customers')
+        .set(asOwner(alpha))
+        .set('Idempotency-Key', key)
+        .send(body),
+    ])
+
+    for (const res of [first, second]) {
+      expect([200, 201]).toContain(res.status)
+    }
+    expect(second.body.id).toBe(first.body.id)
+    expect(second.body.code).toBe(first.body.code)
+
+    // Exactly one row, not two — the race resolved to a replay, not a
+    // second INSERT that happened to also succeed.
+    const rows = await runAs({ tenantId: alpha.tenantId, userId: alpha.ownerId }, () =>
+      withTenant((tx) =>
+        tx.selectFrom('customers').select('id').where('id', '=', first.body.id).execute(),
+      ),
+    )
+    expect(rows).toHaveLength(1)
   })
 
   it('writes a customer.created audit record', async () => {
@@ -344,7 +433,10 @@ describe('GET /api/customers/:id', () => {
       .set(asOwner(alpha))
       .expect(404)
 
-    expect(crossTenant.body.error).toBe(unknown.body.error)
+    sameErrorBody(
+      { body: crossTenant.body, id: created.body.id },
+      { body: unknown.body, id: '00000000-0000-0000-0000-000000000000' },
+    )
   })
 })
 
@@ -422,7 +514,7 @@ describe('PATCH /api/customers/:id', () => {
       .expect(403)
   })
 
-  it("404s for another tenant's id", async () => {
+  it("404s for another tenant's id, with the SAME body as an unknown id (S5)", async () => {
     const betaCustomer = (
       await request(app.getHttpServer())
         .post('/api/customers')
@@ -432,11 +524,21 @@ describe('PATCH /api/customers/:id', () => {
         .expect(201)
     ).body
 
-    await request(app.getHttpServer())
+    const unknown = await request(app.getHttpServer())
+      .patch('/api/customers/00000000-0000-0000-0000-000000000000')
+      .set(asOwner(alpha))
+      .send({ version: 0, name: 'Should not apply' })
+      .expect(404)
+    const crossTenant = await request(app.getHttpServer())
       .patch(`/api/customers/${betaCustomer.id}`)
       .set(asOwner(alpha))
       .send({ version: 0, name: 'Should not apply' })
       .expect(404)
+
+    sameErrorBody(
+      { body: crossTenant.body, id: betaCustomer.id },
+      { body: unknown.body, id: '00000000-0000-0000-0000-000000000000' },
+    )
   })
 })
 
@@ -524,7 +626,7 @@ describe('POST /api/customers/:id/deactivate and /reactivate', () => {
       .expect(403)
   })
 
-  it("404s for another tenant's id, for both routes (S5)", async () => {
+  it("404s for another tenant's id, for both routes, with the SAME body as an unknown id (S5)", async () => {
     const betaCustomer = (
       await request(app.getHttpServer())
         .post('/api/customers')
@@ -534,16 +636,35 @@ describe('POST /api/customers/:id/deactivate and /reactivate', () => {
         .expect(201)
     ).body
 
-    await request(app.getHttpServer())
+    const unknownDeactivate = await request(app.getHttpServer())
+      .post('/api/customers/00000000-0000-0000-0000-000000000000/deactivate')
+      .set(asOwner(alpha))
+      .send({ version: 0 })
+      .expect(404)
+    const crossTenantDeactivate = await request(app.getHttpServer())
       .post(`/api/customers/${betaCustomer.id}/deactivate`)
       .set(asOwner(alpha))
       .send({ version: 0 })
       .expect(404)
-    await request(app.getHttpServer())
+    sameErrorBody(
+      { body: crossTenantDeactivate.body, id: betaCustomer.id },
+      { body: unknownDeactivate.body, id: '00000000-0000-0000-0000-000000000000' },
+    )
+
+    const unknownReactivate = await request(app.getHttpServer())
+      .post('/api/customers/00000000-0000-0000-0000-000000000000/reactivate')
+      .set(asOwner(alpha))
+      .send({ version: 0 })
+      .expect(404)
+    const crossTenantReactivate = await request(app.getHttpServer())
       .post(`/api/customers/${betaCustomer.id}/reactivate`)
       .set(asOwner(alpha))
       .send({ version: 0 })
       .expect(404)
+    sameErrorBody(
+      { body: crossTenantReactivate.body, id: betaCustomer.id },
+      { body: unknownReactivate.body, id: '00000000-0000-0000-0000-000000000000' },
+    )
   })
 })
 
@@ -576,7 +697,7 @@ describe('GET /api/customers/:id/ledger', () => {
       .expect(404)
   })
 
-  it("404s for another tenant's id", async () => {
+  it("404s for another tenant's id, with the SAME body as an unknown id (S5)", async () => {
     const betaCustomer = (
       await request(app.getHttpServer())
         .post('/api/customers')
@@ -586,10 +707,19 @@ describe('GET /api/customers/:id/ledger', () => {
         .expect(201)
     ).body
 
-    await request(app.getHttpServer())
+    const unknown = await request(app.getHttpServer())
+      .get('/api/customers/00000000-0000-0000-0000-000000000000/ledger')
+      .set(asOwner(alpha))
+      .expect(404)
+    const crossTenant = await request(app.getHttpServer())
       .get(`/api/customers/${betaCustomer.id}/ledger`)
       .set(asOwner(alpha))
       .expect(404)
+
+    sameErrorBody(
+      { body: crossTenant.body, id: betaCustomer.id },
+      { body: unknown.body, id: '00000000-0000-0000-0000-000000000000' },
+    )
   })
 
   it('422s a range over 366 days', async () => {

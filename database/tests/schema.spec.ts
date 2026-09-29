@@ -384,11 +384,22 @@ describe('schema', () => {
         .map((c) => c.table_name),
     )
 
+    // S3 (Security seat, Council review, 2026-09-29): checks BOTH sides.
+    // The original check only proved the REFERENCING column list leads with
+    // tenant_id; a FOREIGN KEY (tenant_id, x) REFERENCES t (id, y) — with a
+    // composite LOCAL key but a single-column, non-tenant-leading REFERENCED
+    // key — would still pass it while being exactly the same RLS-blind
+    // existence oracle it exists to catch, one side over.
     const offenders = all
       .filter((c) => c.contype === 'f')
       .filter((c) => c.referenced_table !== null && c.referenced_table !== 'tenants')
       .filter((c) => tenantOwned.has(c.table_name) && tenantOwned.has(c.referenced_table as string))
-      .filter((c) => !/^FOREIGN KEY \(tenant_id,/.test(c.definition))
+      .filter(
+        (c) =>
+          !/^FOREIGN KEY \(tenant_id,[^)]*\)\s+REFERENCES\s+"?[a-zA-Z_][a-zA-Z0-9_]*"?\(tenant_id,/i.test(
+            c.definition,
+          ),
+      )
       .map(
         (c) =>
           `${c.table_name}.${c.constraint_name} -> ${String(c.referenced_table)}: ${c.definition}`,
@@ -396,9 +407,18 @@ describe('schema', () => {
 
     expect(
       offenders,
-      'a tenant-to-tenant foreign key is not composite on tenant_id, leading. A single-column ' +
-        'reference bypasses RLS at the referential-integrity check (S3, ADR-0028).',
+      'a tenant-to-tenant foreign key is not composite on tenant_id, leading, on BOTH the ' +
+        'referencing AND the referenced column list. A single-column reference on either side ' +
+        'bypasses RLS at the referential-integrity check (S3, ADR-0028).',
     ).toEqual([])
+  })
+
+  it('S3 fixture: a composite local key against a non-tenant-leading referenced key is still an offender', () => {
+    // Pure regex check, mirroring the live query above — proves the fix
+    // actually inspects the REFERENCES side, not only the FOREIGN KEY side.
+    const re = /^FOREIGN KEY \(tenant_id,[^)]*\)\s+REFERENCES\s+"?[a-zA-Z_][a-zA-Z0-9_]*"?\(tenant_id,/i
+    expect(re.test('FOREIGN KEY (tenant_id, x) REFERENCES t(id, y)')).toBe(false)
+    expect(re.test('FOREIGN KEY (tenant_id, x) REFERENCES t(tenant_id, y)')).toBe(true)
   })
 
   it('never uses ON DELETE CASCADE, and always RESTRICT (rule 4)', async () => {

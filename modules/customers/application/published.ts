@@ -35,13 +35,27 @@ export class CustomerDirectoryError extends Error {
 
 export interface CustomerDirectory {
   /**
-   * Takes FOR SHARE on the customer row, then checks the customer exists in
-   * the tenant and is ACTIVE. Throws CUSTOMER_NOT_FOUND (unknown id and
-   * another tenant's id are the same error) or CUSTOMER_INACTIVE. Called
-   * inside the caller's posting transaction; the lock holds until it
-   * commits, so a concurrent deactivation waits (modules.md §10).
+   * INVOICING only (I2/I4/I7). Takes FOR SHARE on the customer row, then
+   * checks the customer exists in the tenant and is ACTIVE. Throws
+   * CUSTOMER_NOT_FOUND (unknown id and another tenant's id are the same
+   * error) or CUSTOMER_INACTIVE. Called inside the caller's posting
+   * transaction; the lock holds until it commits, so a concurrent
+   * deactivation waits (modules.md §10).
    */
   requireActiveForPosting(tx: TenantTx, customerId: string): Promise<CustomerForPosting>
+
+  /**
+   * PAYMENT only (R3/R5/R6 — `PostReceipt`). Accounting seat ruling R-2
+   * (Council review, 2026-09-29): an inactive customer can still be paid,
+   * only not invoiced — this resolves the service-sale.md §11 /
+   * customer-receipt.md §3 row 8 contradiction modules.md §12 recorded as
+   * open. Same lock (FOR SHARE, LOCK_REGISTRY 1a) and the same
+   * CUSTOMER_NOT_FOUND behaviour as `requireActiveForPosting`, but
+   * DELIBERATELY status-agnostic: it never throws CUSTOMER_INACTIVE. A
+   * receipt against an inactive customer is exactly the case this method
+   * exists to allow.
+   */
+  requireForPayment(tx: TenantTx, customerId: string): Promise<CustomerRef>
 
   /** No lock, no status filter. For display. Ids not found are absent from the map. */
   getRefs(tx: TenantTx, ids: readonly string[]): Promise<ReadonlyMap<string, CustomerRef>>

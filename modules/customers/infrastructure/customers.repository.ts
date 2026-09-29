@@ -1,6 +1,13 @@
 import { BaseRepository, findTenantTimezone, type TenantTx } from '@finsoft/database'
 import { controlAccountLedger, customerSubledgerBalance } from '@finsoft/reporting'
-import { Customer, type CustomerRow, type CustomerStatus } from '../domain/customer.ts'
+import { Money } from '@finsoft/validation'
+import {
+  Customer,
+  LEDGER_MAX_DAYS,
+  type CustomerRow,
+  type CustomerStatus,
+} from '../domain/customer.ts'
+import { CustomerError } from '../domain/errors.ts'
 // Type-only import of the application port this class implements — the one
 // sanctioned infrastructure -> application edge (ADR-0028 statement 5).
 import type {
@@ -23,6 +30,8 @@ const LIST_PAGE_MAX = 200
 const LEDGER_PAGE_LIMIT = 500
 /** ~2,000 lines, matching the MVP ceiling docs/design/M3/README.md §10 names as this debt's forcing condition. */
 const LEDGER_MAX_PAGES = 4
+/** Accounting seat C4: an "as of" date no real posting can ever be dated past — see hasAnyBalance(). */
+const FAR_FUTURE_DATE = '9999-12-31'
 
 interface CustomerDbRow {
   id: string
@@ -223,6 +232,18 @@ export class CustomersRepository
     return { balance: result.balance, asOf }
   }
 
+  async hasAnyBalance(tx: TenantTx, id: string): Promise<boolean> {
+    // Accounting seat C4: unbounded by date, deliberately — see this
+    // method's port-level doc comment. `customerSubledgerBalance`'s one
+    // signature takes a mandatory `asOf`, so "no bound" is expressed as a
+    // date far enough in the future that no real posting can be dated past
+    // it (fiscal periods do not exist that far out either) — not a change
+    // to the kernel-adjacent query itself, which stays a single, simple
+    // `<=` comparison used identically by every other caller.
+    const result = await customerSubledgerBalance(tx, this.tenantId, id, FAR_FUTURE_DATE)
+    return !Money.isZero(Money.from(result.balance))
+  }
+
   async ledger(
     tx: TenantTx,
     id: string,
@@ -268,6 +289,26 @@ export class CustomersRepository
       if (!result.next) break
       after = result.next
       carryForwardBalance = result.closingBalance
+
+      // Accounting seat C1 (Council review, 2026-09-29): a page still
+      // remaining after the LAST allowed page means this ledger has more
+      // lines than LEDGER_MAX_PAGES * LEDGER_PAGE_LIMIT can show — and a
+      // `closing` computed from only the lines fetched SO FAR is not the
+      // customer's true closing balance for the range; every line beyond
+      // the cut-off still moves it. Returning that number unlabelled would
+      // be a financial UI showing a wrong figure with no indication it is
+      // wrong. Refused outright, same code and shape as the date-range cap
+      // (api-contract.md §3 LEDGER_RANGE_TOO_LARGE, 422) — the fix on both
+      // is the same instruction to the user: narrow the range.
+      if (pageIndex === LEDGER_MAX_PAGES - 1) {
+        throw new CustomerError(
+          'LEDGER_RANGE_TOO_LARGE',
+          `customer ${id}'s ledger for ${range.from}..${range.to} has more than ` +
+            `${LEDGER_MAX_PAGES * LEDGER_PAGE_LIMIT} lines; the closing balance cannot be shown ` +
+            'reliably without fetching all of them. Narrow the date range.',
+          { maxDays: LEDGER_MAX_DAYS },
+        )
+      }
     }
 
     return { openingBalance: opening, closingBalance: closing, lines }

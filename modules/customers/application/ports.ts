@@ -83,6 +83,22 @@ export interface CustomersRepository {
     id: string,
   ): Promise<{ readonly balance: string; readonly asOf: string }>
 
+  /**
+   * Accounting seat C4 (Council review, 2026-09-29): the DEACTIVATION
+   * precondition ("a customer with a non-zero balance cannot be
+   * deactivated") checks whether ANY money is owed, ever — including a
+   * future-dated invoice that `currentBalance`'s "as of today" bound would
+   * silently miss. A customer invoiced for delivery next month still owes
+   * that amount today; deactivating them because today's cut-off does not
+   * yet see it would be wrong. This is deliberately a SEPARATE method from
+   * `currentBalance` rather than an optional date argument on it: the two
+   * have different meanings (a point-in-time DISPLAY balance vs. an
+   * unbounded EXISTENCE check), and collapsing them into one signature is
+   * how the wrong one gets called by a future edit that does not notice the
+   * date the caller quietly defaulted to.
+   */
+  hasAnyBalance(tx: TenantTx, id: string): Promise<boolean>
+
   /** K5: the AR_CONTROL ledger of this tenant, filtered to one customer. */
   ledger(
     tx: TenantTx,

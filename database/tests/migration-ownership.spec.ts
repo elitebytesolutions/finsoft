@@ -58,7 +58,7 @@ export interface TargetedConstruct {
   readonly table: string
 }
 
-/** ALTER TABLE, CREATE TRIGGER … ON, CREATE POLICY … ON, CREATE INDEX … ON, GRANT … ON. */
+/** ALTER TABLE, CREATE TRIGGER … ON, CREATE POLICY … ON, CREATE INDEX … ON. GRANT/REVOKE are checked separately, below, fail-closed. */
 export function targetedConstructs(sql: string): TargetedConstruct[] {
   const out: TargetedConstruct[] = []
   const patterns: readonly [string, RegExp][] = [
@@ -72,8 +72,6 @@ export function targetedConstructs(sql: string): TargetedConstruct[] {
       'CREATE INDEX',
       /CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?\S+\s+ON\s+("?[a-zA-Z_][a-zA-Z0-9_]*"?)/gi,
     ],
-    ['GRANT', /GRANT\s+[\w\s,()]+?\s+ON\s+("?[a-zA-Z_][a-zA-Z0-9_]*"?)\s+(?:TO|FROM)/gi],
-    ['REVOKE', /REVOKE\s+[\w\s,()]+?\s+ON\s+("?[a-zA-Z_][a-zA-Z0-9_]*"?)\s+FROM/gi],
   ]
   for (const [kind, re] of patterns) {
     let match: RegExpExecArray | null
@@ -81,6 +79,98 @@ export function targetedConstructs(sql: string): TargetedConstruct[] {
       out.push({ kind, table: normalizeIdentifier(match[1] as string) })
   }
   return out
+}
+
+/*
+ * S-GRANT (Security seat, Council review): GRANT/REVOKE were previously
+ * checked with the SAME lenient "keyword ... ON <ident> ... TO|FROM"
+ * pattern as ALTER TABLE/CREATE TRIGGER/CREATE POLICY/CREATE INDEX above —
+ * which means any statement shaped differently than that one pattern
+ * silently matched NOTHING and was never checked at all: a role-membership
+ * grant with no ON clause (`GRANT finsoft_migration TO finsoft_app`), a
+ * schema-wide grant (`GRANT UPDATE ON ALL TABLES IN SCHEMA public TO x`),
+ * the `TABLE`/`SEQUENCE` keyword before the identifier
+ * (`GRANT SELECT ON TABLE parties TO x`), a schema-qualified name the old
+ * regex could not see because it does not allow a dot
+ * (`GRANT ... ON public.parties`), a multi-role REVOKE
+ * (`REVOKE ... FROM a, b`), `FROM PUBLIC CASCADE`, and any GRANT/REVOKE on a
+ * table this migration does not own — every one of these passed silently.
+ *
+ * This is the fail-closed replacement: split into statements, and every
+ * statement containing the word GRANT or REVOKE must match one of a SMALL,
+ * explicit set of allowed shapes, in full (`^...$`), or it is an offense —
+ * an unrecognised GRANT/REVOKE shape is refused, not skipped. A shape that
+ * DOES match still has its table checked against `ownedTables`.
+ */
+
+/** `--` and block comments stripped first, so prose mentioning GRANT/REVOKE cannot look like SQL. */
+function stripComments(sql: string): string {
+  return sql.replace(/--[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '')
+}
+
+/** Naive `;`-split — adequate here: no GRANT/REVOKE statement in this schema's migrations contains a semicolon inside a string or a dollar-quoted body. */
+function splitStatements(sql: string): string[] {
+  return stripComments(sql)
+    .split(';')
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
+const QUALIFIED_IDENT = '(?:public\\.)?"?[a-zA-Z_][a-zA-Z0-9_]*"?'
+const GRANTEE_ROLE = '(?:finsoft_app|readonly_support)'
+const COLUMN_LIST = '\\([^)]*\\)'
+
+/**
+ * Each shape is FULLY ANCHORED (`^...$`, case-insensitive, `s` flag so `.`
+ * is never relied on but whitespace — including newlines in a wrapped
+ * column list — matches `\s`) and captures the table name in group 1. A
+ * statement that satisfies none of these is rejected outright, whatever it
+ * says — this is the "fails closed" property S-GRANT asks for.
+ */
+const GRANT_SHAPES: readonly RegExp[] = [
+  // GRANT SELECT ON <table> TO finsoft_app|readonly_support;
+  new RegExp(`^GRANT\\s+SELECT\\s+ON\\s+(${QUALIFIED_IDENT})\\s+TO\\s+${GRANTEE_ROLE}$`, 'is'),
+  // GRANT INSERT (<cols>) ON <table> TO finsoft_app;  (column-scoped, finsoft_app only)
+  new RegExp(
+    `^GRANT\\s+INSERT\\s+${COLUMN_LIST}\\s+ON\\s+(${QUALIFIED_IDENT})\\s+TO\\s+finsoft_app$`,
+    'is',
+  ),
+  // GRANT UPDATE (<cols>) ON <table> TO finsoft_app;  (column-scoped, finsoft_app only)
+  new RegExp(
+    `^GRANT\\s+UPDATE\\s+${COLUMN_LIST}\\s+ON\\s+(${QUALIFIED_IDENT})\\s+TO\\s+finsoft_app$`,
+    'is',
+  ),
+]
+
+/** The one allowed REVOKE idiom — see this file's earlier header note on why it is not a blanket ban. */
+const REVOKE_SHAPE = new RegExp(
+  `^REVOKE\\s+INSERT\\s*,\\s*UPDATE\\s+ON\\s+(${QUALIFIED_IDENT})\\s+FROM\\s+finsoft_app$`,
+  'is',
+)
+
+export function grantRevokeOffenses(sql: string, ownedTables: ReadonlySet<string>): string[] {
+  const offenses: string[] = []
+
+  for (const statement of splitStatements(sql)) {
+    const isGrant = /\bGRANT\b/i.test(statement)
+    const isRevoke = /\bREVOKE\b/i.test(statement)
+    if (!isGrant && !isRevoke) continue
+
+    const shapes = isGrant ? GRANT_SHAPES : [REVOKE_SHAPE]
+    const match = shapes.map((re) => re.exec(statement)).find((m): m is RegExpExecArray => m !== null)
+
+    if (!match) {
+      offenses.push(`unrecognised ${isGrant ? 'GRANT' : 'REVOKE'} shape: ${statement}`)
+      continue
+    }
+
+    const table = normalizeIdentifier(match[1] as string)
+    if (!ownedTables.has(table)) {
+      offenses.push(`${isGrant ? 'GRANT' : 'REVOKE'} on a table this migration's owner did not create ("${table}"): ${statement}`)
+    }
+  }
+
+  return offenses
 }
 
 /** S4's outright-forbidden constructs. */
@@ -99,47 +189,6 @@ export const FORBIDDEN_PATTERNS: readonly { readonly name: string; readonly re: 
   { name: 'DISABLE ROW LEVEL SECURITY', re: /\bDISABLE\s+ROW\s+LEVEL\s+SECURITY\b/i },
   { name: 'NO FORCE ROW LEVEL SECURITY', re: /\bNO\s+FORCE\s+ROW\s+LEVEL\s+SECURITY\b/i },
 ]
-
-/*
- * REVOKE is narrowed rather than blanket-banned. S4 lists REVOKE among the
- * outright-forbidden constructs, and read absolutely it would reject the
- * `REVOKE INSERT, UPDATE ON <table> FROM finsoft_app` line every migration
- * in this schema opens its Grants section with (001, 008 — "008's lesson",
- * 012, 013 all carry it) — it is what makes the column-scoped GRANT that
- * follows actually narrow, since `ALTER DEFAULT PRIVILEGES` (set once,
- * platform-wide, itself on the FORBIDDEN_PATTERNS list above so a MODULE
- * can never set it) already hands every new table full table-level SELECT,
- * INSERT, UPDATE to finsoft_app. Forbidding this migration to narrow that
- * back down would leave finsoft_app able to INSERT customers.id,
- * customers.code and customers.create_idempotency_key directly — exactly
- * the privilege-layer hole the column-scoped grant exists to close, and a
- * real regression, not a compliance nicety. Reported as a DECISION in this
- * lane's delivery report for the Security seat to confirm or narrow
- * further: what is checked here is only the ONE idiom the existing schema
- * already establishes as required — REVOKE INSERT, UPDATE (and nothing
- * else) FROM finsoft_app (and no other role) ON a table THIS migration's
- * own owner created. Any REVOKE outside that exact shape still fails.
- */
-function revokeOffenses(sql: string, ownedTables: ReadonlySet<string>): string[] {
-  const offenses: string[] = []
-  const re =
-    /REVOKE\s+([\w\s,]+?)\s+ON\s+("?[a-zA-Z_][a-zA-Z0-9_]*"?)\s+FROM\s+("?[a-zA-Z_][a-zA-Z0-9_]*"?)\s*;/gi
-  let match: RegExpExecArray | null
-  while ((match = re.exec(sql))) {
-    const privileges = (match[1] as string)
-      .split(',')
-      .map((p) => p.trim().toUpperCase())
-      .sort()
-    const table = normalizeIdentifier(match[2] as string)
-    const role = normalizeIdentifier(match[3] as string)
-    const isTheOneAllowedIdiom =
-      privileges.join(',') === 'INSERT,UPDATE' && role === 'finsoft_app' && ownedTables.has(table)
-    if (!isTheOneAllowedIdiom) {
-      offenses.push(`REVOKE ${match[1]} ON ${table} FROM ${role}`)
-    }
-  }
-  return offenses
-}
 
 /** CREATE VIEW is allowed only WITH (security_invoker = true) — S4. */
 export function viewsWithoutSecurityInvoker(sql: string): string[] {
@@ -223,12 +272,12 @@ describe('migration ownership (C10, ADR-0028)', () => {
     expect(hits, `${file} contains a forbidden construct`).toEqual([])
   })
 
-  it.each(files)('%s REVOKEs nothing except the one allowed idiom (S4, narrowed)', (file) => {
+  it.each(files)('%s: every GRANT/REVOKE matches an explicitly allowed shape (S-GRANT)', (file) => {
     const sql = read(file)
     const owned = new Set(tablesCreatedBy(sql))
     expect(
-      revokeOffenses(sql, owned),
-      `${file} has a REVOKE outside the one allowed idiom`,
+      grantRevokeOffenses(sql, owned),
+      `${file} has a GRANT/REVOKE that does not match an allowed shape, or targets an unowned table`,
     ).toEqual([])
   })
 
@@ -262,35 +311,78 @@ describe('migration ownership (C10, ADR-0028)', () => {
     })
 
     it('REVOKE SELECT (the wrong privilege list) is rejected even on an owned table', () => {
-      const offenses = revokeOffenses(
+      const offenses = grantRevokeOffenses(
         'REVOKE SELECT ON customers FROM finsoft_app;',
         new Set(['customers']),
       )
-      expect(offenses).toEqual(['REVOKE SELECT ON customers FROM finsoft_app'])
+      expect(offenses).toHaveLength(1)
     })
 
     it('REVOKE ... FROM a role other than finsoft_app is rejected', () => {
-      const offenses = revokeOffenses(
+      const offenses = grantRevokeOffenses(
         'REVOKE INSERT, UPDATE ON customers FROM readonly_support;',
         new Set(['customers']),
       )
-      expect(offenses).toEqual(['REVOKE INSERT, UPDATE ON customers FROM readonly_support'])
+      expect(offenses).toHaveLength(1)
     })
 
     it('REVOKE ... ON a table this migration did not create is rejected', () => {
-      const offenses = revokeOffenses(
+      const offenses = grantRevokeOffenses(
         'REVOKE INSERT, UPDATE ON parties FROM finsoft_app;',
         new Set(['customers']),
       )
-      expect(offenses).toEqual(['REVOKE INSERT, UPDATE ON parties FROM finsoft_app'])
+      expect(offenses).toHaveLength(1)
     })
 
     it('the one allowed REVOKE idiom passes: INSERT, UPDATE ON an owned table FROM finsoft_app', () => {
-      const offenses = revokeOffenses(
+      const offenses = grantRevokeOffenses(
         'REVOKE INSERT, UPDATE ON customers FROM finsoft_app;',
         new Set(['customers']),
       )
       expect(offenses).toEqual([])
+    })
+
+    /*
+     * S-GRANT (Security seat, Council review): the seven escapes named in
+     * review, each proved to have passed the OLD lenient regex and proved
+     * here to be rejected by the fail-closed replacement. The owned-table
+     * set is ('customers') throughout — every one of these names a
+     * different table, a non-table grantee, or no recognisable shape at
+     * all, so none can pass on a table-ownership technicality either.
+     */
+    const escapeFixtures: readonly [string, string][] = [
+      [
+        'GRANT ... ON ALL TABLES IN SCHEMA (schema-wide, no single table)',
+        'GRANT UPDATE ON ALL TABLES IN SCHEMA public TO finsoft_app;',
+      ],
+      [
+        'GRANT <role> TO <role> (role membership, no ON clause at all)',
+        'GRANT finsoft_migration TO finsoft_app;',
+      ],
+      [
+        "GRANT SELECT ON TABLE parties ... (the 'TABLE' keyword before the identifier)",
+        'GRANT SELECT ON TABLE parties TO finsoft_app;',
+      ],
+      [
+        'GRANT ... ON public.parties (schema-qualified, and the wrong table)',
+        'GRANT SELECT ON public.parties TO finsoft_app;',
+      ],
+      ['REVOKE ... ON TABLE x ...', 'REVOKE INSERT, UPDATE ON TABLE customers FROM finsoft_app;'],
+      ['REVOKE ... FROM PUBLIC CASCADE', 'REVOKE ALL ON customers FROM PUBLIC CASCADE;'],
+      ['REVOKE ... FROM a, b (multi-role)', 'REVOKE INSERT, UPDATE ON customers FROM finsoft_app, readonly_support;'],
+    ]
+
+    it.each(escapeFixtures)('%s is rejected, not silently skipped', (_label, fixture) => {
+      const offenses = grantRevokeOffenses(fixture, new Set(['customers']))
+      expect(offenses, fixture).toHaveLength(1)
+    })
+
+    it('every real GRANT/REVOKE this schema actually issues still passes (no false positive)', () => {
+      // The narrow allowed shapes exist to admit real, reviewed migrations —
+      // proved against migration 015's own text, not just against fixtures.
+      const sql = read('015_create_customers.sql')
+      const owned = new Set(tablesCreatedBy(sql))
+      expect(grantRevokeOffenses(sql, owned)).toEqual([])
     })
 
     it('CREATE VIEW with no options is rejected', () => {

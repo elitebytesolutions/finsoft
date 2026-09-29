@@ -1,5 +1,4 @@
 import { recordAudit, withTenant } from '@finsoft/database'
-import { Money } from '@finsoft/validation'
 import type { Customer } from '../domain/customer.ts'
 import { CustomerError } from '../domain/errors.ts'
 import type { Actor } from './create-customer.ts'
@@ -35,10 +34,17 @@ export function createDeactivateCustomer(repo: CustomersRepository) {
       // FIRST and short-circuits — so an inactive customer with a residual
       // balance (should never occur, but is not this call's job to correct)
       // never fails the read it doesn't need.
-      const { balance } = await repo.currentBalance(tx, command.id)
-      const { alreadyInactive } = existing.assertDeactivatable({
-        isZero: Money.isZero(Money.from(balance)),
-      })
+      //
+      // Accounting seat C4: hasAnyBalance, NOT currentBalance — the
+      // deactivation precondition is "does this customer owe anything, at
+      // any date", unbounded, not "as of today". currentBalance's "today"
+      // cut-off is right for DISPLAY (modules.md's balance/balanceAsOf
+      // fields) and wrong here: a customer invoiced for delivery next month
+      // already owes that amount, and deactivating them because today's
+      // cut-off has not reached it yet would let a real receivable go
+      // uncollected under an inactive customer.
+      const hasBalance = await repo.hasAnyBalance(tx, command.id)
+      const { alreadyInactive } = existing.assertDeactivatable({ isZero: !hasBalance })
       if (alreadyInactive) return existing
 
       const updated = await repo.update(

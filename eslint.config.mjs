@@ -759,13 +759,32 @@ function tableOwnershipSyntax(table) {
       message,
     },
     {
-      // A DML clause (FROM/INTO/UPDATE/JOIN) naming anything other than
-      // this table. Fails closed for any table name not yet written, not
-      // just a fixed deny-list — the negative lookahead is the whole point.
-      selector: `TaggedTemplateExpression[tag.name='sql'] TemplateElement[value.raw=/\\b(from|into|update|join)\\s+"?(?!${table}\\b)[a-z_][a-z0-9_]*"?\\b/i]`,
+      // S2 (Security seat, Council review, 2026-09-29): the earlier version
+      // of this rule inspected each sql`` TAGGED TEMPLATE's literal text for
+      // a table name after FROM/INTO/UPDATE/JOIN — which a TemplateElement
+      // check can only ever see the LITERAL portions of, not an
+      // interpolated expression. Two escapes followed: (1) fragment
+      // composition — `const frag = sql\`users\`; sql\`... from customers c,
+      // ${frag}\`` — the table name inside the interpolated fragment is a
+      // separate AST node (an Identifier/CallExpression), never a
+      // TemplateElement, so the regex never saw it; (2) a comma join —
+      // `sql\`... from customers c, users u\`` — the regex checked only the
+      // token immediately after the keyword (matched "customers", excluded
+      // by the negative lookahead, so THAT occurrence correctly passed) and
+      // never inspected a second, comma-separated table in the same clause.
+      // Both are closed the same way: the sql`` tag is not used in
+      // infrastructure/ at all. It cost nothing real — no table-ownership
+      // fixture, and no line of this module's own repository, used it — and
+      // it removes the whole class of "did the regex parse this SQL
+      // fragment correctly" bugs rather than adding a third patch to a
+      // pattern that has already needed two.
+      selector: "TaggedTemplateExpression[tag.name='sql']",
       message:
-        `C8 / S2 (ADR-0028): an sql\`\` tag in modules/${table}/infrastructure/** named a table ` +
-        `other than '${table}'.`,
+        `S2 (ADR-0028): modules/${table}/infrastructure/** does not use the sql\`\` tag at all — ` +
+        'every read and write goes through the Kysely builder, whose table argument the ' +
+        'selectors above check literally and fail closed on. A raw SQL fragment is exactly the ' +
+        'shape that let a table name hide inside an interpolated expression or a second, ' +
+        'comma-joined table escape the table-ownership check.',
     },
   ]
 }
@@ -1632,6 +1651,15 @@ export default tseslint.config(
             // string), so these need stating explicitly too.
             TESTING_IMPORT_BAN,
             PROVISIONING_IMPORT_BAN,
+            // S1 domain (Security seat, Council review, 2026-09-29): the
+            // same subpath-specifier gap applied to these two — the blanket
+            // '@finsoft/database' ban above matches only the bare
+            // specifier, so 'import ... from "@finsoft/database/auth"' and
+            // '"@finsoft/database/request-scope"' were both reachable from
+            // domain/ despite the intent being "domain/ never sees a
+            // connection or a row type" covering the whole package surface.
+            DATABASE_AUTH_IMPORT_BAN,
+            REQUEST_SCOPE_IMPORT_BAN,
             ...DECIMAL_LIBS.map((name) => ({
               name,
               message: 'ADR-0011: import Money from @finsoft/validation.',

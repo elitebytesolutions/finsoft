@@ -382,14 +382,21 @@ describe('domain-kernel-import-is-type-only (ADR-0028 statement 5)', () => {
     expect(fired).toContain('domain-kernel-import-is-type-only')
   })
 
-  it('leaves a type-only kernel import from domain/ alone', async () => {
+  it('POSITIVE CONTROL: a type-only kernel import from domain/ passes BOTH rules, not just this one', async () => {
+    // Architecture seat Council review, 2026-09-29: domain-imports-allowlisted
+    // omitted accounting-kernel from its own allow-list, so it fired on
+    // EVERY kernel import regardless of dependencyType — making this rule's
+    // type-only exception unreachable (it could never see an import
+    // domain-imports-allowlisted had not already rejected). Asserting the
+    // full `fired` array is empty, not merely that this one rule is absent,
+    // is what would have caught that.
     const path = probe(
       'modules/probe/domain',
       "import type { PostingErrorCode } from '@finsoft/accounting-kernel'\n" +
         'export type X = PostingErrorCode\n',
     )
     const fired = await rulesFiredOn(path)
-    expect(fired).not.toContain('domain-kernel-import-is-type-only')
+    expect(fired).toEqual([])
   })
 })
 

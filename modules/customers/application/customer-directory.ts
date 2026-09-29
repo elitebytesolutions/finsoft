@@ -46,6 +46,20 @@ export function createCustomerDirectory(repo: CustomersRepository): CustomerDire
       return { ...toRef(customer), creditDays: customer.fields.creditDays }
     },
 
+    async requireForPayment(tx: TenantTx, customerId: string): Promise<CustomerRef> {
+      // R-2: the SAME lock and the SAME not-found behaviour as
+      // requireActiveForPosting, deliberately with NO status check —
+      // an inactive customer can still be paid.
+      const customer = await repo.lockForShare(tx, customerId)
+      if (!customer) {
+        throw new CustomerDirectoryError(
+          'CUSTOMER_NOT_FOUND',
+          `customer ${customerId} was not found.`,
+        )
+      }
+      return toRef(customer)
+    },
+
     async getRefs(tx: TenantTx, ids: readonly string[]): Promise<ReadonlyMap<string, CustomerRef>> {
       const found = await repo.findByIds(tx, ids)
       const result = new Map<string, CustomerRef>()

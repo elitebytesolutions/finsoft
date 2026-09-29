@@ -182,10 +182,20 @@ module.exports = {
         'ADR-0028 statement 5: domain/ imports only its own files, @finsoft/validation and ' +
         '@finsoft/shared-types outright, plus @finsoft/accounting-kernel type-only (to build a ' +
         "kernel payload, e.g. toSalePostedPayload()). Anything else — including the module's " +
-        'own infrastructure/api/application, or a runtime import of the kernel — is forbidden.',
+        'own infrastructure/api/application, or a runtime import of the kernel — is forbidden. ' +
+        'accounting-kernel is in this rule\'s allow-list (pathNot) so the TYPE-ONLY exception ' +
+        'statement 5 grants is reachable at all — domain-kernel-import-is-type-only, below, is ' +
+        'the rule that then rejects a non-type-only (runtime) import of it. Without ' +
+        'accounting-kernel here, this rule alone forbade the path unconditionally and the other ' +
+        'rule could never fire on anything this one had not already caught (Architecture seat ' +
+        'Council review, 2026-09-29).',
       from: { path: '^modules/([^/]+)/domain/' },
       to: {
-        pathNot: ['^modules/$1/domain/', '^packages/(validation|shared-types)/', '^node_modules/'],
+        pathNot: [
+          '^modules/$1/domain/',
+          '^packages/(validation|shared-types|accounting-kernel)/',
+          '^node_modules/',
+        ],
       },
     },
     {

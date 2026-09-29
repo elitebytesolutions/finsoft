@@ -112,12 +112,23 @@ export class CustomerDirectoryError extends Error {
 
 export interface CustomerDirectory {
   /**
-   * Takes FOR SHARE on the customer row, then checks the customer exists in the tenant
-   * and is ACTIVE. Throws CUSTOMER_NOT_FOUND (unknown id and another tenant's id are the
-   * same error) or CUSTOMER_INACTIVE. Called inside the caller's posting transaction;
-   * the lock holds until it commits, so a concurrent deactivation waits (§10).
+   * INVOICING only (I2/I4/I7). Takes FOR SHARE on the customer row, then checks the
+   * customer exists in the tenant and is ACTIVE. Throws CUSTOMER_NOT_FOUND (unknown id
+   * and another tenant's id are the same error) or CUSTOMER_INACTIVE. Called inside the
+   * caller's posting transaction; the lock holds until it commits, so a concurrent
+   * deactivation waits (§10).
    */
   requireActiveForPosting(tx: TenantTx, customerId: string): Promise<CustomerForPosting>
+
+  /**
+   * PAYMENT only (R3/R5/R6, `PostReceipt`). Accounting seat ruling R-2 (Council review,
+   * 2026-09-29): an inactive customer can still be paid, only not invoiced — this
+   * resolves the service-sale.md §11 / customer-receipt.md §3 row 8 contradiction §12
+   * records as referred. Same lock and the same CUSTOMER_NOT_FOUND behaviour as
+   * `requireActiveForPosting`, but deliberately status-agnostic: never throws
+   * CUSTOMER_INACTIVE.
+   */
+  requireForPayment(tx: TenantTx, customerId: string): Promise<CustomerRef>
 
   /** No lock, no status filter. For display. Ids not found are absent from the map. */
   getRefs(tx: TenantTx, ids: readonly string[]): Promise<ReadonlyMap<string, CustomerRef>>
@@ -199,7 +210,7 @@ locks, after being re-validated there.
 PostReceipt:
 withTenant(tx =>
   0  customerId ← repo.customerIdOfReceipt(tx, id)              plain read, no lock
-  1  customer ← customerDirectory.requireActiveForPosting(tx, customerId)   FOR SHARE  (1a)
+  1  customer ← customerDirectory.requireForPayment(tx, customerId)        FOR SHARE  (1a, R-2: status-agnostic)
   2  receipt  ← repo.lockReceipt(tx, id)                        FOR UPDATE          (1b)
      └ POSTED/REVERSED, post_idempotency_key = key, fingerprint matches → REPLAY
      └ POSTED/REVERSED otherwise → SOURCE_ALREADY_POSTED;  CANCELLED → RECEIPT_NOT_DRAFT

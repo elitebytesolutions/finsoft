@@ -203,7 +203,16 @@ export class Customer {
     return { alreadyActive: this.status === 'ACTIVE' }
   }
 
-  /** C3-C7, I2/I4/I7/R3/R5/R6 (receivables, not this lane): a posting precondition. */
+  /**
+   * The INVOICING precondition only — I2/I4/I7 (receivables, not this lane).
+   * Accounting seat ruling R-2 (Council review, 2026-09-29, resolving the
+   * service-sale.md §11 / customer-receipt.md §3 row 8 contradiction
+   * modules.md §12 and docs/design/M3/open-questions.md flagged): an
+   * inactive customer can still be PAID, but not invoiced. `PostReceipt`
+   * (R3/R5/R6) does not call this — it uses
+   * `CustomerDirectory.requireForPayment`, which is deliberately
+   * status-agnostic (see that method's own doc comment in published.ts).
+   */
   assertActiveForPosting(): void {
     if (this.status !== 'ACTIVE') {
       throw new CustomerError('CUSTOMER_INACTIVE', `customer ${this.id} is not active.`, {

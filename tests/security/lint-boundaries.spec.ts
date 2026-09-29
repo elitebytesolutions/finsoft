@@ -1566,6 +1566,61 @@ describe('S1: the platform bans still fire, per module layer, and both entries f
     expect(matching(messages, 'M1-X T2')).toHaveLength(1)
     expect(matching(messages, 'withGlobal is not used in modules')).toHaveLength(1)
   })
+
+  /*
+   * S1 domain (Security seat, Council review, 2026-09-29): domain/ has its
+   * OWN, more specific no-restricted-imports block (a blanket
+   * '@finsoft/database' ban), which flat config REPLACES the shared
+   * MODULES_IMPORT_BAN_PATHS block with for files under domain/ — so this
+   * layer needs its own proof, not a fold into `layers` above. Before this
+   * fix, '@finsoft/database/auth' and '@finsoft/database/request-scope'
+   * were reachable from domain/ despite the blanket ban's own stated intent
+   * ("domain/ never sees a connection or a row type") — the blanket ban
+   * matches only the bare specifier, exactly the subpath-specifier gap this
+   * block's own comment already names for TESTING_IMPORT_BAN/
+   * PROVISIONING_IMPORT_BAN, just not, until now, for these two.
+   */
+  describe('domain/ carries the same subpath bans, via its own stricter block', () => {
+    it('@finsoft/database/request-scope fires in domain/', async () => {
+      const messages = await messagesFor(
+        'modules/customers/domain/x.ts',
+        "import { withTenantAsPrincipal } from '@finsoft/database/request-scope'\nexport const w = withTenantAsPrincipal",
+      )
+      expect(matching(messages, 'M1-X T1')).toHaveLength(1)
+    })
+
+    it('@finsoft/database/auth fires in domain/', async () => {
+      const messages = await messagesFor(
+        'modules/customers/domain/x.ts',
+        "import { findLoginCandidate } from '@finsoft/database/auth'\nexport const f = findLoginCandidate",
+      )
+      expect(matching(messages, 'the auth/login query surface')).toHaveLength(1)
+    })
+
+    it('@finsoft/database/testing still fires in domain/ (pre-existing, restated for completeness)', async () => {
+      const messages = await messagesFor(
+        'modules/customers/domain/x.ts',
+        "import { runAs } from '@finsoft/database/testing'\nexport const r = runAs",
+      )
+      expect(matching(messages, 'Council re-review 1')).toHaveLength(1)
+    })
+
+    it('@finsoft/database/provisioning still fires in domain/ (pre-existing, restated for completeness)', async () => {
+      const messages = await messagesFor(
+        'modules/customers/domain/x.ts',
+        "import { createTenant } from '@finsoft/database/provisioning'\nexport const c = createTenant",
+      )
+      expect(matching(messages, 'Council re-review 1')).toHaveLength(1)
+    })
+
+    it('the bare @finsoft/database specifier is caught by the stricter blanket ban, not the M1-X T2 one', async () => {
+      const messages = await messagesFor(
+        'modules/customers/domain/x.ts',
+        "import { TenantContext } from '@finsoft/database'\nexport const t = TenantContext",
+      )
+      expect(matching(messages, 'domain/ never sees a connection or a row type')).toHaveLength(1)
+    })
+  })
 })
 
 describe('C7 (ADR-0028): query construction is confined to modules/*/infrastructure/**', () => {
@@ -1668,20 +1723,59 @@ describe('C8 / S2 (ADR-0028): modules/customers/infrastructure/** names only its
     expect(matching(messages, 'names only its own table')).toHaveLength(1)
   })
 
+  /*
+   * S2 (Security seat, Council review, 2026-09-29): the sql`` tag is now
+   * banned OUTRIGHT in modules/*\/infrastructure/**, not merely checked for
+   * naming another table — that partial check had two escapes (fragment
+   * composition and a comma join, both probed below). An sql`` tag naming
+   * customers ITSELF is caught too now, which is the point: no raw SQL
+   * fragment is trusted to parse correctly, ever, in this layer.
+   */
   it('catches an sql`` tag naming another table', async () => {
     const messages = await messagesFor(
       'modules/customers/infrastructure/x.ts',
       "import { sql } from 'kysely'\nexport const q = (tx: any) => sql`select * from parties`.execute(tx)",
     )
-    expect(matching(messages, 'named a table other than')).toHaveLength(1)
+    expect(matching(messages, 'does not use the sql`` tag at all')).toHaveLength(1)
   })
 
-  it('leaves an sql`` tag naming customers itself alone', async () => {
+  it('catches an sql`` tag even when it names customers itself (S2: banned outright)', async () => {
     const messages = await messagesFor(
       'modules/customers/infrastructure/x.ts',
       "import { sql } from 'kysely'\nexport const q = (tx: any) => sql`select * from customers where id = ${1}`.execute(tx)",
     )
-    expect(matching(messages, 'named a table other than')).toEqual([])
+    expect(matching(messages, 'does not use the sql`` tag at all')).toHaveLength(1)
+  })
+
+  it('S2 escape 1: a table name hidden inside an INTERPOLATED fragment is still caught (whole tag is banned)', async () => {
+    const messages = await messagesFor(
+      'modules/customers/infrastructure/x.ts',
+      "import { sql } from 'kysely'\n" +
+        'const frag = sql`users`\n' +
+        'export const q = (tx: any) => sql`select * from customers c, ${frag}`.execute(tx)',
+    )
+    // Both tagged templates are sql`` — both are caught.
+    expect(matching(messages, 'does not use the sql`` tag at all').length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('S2 escape 2: a comma-joined second table in one sql`` fragment is still caught (whole tag is banned)', async () => {
+    const messages = await messagesFor(
+      'modules/customers/infrastructure/x.ts',
+      "import { sql } from 'kysely'\n" +
+        'export const q = (tx: any) => sql`select * from customers c, users u`.execute(tx)',
+    )
+    expect(matching(messages, 'does not use the sql`` tag at all')).toHaveLength(1)
+  })
+
+  it('leaves the sql`` tag alone OUTSIDE infrastructure/ where C7 already owns the same ban with its own message', async () => {
+    const messages = await messagesFor(
+      'modules/customers/application/x.ts',
+      "import { sql } from 'kysely'\nexport const q = sql`select 1`",
+    )
+    // C7's own message ("sql`` tag outside modules...") fires instead —
+    // proves the two bans are not silently doubled up or dropped.
+    expect(matching(messages, 'does not use the sql`` tag at all')).toEqual([])
+    expect(matching(messages, "sql`` tag outside modules")).toHaveLength(1)
   })
 
   it.each(['table', 'ref'])(
