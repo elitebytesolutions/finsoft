@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Rule** | `SALE_POSTED/service@1` |
-| **Status** | APPROVED — Accounting seat, 2026-09-27 (M2-000). Council decision recorded in §1 |
+| **Status** | APPROVED — Accounting seat, 2026-09-27 (M2-000). Council decision recorded in §1. Amended 2026-09-28 (M3-000c, Accounting seat, before `IMPLEMENTED`): §4 row 7 and §11 aligned with [customer-receipt.md](customer-receipt.md) ruling R-2 (inactive customers); §4 party foreign key reworded for [ADR-0026](../adr/ADR-0026-journal-line-party-dimension.md). No change to the payload, entry, amounts or golden figures |
 | **Implemented in** | M3 — sales invoice module raises the event; kernel rule |
 | **Governed by** | [ADR-0005](../adr/ADR-0005-central-double-entry-posting-engine.md) (closed event set; credit-sale substitution "Dr Accounts Receivable (customer control) for Dr Cash"); [ADR-0011](../adr/ADR-0011-money-representation.md) (line rounding boundary); [PRD.md](../PRD.md) §6.1 (service invoice, no tax); [NON_NEGOTIABLES](../NON_NEGOTIABLES.md) rules 1, 12, 14, 17 |
 | **Golden** | P04, P06, P08, P09, P10 |
@@ -75,13 +75,13 @@ In one transaction the module: validates the draft, calls `postingEngine.post(SA
 | 4 | Every `quantity > 0` and `unitPrice > 0` | `SALE_LINE_NON_POSITIVE` |
 | 5 | Every `lineNet = round_half_up(quantity × unitPrice, 4)` **exactly** | `SALE_AMOUNT_MISMATCH`, naming the line, the submitted and the expected value |
 | 6 | `netAmount = Σ lineNet` exactly | `SALE_AMOUNT_MISMATCH` |
-| 7 | The customer exists in the tenant and is active | `CUSTOMER_NOT_FOUND`, `CUSTOMER_INACTIVE` |
+| 7 | The customer exists in the tenant and is **active**. An inactive customer cannot be invoiced; it can still be paid ([customer-receipt.md](customer-receipt.md) ruling R-2) | `CUSTOMER_NOT_FOUND`, `CUSTOMER_INACTIVE` |
 | 8 | Date ≤ today; resolves to an `OPEN` period | `DATE_IN_FUTURE`, `PERIOD_NOT_FOUND`, `PERIOD_CLOSED`, `PERIOD_LOCKED` |
 | 9 | Roles `AR_CONTROL` and `SERVICE_REVENUE` resolve | `ACCOUNT_ROLE_UNMAPPED`, `ACCOUNT_ROLE_MISCONFIGURED` |
 
 **Rows 5 and 6 are verification, not computation.** The module computes the line nets for its document with `Money` from `packages/validation`; the kernel recomputes them with the **same** function and rejects any difference. It never substitutes its own figure: the printed invoice and the GL must carry identical numbers, and a mismatch means one of them is wrong. One implementation of the arithmetic, checked twice.
 
-**Row 7 is the module's check.** The kernel knows nothing about modules (ARCHITECTURE §5) and cannot read `customers`; it relies on the module's validation and on the database's tenant-scoped foreign key from the journal line's party to the customer ([README](README.md) §5 hand-off).
+**Row 7 is the module's check.** The kernel knows nothing about modules (ARCHITECTURE §5) and cannot read `customers`. It relies on the module's validation for existence and status. Structurally, it relies on the database's tenant-scoped composite foreign key from the journal line's party, `(tenant_id, party_type, party_id)`, to the kernel-owned **`parties`** registry, which migration 012 creates. It does not rely on a key to `customers`. A customer's id *is* its party id, and `customers` itself has a foreign key to `parties`, never the reverse ([ADR-0026](../adr/ADR-0026-journal-line-party-dimension.md) statements 2 and 4). The posting engine pre-checks the party against `parties` (`PARTY_NOT_FOUND`, `PARTY_TYPE_MISMATCH`); whether the customer may be invoiced stays this row's module check (ADR-0026 statement 6).
 
 Zero-value and negative lines are rejected. A negative line is a credit note, which is `SALE_RETURNED` — a separate rule, not in the MVP.
 
@@ -175,7 +175,8 @@ Dr/Cr ROUNDING                the ADR-0015 flush residual, when a movement took 
 | Credit limit | Not in the MVP. No posting-rule effect when it arrives — it is a precondition in the module |
 | Due date / credit terms | Stored on the invoice; no GL effect |
 | Concurrent post of the same draft by two users | One commits; the other gets `REPLAYED` (same key) or `SOURCE_ALREADY_POSTED` |
-| Customer deactivated after the invoice posted | The posted invoice is unaffected; it can still be paid and reversed |
+| Customer deactivated after the invoice posted | The posted invoice is unaffected. It can still be paid ([customer-receipt.md](customer-receipt.md) §3 row 8) and reversed. No new invoice for that customer can be posted (`CUSTOMER_INACTIVE`, row 7) — ruling R-2, Accounting seat, 2026-09-28 (P12) |
+| Customer deactivated while an invoice for it is still a draft | The draft is unaffected, but its post is rejected `CUSTOMER_INACTIVE`. Reactivate the customer, or discard the draft |
 
 ## 12. Errors
 
@@ -183,4 +184,4 @@ Dr/Cr ROUNDING                the ADR-0015 flush residual, when a movement took 
 
 ## 13. Golden
 
-**P04** (the 10,000.0000 invoice and the variant fences), **P06** (reversal), **P08** (idempotency), **P09** (journey), **P10** (half-way tie at the line boundary).
+**P04** (the 10,000.0000 invoice and the variant fences), **P06** (reversal), **P08** (idempotency), **P09** (journey), **P10** (half-way tie at the line boundary), **P12** (an inactive customer cannot be invoiced; no number consumed).

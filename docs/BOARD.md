@@ -78,6 +78,7 @@ Then **M2** accounting core · **M3** customers, service invoice, receipts · **
 | OPS-001 | Operating model — ADR-0024, delivery-brief skill, governing docs, this board | PR #7, 2026-09-27 |
 | W1-002 (docs) | ADR-0023 draft, security review, ADR-0016 D8 closed | PR #8, 2026-09-27 |
 | OPS-002 | CI by tier — `tools/ci/classify.mjs`, `npm run check` / `check:full`; secrets + FinancialInvariantSuite on every PR | PR #9, 2026-09-27 |
+| M3-000c (closes M3-000b) | Posting-rules follow-ups, Accounting seat, 2026-09-28: receipt drafts per the Product Owner decision of 2026-09-28 (`DRAFT → POSTED → REVERSED`, `DRAFT → CANCELLED`, no effect and no number until post; [customer-receipt.md](posting-rules/customer-receipt.md) §1.1, R-1) · ruling R-2, an inactive customer can be paid but not invoiced (fixes the service-sale §11 / receipt row 8 contradiction) · party FK reworded to `parties` per ADR-0026 · fixture refs are not customer codes · golden **P11**, **P12**. P01–P10 and the `CUSTOMER_PAYMENT_RECEIVED` payload unchanged | `feature/M3-000c-posting-rules`, 2026-09-28 — merge after M3-000a |
 
 ## Demo ready
 

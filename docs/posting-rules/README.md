@@ -19,7 +19,9 @@
 | [service-sale.md](service-sale.md) | `SALE_POSTED/service@1` | APPROVED — Council decision recorded | M3 |
 | [customer-receipt.md](customer-receipt.md) | `CUSTOMER_PAYMENT_RECEIVED@1` | APPROVED | M3 |
 
-Golden scenarios for every rule above live in [`tests/accounting/golden/`](../../tests/accounting/golden/), files `posting-p01-*.json` … `posting-p10-*.json` (§6).
+Golden scenarios for every rule above live in [`tests/accounting/golden/`](../../tests/accounting/golden/), files `posting-p01-*.json` … `posting-p12-*.json` (§6).
+
+**Amendments of 2026-09-28 (M3-000c, Accounting seat).** Customer receipts gain a draft lifecycle (Product Owner decision, 2026-09-28; [customer-receipt.md](customer-receipt.md) §1.1, ruling R-1). An inactive customer may be paid but not invoiced ([customer-receipt.md](customer-receipt.md) ruling R-2). The party foreign key now runs to the kernel's `parties` registry ([ADR-0026](../adr/ADR-0026-journal-line-party-dimension.md); §4.1, §5). Customer codes are system-generated (Product Owner, 2026-09-28) and appear in no rule (§6). No payload, entry, amount or expected figure of P01–P10 changed.
 
 **Not specified, and therefore not postable:** every other member of the `FinancialEvent` set — `SALE_RETURNED`, `PURCHASE_*`, `SUPPLIER_PAYMENT_MADE`, `CHEQUE_*`, `STOCK_*`, `EXPENSE_RECORDED`, `OPENING_BALANCE_LOADED` — and the `STOCK` line kind and `CASH` settlement of `SALE_POSTED`. The kernel rejects an event or variant whose rule is not `IMPLEMENTED` with `RULE_NOT_ENABLED`. It does not fall back to a nearby rule. **No sales tax rule exists** (Product Owner, 2026-09-27: no sales tax in the MVP); any tax field in a payload is a schema rejection, never a zero.
 
@@ -131,6 +133,8 @@ account.control = AP   ⇔  line.party_type = 'VENDOR'   and line.party_id is no
 otherwise              ⇒  line.party_type is null and line.party_id is null
 ```
 
+`party_id` is an id in the kernel's `parties` registry. For a customer it is the customer's own id, because `customers.id` is its party id ([ADR-0026](../adr/ADR-0026-journal-line-party-dimension.md)). The line stores the id only, never a name or a customer code (rule 17).
+
 This is what makes Invariant 9 structural: no AR-control line can exist without a customer, so `Σ customer ledgers = AR control balance` holds by construction and the invariant test checks the document subledger against it ([customer-receipt.md](customer-receipt.md) §8).
 
 ---
@@ -143,7 +147,7 @@ Stated here so no lane infers them. None is decided by this directory.
 |---|---|---|
 | Migration 010 `accounts` | Kind (header/postable), type, normal balance, control kind, role (unique per tenant among active accounts), manual-JV eligibility, `is_active`; no delete; type/kind/control immutable once posted to ([coa-standard.md](coa-standard.md) §5) | Database seat |
 | Migration 011 `fiscal_periods` | Monthly periods, FY label, contiguity, exclusion constraint, transition trigger incl. in-order close/lock ([periods.md](periods.md)) | Database seat |
-| Migration 012 journal | `posting_rule` (id@version), `reversal_of` (unique), `reversed_by`/`reversed_at`, `reversal_reason`, `source_type`/`source_id` unique, idempotency key + fingerprint, party columns and the §4.1 check. **The party FK target (`customers`) does not exist until M3** — whether 012 adds nullable party columns and M3 adds the composite FK, or M3 adds the columns, is the Database seat's call | Database seat + Architecture seat (a kernel table referencing a module's table) |
+| Migration 012 journal | `posting_rule` (id@version), `reversal_of` (unique), `reversed_by`/`reversed_at`, `reversal_reason`, `source_type`/`source_id` unique, idempotency key + fingerprint, party columns and the §4.1 check. **The party FK target is the kernel-owned `parties` registry, which 012 itself creates**, not `customers`: `journal_lines (tenant_id, party_type, party_id) → parties (tenant_id, party_type, id)`. A customer's id *is* its party id. `customers` (migration 014, M3) has a foreign key *to* `parties`, and no kernel table references a module table. §4.1 is declarative, through `account_control` | **Decided — [ADR-0026](../adr/ADR-0026-journal-line-party-dimension.md), Accepted 2026-09-28** (Database/Security + Architecture seats) |
 | Migration 013 `document_sequences` | Series × FY counters, row-locked, gapless on the success path (§4) | Database seat |
 | Existing tenants | `BHATTI1`/`BHATTI2` exist before 010/011 run. COA seeding and period creation must reach tenants that already exist, not only new ones | Database seat |
 | Kernel clock | "Today" in the tenant timezone is an input to the future-date check and the reversal date rule; the golden scenarios fix `today`. The kernel needs an injectable clock | Architecture seat |
@@ -178,6 +182,7 @@ Scenario A ([`scenario-a.json`](../../tests/accounting/golden/scenario-a.json)) 
     {
       "step": 1,
       "do": "post",                               // post | reverse | reverseDocument | period | assert
+                                                  // | saveDraft | editDraft | cancelDraft | customer  (P11, P12)
       "event": "JOURNAL_VOUCHER_POSTED",
       "idempotencyKey": "p01-1",
       "occurredAt": "2026-09-01",
@@ -198,6 +203,8 @@ Scenario A ([`scenario-a.json`](../../tests/accounting/golden/scenario-a.json)) 
 Conventions:
 
 - Accounts are referenced by their **`standard-v1` code**; customers, invoices and receipts by fixture `ref`. The runner resolves them to ids when it builds the fixture. That is a test-fixture convenience — rule 17 (reference by id) governs what the kernel stores, and the runner must pass ids.
+- **A customer `ref` (`CUST-A`, `CUST-B`) is a fixture label, not a customer code.** Customer codes are system-generated (Product Owner, 2026-09-28). No posting rule, payload or expected figure depends on a code, whether user-entered or generated. The kernel stores the party id and nothing else. The runner must not create customers with the ref as their code, and must not assert any code. `[CUST-A]` in a rule's worked example means "the party id of fixture customer CUST-A".
+- **Document lifecycle steps (from P11).** `saveDraft` creates a draft document (`document`: the fixture ref, `fields`: its content). `editDraft` changes a draft's fields. `cancelDraft` moves a draft to `CANCELLED`. `customer` changes customer master data (`action`: `deactivate` | `reactivate`). None of them reaches the posting engine. Each asserts `journalEntriesWritten: 0`, the document's status, and `documentNumber: null` while no number has been assigned. A `post` step whose `referenceId` names a saved draft posts that draft as it currently stands.
 - `expect.lines` lists the entry's lines in a canonical order: debits before credits, then by account code, then by party ref. The kernel may store any order; the runner sorts before comparing.
 - Trial balance rows list every account **with activity** up to `asOf`, including those whose balance is zero; each row carries `debit` and `credit` columns per [ledger-and-trial-balance.md](ledger-and-trial-balance.md) §3.
 - Running balances are **signed, debit-positive** strings (`"-6000.0000"` is a 6,000 credit balance).
@@ -216,3 +223,5 @@ Conventions:
 | `posting-p08-idempotent-retry.json` | Three identical requests → one entry; key reuse; content duplicates are not key duplicates; source uniqueness | M2 (JV steps) · M3 (invoice steps) |
 | `posting-p09-mvp-journey.json` | The whole MVP journey in two tenants; TB at each checkpoint; final TB balances with reversed pairs at zero | M3 |
 | `posting-p10-service-line-rounding.json` | A true half-way tie at the line boundary: half-up versus half-even and truncation | M3 |
+| `posting-p11-receipt-draft-lifecycle.json` | Receipt drafts have no GL, allocation or numbering effect; a draft in a since-closed period is rejected, re-dated and posted; a stale proposal is rejected at post; draft → cancel; replay of the post | M3 |
+| `posting-p12-inactive-customer.json` | An inactive customer cannot be invoiced (no number consumed) but is paid in full against its open invoice | M3 |
