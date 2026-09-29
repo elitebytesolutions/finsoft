@@ -39,8 +39,10 @@ PATHS         ALLOWED   apps/api/src/common/** (tenant.guard.ts,
                         packages/database/package.json (exports map only),
                         packages/auth/src/** (throttle.ts, audit-sink.ts, login.ts,
                         logout.ts, refresh.ts, guard.ts, account-state-cache.ts,
-                        index.ts), tools/seed/demo-tenants.mjs (new),
-                        tests/integration/**, tests/security/**,
+                        index.ts), packages/auth/package.json (one dependency added,
+                        @finsoft/observability), packages/observability/src/events.ts
+                        (one new BUSINESS_EVENTS entry), tools/seed/demo-tenants.mjs
+                        (new), tests/integration/**, tests/security/**,
                         eslint.config.mjs, .dependency-cruiser.cjs (tools/ target +
                         the one named exception it forces), package.json (depcruise
                         target, seed script), docs/TECH_DEBT.md,
@@ -218,6 +220,75 @@ found). All conditions below are applied; delta re-review only.
 - **R7** — this brief, written and committed, naming the Council conditions above and
   `docs/BOARD.md`'s ALLOWED demo-cadence decision — the M1-X exit row, the decision-log
   row, and the supersession strike — with its provenance.
+
+## Second Council delta re-review (Security, Database and Architecture all APPROVED WITH CONDITIONS)
+
+All conditions below are applied; delta re-review only.
+
+- **1 (Sec F1 / DB C5)** — `@finsoft/database/testing` (`runAs` — `TenantContext.run` with
+  any caller-supplied principal) and `@finsoft/database/provisioning` (sets tenant context
+  from a caller-supplied tenantId; creates ACTIVE users with role grants, and writes no
+  audit row) are now import-banned everywhere except their owners: `testing` only from a
+  test file; `provisioning` only from `tools/seed/**` (today's seed script; the M2 backfill
+  CLI, `tools/seed/backfill-accounting.mjs`, when it lands) or a test file. Twelve new
+  `lint-boundaries.spec.ts` cases cover both bans, including that `packages/auth` — otherwise
+  allowed to import `TenantContext` directly — is still banned from both, and that
+  `tools/seed/**` may import `provisioning` but not `testing`. `provisioning.ts`'s header
+  now states explicitly that its functions write no audit row and must not be reused for
+  real onboarding without adding one first.
+- **2 (Arch R2)** — the `apps/worker/**` `TenantContext` exemption replaced with the one
+  file that actually needs it, `apps/worker/src/outbox/dispatcher.ts` (confirmed via grep:
+  no other worker file imports it, and `runner.ts` does not either, so it was not added). A
+  new `lint-boundaries.spec.ts` case proves an ordinary job file
+  (`apps/worker/src/jobs/x.ts`) is caught exactly like any other `apps/**` file now that the
+  exemption no longer covers it.
+- **3 (Arch R7)** — this brief's own wording fixed: "the single demo-cadence row" understated
+  what the `docs/BOARD.md` grant actually covered. It is three edits — the M1-X exit row, the
+  decision-log row, and the supersession strike through the superseded "Weekly demo day:
+  Monday" row — named explicitly in both places this brief mentioned it.
+- **4 (Sec F5, medium)** — burning `failedLoginAuditLayer`'s per-tenant cap no longer drops
+  silently. Every suppressed attempt fires a `FAILED_LOGIN_AUDIT_SUPPRESSED` business event
+  (new entry in `@finsoft/observability`'s `BUSINESS_EVENTS`, logged AFTER the deciding
+  transaction commits — never from inside it), and exactly ONE
+  `FAILED_LOGIN_AUDIT_SUPPRESSED` marker audit row is written per tenant per cap window
+  (actor `NULL`), via the same atomic `SET NX EX` dedup `checkLayers`' own `shouldAlert`
+  already uses for its non-blocking alert layer, in its own key namespace and with a TTL
+  matching the cap's own window — never one marker per suppressed attempt, which would
+  recreate the exact chain-contention problem the cap exists to bound. Tested by extending
+  the existing 35-attempt cap-burn test in place (a second independent burn would double-
+  spend the shared `login:ip:*` throttle layer this test file's other cases already share):
+  asserts the suppression-event counter equals exactly the suppressed-attempt count
+  (35 − 30 = 5) and that exactly one marker row lands in `audit_log`.
+- **5 (Sec F3, lows)** — `tools/seed/demo-tenants.mjs`'s `--credentials-out` presence is now
+  validated BEFORE provisioning anything: a new read-only pre-flight
+  (`anyPasswordWouldBeGenerated`) mirrors the real provisioning loop's own existence checks
+  and refuses immediately, with nothing yet created, if any account that does not already
+  exist would need a generated password and no `--credentials-out` was given. The old order
+  ran the whole provisioning loop first and only then refused, which on a fresh database
+  left tenants and users already created with generated-but-unprintable passwords recoverable
+  only by resetting those accounts by hand. The credentials file is now written with flag
+  `'wx'` (`O_WRONLY|O_CREAT|O_EXCL`) and mode `0600`: it refuses — rather than silently
+  reusing an existing file's mode, or following a symlink to write somewhere else — on any
+  path that already has something at it, verified in isolation (this script cannot
+  manufacture a fresh-generation run against the shared TEST database either, for the same
+  reason recorded against S2 above) that `writeFileSync(path, data, { mode: 0o600, flag:
+  'wx' })` succeeds on a new path and fails with `EEXIST` on an existing one.
+
+  **Residual, NOT fixed here per Council instruction — Sec F5-timing.** A known tenant's
+  failed-login path makes one extra Redis round trip (`failedLoginAuditLayer`'s
+  `checkLayers` call, and now also `shouldMarkFailedLoginAuditSuppression`'s `SET NX EX`)
+  that an unknown tenant's decoy path (`decoyAuditRoundTrip`, two Postgres `SELECT`s, no
+  Redis call for either of these) does not make. Both paths still do exactly one credential
+  verification (argon2id), and argon2id's own cost dominates total latency by a wide margin
+  — but the Redis round trips are a theoretical, unclosed timing distinguisher between "this
+  tenant code exists" and "it does not", on top of whatever argon2id itself already equalises.
+  Closing it would mean adding an equivalent no-op Redis round trip to the unknown-tenant
+  path purely to match latency shape, which is a real code change with its own review
+  surface, not a one-line fix — the Council's instruction here is explicit: record this,
+  do not change code for it. **This residual requires Product Owner WRITTEN ACCEPTANCE
+  before production traffic reaches `/auth/login`.** Owner: Security seat to specify the
+  closing change if the Product Owner does not accept the gap; Product Owner to accept or
+  reject in writing.
 
 ## Deferred (explicitly not done here)
 

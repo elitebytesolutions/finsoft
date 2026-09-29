@@ -172,7 +172,11 @@ describe('tools/seed/demo-tenants.mjs', () => {
      * it), so a fresh run generates no passwords to write — and this
      * repository's own rule-4 discipline (no hard delete of an operational
      * record, including in a test fixture) means this test cannot
-     * manufacture that state by deleting the existing users first.
+     * manufacture that state by deleting the existing users first. The same
+     * limitation applies to M1-X Council re-review item 5's two additions
+     * below (the pre-flight-before-provisioning check and the exclusive
+     * 'wx' write both only run on the path that generates a password),
+     * verified instead as noted with each.
      *
      * Verified instead, by manual execution against a genuinely empty local
      * database during this fix's own development: both tenants created,
@@ -180,6 +184,26 @@ describe('tools/seed/demo-tenants.mjs', () => {
      * but the file path. The pinned-password test above covers the one path
      * this database's current state CAN still exercise fresh: a supplied
      * password is never printed.
+     *
+     * Council re-review item 5 (Sec F3), also verified by manual execution
+     * rather than by this suite:
+     *   - the pre-flight check (tools/seed/demo-tenants.mjs's
+     *     anyPasswordWouldBeGenerated, called before the provisioning loop)
+     *     refuses immediately, with NO tenant or user created, when a fresh
+     *     database is seeded without --credentials-out and without every
+     *     DEMO_*_PASSWORD set — where the OLD code ran the whole
+     *     provisioning loop first and only then refused, leaving generated-
+     *     but-never-printed passwords with no way to recover them short of
+     *     resetting the affected accounts by hand;
+     *   - the credentials file is written with flag 'wx' (O_EXCL): verified
+     *     in isolation (not through this script, which cannot manufacture a
+     *     fresh-generation run here either) that `writeFileSync(path, data,
+     *     { mode: 0o600, flag: 'wx' })` succeeds on a path that does not yet
+     *     exist and fails with EEXIST on one that does — the mechanism POSIX
+     *     documents O_EXCL as using to refuse a pre-existing symlink at the
+     *     target path too, even a dangling one, which is what stops this
+     *     write from being redirected somewhere else by anything already
+     *     sitting at --credentials-out.
      *
      * OBSERVED, not fixed here: the file's exact 0600 mode was NOT verified
      * on this development host. It is Windows, and Node's chmodSync/the
