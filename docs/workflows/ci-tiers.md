@@ -104,18 +104,15 @@ shared package it actually depends on — see the `images` map in
 `risk-tiers.json`) changed. On a PR or feature push, a changed image is built
 and **not** pushed — proving it still builds. On a full run:
 
-- A **changed** image is built and pushed as both `:${{ github.sha }}` and
-  `:develop`.
-- An **unchanged** image has its existing `:develop` digest retagged to
-  `:${{ github.sha }}` with `docker buildx imagetools create` — no rebuild,
-  so it stays the exact bytes that already ran on staging. This falls back to
-  a full build+push only if `:develop` does not exist yet (the first full run
-  on a fresh repository).
+- **Every** image (api, worker, web) is built from the commit and pushed as
+  both `:${{ github.sha }}` and `:develop`. There is no "retag the unchanged
+  image" shortcut: it was removed after it shipped images built before M1 to
+  staging on every develop merge (a develop push is diffed against its own
+  merge-base, so every image looked unchanged). The GHA build cache keeps an
+  unchanged image's rebuild short.
 
-This is what keeps `infrastructure/staging/deploy.sh` — which pulls
-`:$SHA` for all three images unconditionally — working without any change to
-it: every full run, all three tags exist, whether or not all three images
-were rebuilt.
+`infrastructure/staging/deploy.sh` pulls `:$SHA` for all three images, so a
+deploy always runs exactly the code of the commit it names.
 
 ## Dependency audit (GAP-002)
 
