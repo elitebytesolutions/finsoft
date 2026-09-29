@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Rule** | `SALE_POSTED/service@1` |
-| **Status** | APPROVED — Accounting seat, 2026-09-27 (M2-000). Council decision recorded in §1 |
+| **Status** | APPROVED — Accounting seat, 2026-09-27 (M2-000). Council decision recorded in §1. Amended 2026-09-28 (M3-000c, Accounting seat, before `IMPLEMENTED`): §4 row 7 and §11 aligned with [customer-receipt.md](customer-receipt.md) ruling R-2 (inactive customers); §4 party foreign key reworded for [ADR-0026](../adr/ADR-0026-journal-line-party-dimension.md); §2 invoice drafts are cancelled, never deleted (Product Owner 2026-09-28, ruling R-3 in §14). No change to the payload, entry, amounts or golden figures |
 | **Implemented in** | M3 — sales invoice module raises the event; kernel rule |
 | **Governed by** | [ADR-0005](../adr/ADR-0005-central-double-entry-posting-engine.md) (closed event set; credit-sale substitution "Dr Accounts Receivable (customer control) for Dr Cash"); [ADR-0011](../adr/ADR-0011-money-representation.md) (line rounding boundary); [PRD.md](../PRD.md) §6.1 (service invoice, no tax); [NON_NEGOTIABLES](../NON_NEGOTIABLES.md) rules 1, 12, 14, 17 |
 | **Golden** | P04, P06, P08, P09, P10 |
@@ -34,7 +34,20 @@ QUORUM     Accounting (posting rule) + Architecture (event set). Both in favour.
 
 ## 2. Trigger
 
-**Posting the invoice** — the module's `DRAFT → POSTED` transition, by a user holding the invoice-post permission. Saving, editing or deleting a **draft** posts nothing: a draft has no journal entry, no invoice number and no customer-ledger effect. Draft deletion is allowed and audited ([ADR-0006](../adr/ADR-0006-immutable-posted-transactions.md)).
+**Posting the invoice** — the module's `DRAFT → POSTED` transition, by a user holding the invoice-post permission. Saving, editing or cancelling a **draft** posts nothing: a draft has no journal entry, no invoice number and no customer-ledger effect. `SALE_POSTED` is raised only by the post action.
+
+**Document lifecycle — decided (Product Owner, 2026-09-28; ruling R-3, §14):**
+
+```
+DRAFT ──post────► POSTED ──reverse──► REVERSED
+  │
+  └────cancel───► CANCELLED
+```
+
+- **Invoice drafts are cancelled, never deleted.** `DRAFT → CANCELLED` records `cancelled_at`, `cancelled_by` and an optional reason, and writes one audit record in its transaction. The cancelled draft stays visible under a "Cancelled" filter. A cancelled invoice is never posted, reopened or deleted. This is stricter than [ADR-0006](../adr/ADR-0006-immutable-posted-transactions.md), which would permit an audited draft deletion. It is the same rule as for receipts ([customer-receipt.md](customer-receipt.md) §1.1).
+- **No number is consumed by a draft.** The `INV` number is assigned in the posting transaction, after all validation. A cancelled draft, or a rejected post, leaves no gap in the `INV` series.
+- **Everything is re-validated at post** against the state at that moment (§4). A draft dated into a period that has since closed is rejected `PERIOD_CLOSED` and stays `DRAFT`, unchanged. The system never re-dates it.
+- **Status errors.** Cancelling an invoice that is not `DRAFT`, or posting a `CANCELLED` one, is `INVOICE_NOT_DRAFT`. A posted invoice is corrected by reversal (§8). Posting an invoice that is already `POSTED` or `REVERSED` goes to the kernel, which returns `REPLAYED` for the original key and `SOURCE_ALREADY_POSTED` otherwise (§10). Cancel and post both take the invoice row `FOR UPDATE` first.
 
 In one transaction the module: validates the draft, calls `postingEngine.post(SALE_POSTED, …, tx)`, receives the entry, assigns the invoice number (`INV-2027-000001`) and sets the invoice `POSTED`.
 
@@ -75,13 +88,13 @@ In one transaction the module: validates the draft, calls `postingEngine.post(SA
 | 4 | Every `quantity > 0` and `unitPrice > 0` | `SALE_LINE_NON_POSITIVE` |
 | 5 | Every `lineNet = round_half_up(quantity × unitPrice, 4)` **exactly** | `SALE_AMOUNT_MISMATCH`, naming the line, the submitted and the expected value |
 | 6 | `netAmount = Σ lineNet` exactly | `SALE_AMOUNT_MISMATCH` |
-| 7 | The customer exists in the tenant and is active | `CUSTOMER_NOT_FOUND`, `CUSTOMER_INACTIVE` |
+| 7 | The customer exists in the tenant and is **active**. An inactive customer cannot be invoiced; it can still be paid ([customer-receipt.md](customer-receipt.md) ruling R-2) | `CUSTOMER_NOT_FOUND`, `CUSTOMER_INACTIVE` |
 | 8 | Date ≤ today; resolves to an `OPEN` period | `DATE_IN_FUTURE`, `PERIOD_NOT_FOUND`, `PERIOD_CLOSED`, `PERIOD_LOCKED` |
 | 9 | Roles `AR_CONTROL` and `SERVICE_REVENUE` resolve | `ACCOUNT_ROLE_UNMAPPED`, `ACCOUNT_ROLE_MISCONFIGURED` |
 
 **Rows 5 and 6 are verification, not computation.** The module computes the line nets for its document with `Money` from `packages/validation`; the kernel recomputes them with the **same** function and rejects any difference. It never substitutes its own figure: the printed invoice and the GL must carry identical numbers, and a mismatch means one of them is wrong. One implementation of the arithmetic, checked twice.
 
-**Row 7 is the module's check.** The kernel knows nothing about modules (ARCHITECTURE §5) and cannot read `customers`; it relies on the module's validation and on the database's tenant-scoped foreign key from the journal line's party to the customer ([README](README.md) §5 hand-off).
+**Row 7 is the module's check.** The kernel knows nothing about modules (ARCHITECTURE §5) and cannot read `customers`. It relies on the module's validation for existence and status. Structurally, it relies on the database's tenant-scoped composite foreign key from the journal line's party, `(tenant_id, party_type, party_id)`, to the kernel-owned **`parties`** registry, which migration 012 creates. It does not rely on a key to `customers`. A customer's id *is* its party id, and `customers` itself has a foreign key to `parties`, never the reverse ([ADR-0026](../adr/ADR-0026-journal-line-party-dimension.md) statements 2 and 4). The posting engine pre-checks the party against `parties` (`PARTY_NOT_FOUND`, `PARTY_TYPE_MISMATCH`); whether the customer may be invoiced stays this row's module check (ADR-0026 statement 6).
 
 Zero-value and negative lines are rejected. A negative line is a credit note, which is `SALE_RETURNED` — a separate rule, not in the MVP.
 
@@ -175,12 +188,24 @@ Dr/Cr ROUNDING                the ADR-0015 flush residual, when a movement took 
 | Credit limit | Not in the MVP. No posting-rule effect when it arrives — it is a precondition in the module |
 | Due date / credit terms | Stored on the invoice; no GL effect |
 | Concurrent post of the same draft by two users | One commits; the other gets `REPLAYED` (same key) or `SOURCE_ALREADY_POSTED` |
-| Customer deactivated after the invoice posted | The posted invoice is unaffected; it can still be paid and reversed |
+| Customer deactivated after the invoice posted | The posted invoice is unaffected. It can still be paid ([customer-receipt.md](customer-receipt.md) §3 row 8) and reversed. No new invoice for that customer can be posted (`CUSTOMER_INACTIVE`, row 7) — ruling R-2, Accounting seat, 2026-09-28 (P12) |
+| Customer deactivated while an invoice for it is still a draft | The draft is unaffected, but its post is rejected `CUSTOMER_INACTIVE`. Reactivate the customer, or cancel the draft |
+| Draft cancelled | No entry, no number, one audit record. `CANCELLED` is final |
+| Cancel a posted invoice | `INVOICE_NOT_DRAFT`. Reverse it instead (§8) |
 
 ## 12. Errors
 
-`PAYLOAD_INVALID` · `AMOUNT_NOT_STRING` · `AMOUNT_SCALE` · `SALE_SETTLEMENT_NOT_ENABLED` · `SALE_NO_LINES` · `SALE_TOO_MANY_LINES` · `SALE_LINE_KIND_NOT_ENABLED` · `SALE_LINE_NON_POSITIVE` · `SALE_AMOUNT_MISMATCH` · `CUSTOMER_NOT_FOUND` · `CUSTOMER_INACTIVE` · `DATE_IN_FUTURE` · `PERIOD_NOT_FOUND` · `PERIOD_CLOSED` · `PERIOD_LOCKED` · `ACCOUNT_ROLE_UNMAPPED` · `ACCOUNT_ROLE_MISCONFIGURED` · `SOURCE_ALREADY_POSTED` · `IDEMPOTENCY_KEY_REUSED` · `INVOICE_HAS_LIVE_ALLOCATIONS` (reversal)
+`PAYLOAD_INVALID` · `AMOUNT_NOT_STRING` · `AMOUNT_SCALE` · `SALE_SETTLEMENT_NOT_ENABLED` · `SALE_NO_LINES` · `SALE_TOO_MANY_LINES` · `SALE_LINE_KIND_NOT_ENABLED` · `SALE_LINE_NON_POSITIVE` · `SALE_AMOUNT_MISMATCH` · `CUSTOMER_NOT_FOUND` · `CUSTOMER_INACTIVE` · `DATE_IN_FUTURE` · `PERIOD_NOT_FOUND` · `PERIOD_CLOSED` · `PERIOD_LOCKED` · `ACCOUNT_ROLE_UNMAPPED` · `ACCOUNT_ROLE_MISCONFIGURED` · `SOURCE_ALREADY_POSTED` · `IDEMPOTENCY_KEY_REUSED` · `INVOICE_HAS_LIVE_ALLOCATIONS` (reversal) · `INVOICE_NOT_DRAFT` (post of a cancelled invoice; cancel of an invoice that is not a draft)
 
 ## 13. Golden
 
-**P04** (the 10,000.0000 invoice and the variant fences), **P06** (reversal), **P08** (idempotency), **P09** (journey), **P10** (half-way tie at the line boundary).
+**P04** (the 10,000.0000 invoice and the variant fences), **P06** (reversal), **P08** (idempotency), **P09** (journey), **P10** (half-way tie at the line boundary), **P12** (an inactive customer cannot be invoiced; no number consumed).
+
+The invoice cancel path adds no figure: a cancelled draft has no GL effect, which is the same property P11 pins for receipts (steps 13 and 17). An invoice-specific cancel scenario lands with the M3 runner if the QA lane wants one; it cannot change any expected number.
+
+## 14. Rulings
+
+| Id | Date | By | Ruling |
+|---|---|---|---|
+| R-2 | 2026-09-28 | Accounting seat | An inactive customer cannot be invoiced (§4 row 7) but can still be paid and reversed. Recorded in full in [customer-receipt.md](customer-receipt.md) §13 |
+| R-3 | 2026-09-28 | Product Owner decision, recorded by the Accounting seat | **Sales invoice drafts are cancelled, never deleted**, the same as receipts. `DRAFT → POSTED → REVERSED`, `DRAFT → CANCELLED`. An audit record on cancel. No number consumed by a draft. Supersedes this file's former §2 sentence "Draft deletion is allowed and audited". Closes the question the Accounting seat raised on 2026-09-28 about receipts and invoices being treated differently |
