@@ -112,6 +112,29 @@ describe('LoginScreen', () => {
     expect(screen.getByRole('button', { name: 'Sign in' })).not.toBeDisabled()
   })
 
+  it('maps a 400 validation_failed detail to the matching field, not a form banner', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse(400, {
+        error: 'validation_failed',
+        message: 'The request body did not match the expected shape.',
+        details: [
+          {
+            path: 'tenantCode',
+            code: 'invalid_string',
+            message: 'tenantCode must match ^[A-Z][A-Z0-9_]{1,15}$',
+          },
+        ],
+      }),
+    )
+    renderLogin()
+    fillAndSubmit({ tenantCode: '1', email: 'a@b.com', password: 'x' })
+
+    expect(
+      await screen.findByText('tenantCode must match ^[A-Z][A-Z0-9_]{1,15}$'),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Sign in' })).not.toBeDisabled()
+  })
+
   it('shows the rate-limit banner with a counting-down retry time and disables submit', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
       jsonResponse(429, { message: 'Too many attempts.' }, { 'Retry-After': '30' }),

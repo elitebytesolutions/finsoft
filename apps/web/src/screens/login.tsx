@@ -98,6 +98,21 @@ export function LoginScreen() {
     } catch (err) {
       const apiError =
         err instanceof ApiError ? err : new ApiError('unknown', 'Something went wrong. Try again.')
+      // A 400 the client-side presence/shape check did not catch (e.g. a tenantCode the
+      // server's regex rejects) — surface it at the field when the path names one of ours,
+      // per "field errors at the field, form errors at the form". The server's rejection is
+      // still the message shown; this only decides where it lands.
+      if (apiError.code === 'validation_failed' && apiError.details?.length) {
+        const atField: FieldErrors = {}
+        for (const detail of apiError.details) {
+          if (detail.path in FIELD_ID) atField[detail.path as keyof FieldErrors] = detail.message
+        }
+        if (Object.keys(atField).length > 0) {
+          setFieldErrors(atField)
+          setSubmitting(false)
+          return
+        }
+      }
       setFormError(apiError)
       if (apiError.code === 'rate_limited' && apiError.retryAfterSeconds) {
         setRetryIn(apiError.retryAfterSeconds)

@@ -130,11 +130,12 @@ echo "$BODY" | grep -qi 'localhost:3001\|127.0.0.1:3001' &&
 #    arrangement ADR-0009's SameSite=Strict refresh cookie requires, and it is
 #    the part a browser would exercise.
 #
-#    What this does NOT prove, and must not be read as proving: that the web
-#    application CALLS the API. It does not. apps/web is currently driven
-#    entirely by @/mocks/api and issues no requests to /api/* at all, so there
-#    is no Next→proxy→API request path in existence to test. When the first
-#    real call lands, the test for it belongs here.
+#    What this does NOT prove: that a real login round-trip through the proxy
+#    behaves like the same journey does in tests/e2e/real-login.spec.ts (the
+#    one place that is exercised, against a spawned API and a real database).
+#    apps/web's login screen (apps/web/src/lib/api/client.ts) DOES call
+#    /api/auth/* now — this step only proves the proxy still answers on /api,
+#    not any particular request shape or cookie behaviour.
 # ---------------------------------------------------------------------------
 API_FROM_WEB_ORIGIN=$(curl -fsS --max-time 10 "$BASE/api/health/ready") ||
   fail "/api/health/ready is not reachable from the web origin — the proxy is not routing /api"

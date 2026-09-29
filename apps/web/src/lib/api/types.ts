@@ -49,10 +49,17 @@ export interface MeResponse {
 export type ApiErrorCode =
   | 'invalid_credentials'
   | 'rate_limited'
+  | 'validation_failed'
   | 'forbidden'
   | 'session_expired'
   | 'network_error'
   | 'unknown'
+
+/** One `packages/validation`-shaped field failure, from a 400 `validation_failed` body. */
+export interface ApiFieldError {
+  path: string
+  message: string
+}
 
 /**
  * Typed error thrown by every function in `client.ts`. Screens branch on `.code`, never on a
@@ -63,16 +70,24 @@ export class ApiError extends Error {
   readonly status?: number
   /** Seconds until a retry may succeed, from the `Retry-After` header on a 429. */
   readonly retryAfterSeconds?: number
+  /** Per-field failures from a 400 `validation_failed` body, when the server sent any. */
+  readonly details?: ApiFieldError[]
 
   constructor(
     code: ApiErrorCode,
     message: string,
-    options?: { status?: number; retryAfterSeconds?: number; cause?: unknown },
+    options?: {
+      status?: number
+      retryAfterSeconds?: number
+      details?: ApiFieldError[]
+      cause?: unknown
+    },
   ) {
     super(message, options?.cause !== undefined ? { cause: options.cause } : undefined)
     this.name = 'ApiError'
     this.code = code
     this.status = options?.status
     this.retryAfterSeconds = options?.retryAfterSeconds
+    this.details = options?.details
   }
 }

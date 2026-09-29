@@ -71,6 +71,26 @@ export async function login(credentials: LoginRequest): Promise<LoginResponse> {
     )
   }
 
+  if (res.status === 400) {
+    // apps/api/src/common/zod-validation.pipe.ts: {error:'validation_failed', message,
+    // details:[{path,code,message}]}. Client-side validation already covers presence and
+    // email shape (screens/login.tsx), so this is the edge the form check does not
+    // reach — e.g. a tenantCode shape the server rejects. `details` rides along so a
+    // caller can map a path to a field; the login screen currently just renders `message`
+    // as a form-level banner, which is still the server's rejection, verbatim.
+    const body = await parseJsonSafe(res)
+    const details = Array.isArray(body?.details)
+      ? (body.details as Array<{ path?: unknown; code?: unknown; message?: unknown }>)
+          .filter((d) => typeof d.path === 'string' && typeof d.message === 'string')
+          .map((d) => ({ path: d.path as string, message: d.message as string }))
+      : undefined
+    throw new ApiError(
+      'validation_failed',
+      toMessage(body, 'The request body did not match the expected shape.'),
+      { status: 400, details },
+    )
+  }
+
   if (!res.ok) {
     const body = await parseJsonSafe(res)
     throw new ApiError('unknown', toMessage(body, `Sign in failed (${res.status}).`), {
@@ -83,13 +103,27 @@ export async function login(credentials: LoginRequest): Promise<LoginResponse> {
   return data
 }
 
-/** `POST /api/auth/logout`. Best-effort against the server; local state always clears. */
+/**
+ * `POST /api/auth/logout`. Best-effort against the server; local state always clears.
+ *
+ * `/auth/logout` is NOT `@Public()` (apps/api/src/auth/auth.controller.ts) — `TenantGuard`
+ * rejects it with 401 unless it carries `Authorization: Bearer <access token>`, exactly like
+ * any other protected route. Without this header the server never sees `req.auth`, never
+ * revokes the session, and the refresh cookie is left valid — sign-out would clear the tab's
+ * memory while the session family lives on. So this attaches the current access token when
+ * one is held; when none is held (e.g. a stale tab after a hard reload with no session to
+ * restore) there is nothing server-side to revoke and the 401 that follows is swallowed below
+ * like any other best-effort failure.
+ */
 export async function logout(): Promise<void> {
   try {
+    const token = getAccessToken()
+    const headers: Record<string, string> = { [REQUESTED_WITH_HEADER]: REQUESTED_WITH_VALUE }
+    if (token) headers.Authorization = `Bearer ${token}`
     await rawFetch('/api/auth/logout', {
       method: 'POST',
       credentials: 'include',
-      headers: { [REQUESTED_WITH_HEADER]: REQUESTED_WITH_VALUE },
+      headers,
     })
   } catch {
     // A network failure on logout must not trap the user in a "logged in" client

@@ -94,6 +94,32 @@ describe('lib/api/client', () => {
       expect(err).toBeInstanceOf(ApiError)
       expect((err as ApiError).code).toBe('network_error')
     })
+
+    it('throws a validation_failed error with field-path details on 400', async () => {
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(400, {
+          error: 'validation_failed',
+          message: 'The request body did not match the expected shape.',
+          details: [
+            {
+              path: 'tenantCode',
+              code: 'invalid_string',
+              message: 'tenantCode must match ^[A-Z][A-Z0-9_]{1,15}$',
+            },
+          ],
+        }),
+      )
+
+      const err = await login({ tenantCode: '1', email: 'a@b.com', password: 'x' }).catch(
+        (e: unknown) => e,
+      )
+
+      expect(err).toBeInstanceOf(ApiError)
+      expect((err as ApiError).code).toBe('validation_failed')
+      expect((err as ApiError).details).toEqual([
+        { path: 'tenantCode', message: 'tenantCode must match ^[A-Z][A-Z0-9_]{1,15}$' },
+      ])
+    })
   })
 
   describe('refresh — single in-flight per tab', () => {
@@ -252,6 +278,33 @@ describe('lib/api/client', () => {
           headers: expect.objectContaining({ 'X-Requested-With': 'finsoft' }),
         }),
       )
+      expect(getAccessToken()).toBeNull()
+    })
+
+    it('sends the current access token as a bearer header — /auth/logout is not @Public()', async () => {
+      // apps/api/src/common/tenant.guard.ts rejects any non-public route with 401 unless it
+      // carries Authorization: Bearer <token>; logout is one of those routes.
+      setAccessToken('tok')
+      fetchMock.mockResolvedValueOnce(emptyResponse(204))
+
+      await logout()
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/auth/logout',
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: 'Bearer tok' }),
+        }),
+      )
+    })
+
+    it('omits the bearer header when no access token is held, and still clears local state', async () => {
+      setAccessToken(null)
+      fetchMock.mockResolvedValueOnce(emptyResponse(401))
+
+      await logout()
+
+      const [, init] = fetchMock.mock.calls[0]
+      expect(authHeader(init as RequestInit)).toBeNull()
       expect(getAccessToken()).toBeNull()
     })
   })
