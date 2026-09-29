@@ -1,6 +1,6 @@
 # ADR-0028: Module packaging and runtime
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-09-29
 **Deciders:** Architecture seat (author), Database/Security seat ([ADR-0024](ADR-0024-operating-model.md))
 **Authority:** LEVEL 1 — reversing this requires a superseding ADR. **Amends** [ARCHITECTURE](../ARCHITECTURE.md) §2 (:91, :122–123, :126). **Supersedes in part** [ADR-0001](ADR-0001-modular-monolith.md) :38–39, the `ui` in the module layer list, and nothing else in it.
@@ -72,6 +72,16 @@ Two alternatives were rejected. **Controllers in the module, built by SWC**: thi
 | C11 | `tests/integration/module-surface.spec.ts` snapshots the runtime export names of each module's `index.ts` and `published.ts`. A change to it is an Architecture seat review | 3 |
 | C12 | The kernel index exports the tenant-scope numbering facility for `CUST` (K7) and the party-filtered ledger read (K5, `@finsoft/reporting`). Both are reviewed as T3 kernel changes. The existing `kernelOnlyCallSyntax` stays the thing that stops a module calling `assignTenantDocumentNumber` | 7 |
 
+**Database/Security conditions**, also binding M3-C's first PR:
+
+| # | Mechanism | Makes true |
+|---|---|---|
+| S1 | **Flat config replaces `no-restricted-imports` per file.** Every new `modules/**` block from C6 (the `@nestjs/*`/`withGlobal` block, the `withTenant`-outside-`application/` block, and any per-layer block) spreads `REQUEST_SCOPE_IMPORT_BAN`, `TENANT_CONTEXT_IMPORT_BAN`, `TESTING_IMPORT_BAN` and `PROVISIONING_IMPORT_BAN`, and bans `pg` and `@finsoft/database/auth`. `lint-boundaries.spec.ts` proves, **per layer** (`infrastructure/`, `application/`, `api/`, `index.ts`), that `TenantContext`, `/testing`, `/provisioning` and `/request-scope` still fire, and that the `withGlobal` and `TenantContext` entries on the same `@finsoft/database` specifier both fire | 6, M1-X |
+| S2 | **C8 fails closed.** A builder table argument that is not a string literal is an error. The literal matches as an exact identifier after the alias is stripped (`'customers as c'` passes; `'customers_x'` and `'parties'` do not). Nested builders (`eb.selectFrom`, `with(...)`) are covered. `sql.table`, `sql.ref`, `db.dynamic`, `CompiledQuery` and `executeQuery` are banned in `modules/**`. Probes cover each | 8 |
+| S3 | **Tenant-scoped foreign keys.** PostgreSQL checks foreign keys with row security off. A single-column `REFERENCES parties(id)` therefore lets tenant B insert a row that points at tenant A's party, and it tells B whether that id exists. Every foreign key from a tenant table to a tenant table is composite, `(tenant_id, x) REFERENCES t (tenant_id, id)`. `schema.spec.ts` asserts this from the catalog for every foreign key | 9 |
+| S4 | **C10 also rejects the following outright in module migrations:** `ALTER POLICY`, `DROP`, `CREATE RULE`, `REVOKE`, `ALTER … OWNER`, `CREATE FUNCTION … SECURITY DEFINER`, `CREATE VIEW` without `security_invoker = true`, `ALTER DEFAULT PRIVILEGES`, `ALTER ROLE`, `SET ROLE`, and `DISABLE`/`NO FORCE ROW LEVEL SECURITY`. Quoted and schema-qualified names are normalised before matching. `Owner:` must name an existing `modules/<name>` directory. Each construct has a failing fixture. `rls.spec.ts` stays catalog-driven and asserts that `customers` is present | 9 |
+| S5 | Repositories call `assertIssuedTenantTx` on the handle they receive. `tests/integration/customers/` proves that a use case invoked outside a `TenantContext` fails closed. `tests/security/` proves that another tenant's customer id gets the same 404 as an absent one, on every customer route | 6 |
+
 **On acceptance**, before M3-C merges, the Architecture seat:
 - amends ARCHITECTURE §2 :91, :122–123 and :126 to statements 2, 4 and 5;
 - places a permanent supersession scope notice at the head of ADR-0001 for :38–39.
@@ -81,4 +91,4 @@ Two alternatives were rejected. **Controllers in the module, built by SWC**: thi
 | Seat | Verdict |
 |---|---|
 | **Architecture seat** | ✅ **APPROVED, 2026-09-29.** Author. Checked against ADR-0001, 0005, 0013, 0023 (A1, A4), 0026 and 0027, ARCHITECTURE §2 and §5, `.dependency-cruiser.cjs`, `eslint.config.mjs`, `risk-tiers.json`, `Dockerfile.api` and `apps/api/src/app.module.ts` on `develop` 6f728c8. C1–C12 bind M3-C's first PR. The M3-P lane repeats C6's adapter ban for `apps/api/src/receivables/**` and adds C8's receivables block. |
-| **Database/Security seat** | *Pending review.* Statements 6, 8 and 9, and conditions C8 and C10. |
+| **Database/Security seat** | ✅ **APPROVED WITH CONDITIONS S1–S5, 2026-09-29.** Reviewed statements 6, 8 and 9, and C8 and C10, against `eslint.config.mjs`, `.dependency-cruiser.cjs` (`kysely-is-allowlisted`), `packages/database` exports, `rls.spec.ts` and `schema.spec.ts` on 69f065c. The statements hold: RLS stays forced, `TenantTx` is the only path in, and there is no `withGlobal` and no pool. As drafted, the mechanisms would have reopened the M1-X import bans (S1) and allowed a cross-tenant foreign-key write (S3). S1–S5 close both. |
