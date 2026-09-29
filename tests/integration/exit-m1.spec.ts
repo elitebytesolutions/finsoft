@@ -218,18 +218,75 @@ describe('W1-006 criterion 1: authorised access succeeds (A reads and updates it
   })
 
   it('PATCH /api/auth/me updates A’s own record, and the read reflects it', async () => {
+    const before = await request(app.getHttpServer())
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${a.accessToken}`)
+
     const patch = await request(app.getHttpServer())
       .patch('/api/auth/me')
       .set('Authorization', `Bearer ${a.accessToken}`)
-      .send({ fullName: 'Renamed Owner A' })
+      .send({ fullName: 'Renamed Owner A', version: before.body.user.version })
     expect(patch.status).toBe(200)
     expect(patch.body.fullName).toBe('Renamed Owner A')
     expect(patch.body.id).toBe(a.user.ownerId)
+    expect(patch.body.version).toBe(before.body.user.version + 1)
 
     const read = await request(app.getHttpServer())
       .get('/api/auth/me')
       .set('Authorization', `Bearer ${a.accessToken}`)
     expect(read.body.user.fullName).toBe('Renamed Owner A')
+  })
+
+  describe('M1-X, Council DB C3: optimistic concurrency', () => {
+    it('a stale/wrong version is rejected with 409 and writes NO audit row', async () => {
+      const before = await request(app.getHttpServer())
+        .get('/api/auth/me')
+        .set('Authorization', `Bearer ${a.accessToken}`)
+      const wrongVersion = before.body.user.version + 999
+
+      const auditBefore = await runAs({ tenantId: a.user.tenantId, userId: a.user.ownerId }, () =>
+        withTenant((tx) => listAuditEvents(tx, { action: 'USER_PROFILE_UPDATED', limit: 200 })),
+      )
+
+      const res = await request(app.getHttpServer())
+        .patch('/api/auth/me')
+        .set('Authorization', `Bearer ${a.accessToken}`)
+        .send({ fullName: 'Should Not Apply', version: wrongVersion })
+      expect(res.status).toBe(409)
+      expect(res.body.error).toBe('version_conflict')
+
+      const auditAfter = await runAs({ tenantId: a.user.tenantId, userId: a.user.ownerId }, () =>
+        withTenant((tx) => listAuditEvents(tx, { action: 'USER_PROFILE_UPDATED', limit: 200 })),
+      )
+      expect(auditAfter.items.length).toBe(auditBefore.items.length)
+
+      const readAfter = await request(app.getHttpServer())
+        .get('/api/auth/me')
+        .set('Authorization', `Bearer ${a.accessToken}`)
+      expect(readAfter.body.user.fullName).not.toBe('Should Not Apply')
+    })
+
+    it('audit before_json/after_json reflect the actual old and new fullName', async () => {
+      const before = await request(app.getHttpServer())
+        .get('/api/auth/me')
+        .set('Authorization', `Bearer ${a.accessToken}`)
+      const oldName = before.body.user.fullName as string
+      const newName = `Audited Name ${unique()}`
+
+      await request(app.getHttpServer())
+        .patch('/api/auth/me')
+        .set('Authorization', `Bearer ${a.accessToken}`)
+        .send({ fullName: newName, version: before.body.user.version })
+        .expect(200)
+
+      const events = await runAs({ tenantId: a.user.tenantId, userId: a.user.ownerId }, () =>
+        withTenant((tx) => listAuditEvents(tx, { action: 'USER_PROFILE_UPDATED', limit: 200 })),
+      )
+      // Newest first (listAuditEvents orders by seq DESC).
+      const latest = events.items[0]
+      expect(latest?.beforeJson).toEqual({ fullName: oldName })
+      expect(latest?.afterJson).toEqual({ fullName: newName })
+    })
   })
 })
 
@@ -245,10 +302,19 @@ describe('W1-006 criterion 2: A cannot reach B by id/tenant-id, each door tested
   })
 
   it('body door: an undeclared tenantId/userId in the PATCH body has no effect', async () => {
+    const before = await request(app.getHttpServer())
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${a.accessToken}`)
+
     const res = await request(app.getHttpServer())
       .patch('/api/auth/me')
       .set('Authorization', `Bearer ${a.accessToken}`)
-      .send({ fullName: 'Still A', tenantId: b.user.tenantId, userId: b.user.ownerId })
+      .send({
+        fullName: 'Still A',
+        version: before.body.user.version,
+        tenantId: b.user.tenantId,
+        userId: b.user.ownerId,
+      })
     expect(res.status).toBe(200)
     // The update landed on A's own row, never B's — never accepts an id from the body at all.
     expect(res.body.id).toBe(a.user.ownerId)

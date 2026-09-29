@@ -134,7 +134,16 @@ export async function getAccountState(userId: string): Promise<AccountState | nu
 }
 
 export interface AuthenticatedProfile {
-  readonly user: { readonly id: string; readonly email: string; readonly fullName: string }
+  /**
+   * `version`: M1-X, Council DB C3. The client's optimistic-concurrency
+   * token for PATCH /api/auth/me — read it here, send it back unchanged.
+   */
+  readonly user: {
+    readonly id: string
+    readonly email: string
+    readonly fullName: string
+    readonly version: number
+  }
   readonly tenant: { readonly id: string; readonly code: string; readonly name: string }
 }
 
@@ -146,13 +155,21 @@ export async function getAuthenticatedProfile(
     const row = await tx
       .selectFrom('users as u')
       .innerJoin('tenants as t', 't.id', 'u.tenant_id')
-      .select(['u.id', 'u.email', 'u.full_name', 't.id as tenant_id', 't.code', 't.name'])
+      .select([
+        'u.id',
+        'u.email',
+        'u.full_name',
+        'u.version',
+        't.id as tenant_id',
+        't.code',
+        't.name',
+      ])
       .where('u.id', '=', userId)
       .executeTakeFirst()
 
     if (!row) return null
     return {
-      user: { id: row.id, email: row.email, fullName: row.full_name },
+      user: { id: row.id, email: row.email, fullName: row.full_name, version: row.version },
       tenant: { id: row.tenant_id, code: row.code, name: row.name },
     }
   })
@@ -162,12 +179,30 @@ export interface UpdatedProfile {
   readonly id: string
   readonly email: string
   readonly fullName: string
+  readonly version: number
 }
+
+export type UpdateOwnFullNameOutcome =
+  | { readonly outcome: 'success'; readonly profile: UpdatedProfile }
+  | { readonly outcome: 'not_found' }
+  /** The caller's `version` did not match the row's current version. Nothing was written; no audit row. */
+  | { readonly outcome: 'version_conflict'; readonly currentVersion: number }
 
 /**
  * PATCH /api/auth/me. M1-X, W1-006 exit criterion 1: the minimal authorised
  * write "tenant A can read AND update its own record" needs — updates only
  * `full_name`, nothing financial and nothing that touches a kernel.
+ *
+ * M1-X, Council DB C3: reads with `SELECT ... FOR UPDATE` (so the version
+ * check and the write are atomic against a concurrent update of the SAME
+ * row, not just against a REQUEST validated separately from the write —
+ * the row lock is held for the rest of this transaction), requires the
+ * caller's `expectedVersion` to match, and reports a mismatch as
+ * `version_conflict` WITHOUT writing anything — not the row, and not an
+ * audit record: an attempted update that did not happen is not an event to
+ * audit. `before_json` is the value read under the SAME lock the write
+ * commits against, so it is never stale by the time it is hashed into the
+ * chain.
  *
  * Audited directly, the same shape `revokeSession` above already
  * establishes: this file carries no restriction against calling
@@ -179,14 +214,20 @@ export interface UpdatedProfile {
 export async function updateOwnFullName(
   userId: string,
   fullName: string,
-): Promise<UpdatedProfile | null> {
+  expectedVersion: number,
+): Promise<UpdateOwnFullNameOutcome> {
   return withTenant(async (tx) => {
     const before = await tx
       .selectFrom('users')
-      .select(['id', 'email', 'full_name', 'created_by'])
+      .select(['id', 'email', 'full_name', 'created_by', 'version'])
       .where('id', '=', userId)
+      .forUpdate()
       .executeTakeFirst()
-    if (!before) return null
+    if (!before) return { outcome: 'not_found' }
+
+    if (before.version !== expectedVersion) {
+      return { outcome: 'version_conflict', currentVersion: before.version }
+    }
 
     const updated = await tx
       .updateTable('users')
@@ -200,8 +241,18 @@ export async function updateOwnFullName(
         version: sql`version + 1`,
       })
       .where('id', '=', userId)
-      .returning(['id', 'email', 'full_name'])
-      .executeTakeFirstOrThrow()
+      // Redundant under the FOR UPDATE lock already held in this same
+      // transaction (no concurrent writer can have changed it), but this
+      // codebase's own doctrine (login.ts, refresh.ts) is that the WRITE
+      // statement is the point of truth, never a read taken moments earlier
+      // — so the predicate is restated here rather than trusted from above.
+      .where('version', '=', expectedVersion)
+      .returning(['id', 'email', 'full_name', 'version'])
+      .executeTakeFirst()
+
+    if (!updated) {
+      return { outcome: 'version_conflict', currentVersion: before.version }
+    }
 
     await recordAudit(tx, {
       actorUserId: userId,
@@ -214,6 +265,14 @@ export async function updateOwnFullName(
       requestId: null,
     })
 
-    return { id: updated.id, email: updated.email, fullName: updated.full_name }
+    return {
+      outcome: 'success',
+      profile: {
+        id: updated.id,
+        email: updated.email,
+        fullName: updated.full_name,
+        version: updated.version,
+      },
+    }
   })
 }

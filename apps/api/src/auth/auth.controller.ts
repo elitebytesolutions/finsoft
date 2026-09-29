@@ -1,5 +1,6 @@
 import {
   Body,
+  ConflictException,
   Controller,
   ForbiddenException,
   Get,
@@ -13,6 +14,14 @@ import {
   UnauthorizedException,
   UsePipes,
 } from '@nestjs/common'
+import {
+  ApiBadRequestResponse,
+  ApiBody,
+  ApiConflictResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiUnauthorizedResponse,
+} from '@nestjs/swagger'
 import type { Request, Response } from 'express'
 import { HashingQueueFullError, ThrottleUnavailableError } from '@finsoft/auth'
 import { logCommittedBusinessEvent } from '@finsoft/observability'
@@ -227,17 +236,52 @@ export class AuthController {
    * can read and update its own record" needs. Updates only fullName —
    * audited by updateOwnFullName itself (packages/database/src/auth/
    * session.ts), inside the same transaction as the write.
+   *
+   * M1-X, Council DB C3: `body.version` is the optimistic-concurrency token
+   * GET /api/auth/me returned. A mismatch is reported as 409 with NO audit
+   * row written — an update that did not happen is not an event.
    */
   @AuthenticatedOnly()
   @Patch('me')
   @UsePipes(new ZodValidationPipe(UpdateMeSchema))
+  @ApiOperation({
+    summary: "Update the caller's own display name.",
+    description:
+      'Optimistic concurrency: version must match the value GET /api/auth/me returned, or the ' +
+      'request 409s with the current version and writes nothing (not even an audit row).',
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['fullName', 'version'],
+      properties: {
+        fullName: { type: 'string', minLength: 1, maxLength: 200 },
+        version: { type: 'integer', minimum: 0 },
+      },
+    },
+  })
+  @ApiOkResponse({ description: 'Updated profile, including the new version.' })
+  @ApiBadRequestResponse({ description: 'fullName or version failed validation.' })
+  @ApiUnauthorizedResponse({ description: 'Missing, invalid, expired or revoked credentials.' })
+  @ApiConflictResponse({ description: 'version did not match the row’s current version.' })
   async updateMe(@Body() body: UpdateMeDto, @Req() req: Request) {
     const auth = req.auth
     if (!auth) throw new UnauthorizedException(INVALID_CREDENTIALS)
 
-    const profile = await this.auth.updateMe(auth.userId, body.fullName)
-    if (!profile) throw new UnauthorizedException(INVALID_CREDENTIALS)
-    return profile
+    const outcome = await this.auth.updateMe(auth.userId, body.fullName, body.version)
+
+    if (outcome.outcome === 'not_found') throw new UnauthorizedException(INVALID_CREDENTIALS)
+
+    if (outcome.outcome === 'version_conflict') {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'version_conflict',
+        message: 'The record has changed since you last read it.',
+        currentVersion: outcome.currentVersion,
+      })
+    }
+
+    return outcome.profile
   }
 
   @Public()

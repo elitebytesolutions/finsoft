@@ -46,4 +46,5 @@ export {
   type AccountState,
   type AuthenticatedProfile,
   type UpdatedProfile,
+  type UpdateOwnFullNameOutcome,
 } from './session.ts'

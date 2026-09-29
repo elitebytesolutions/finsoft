@@ -10,7 +10,11 @@ import {
   type LoginResult,
   type RefreshResult,
 } from '@finsoft/auth'
-import { getAuthenticatedProfile, updateOwnFullName } from '@finsoft/database/auth'
+import {
+  getAuthenticatedProfile,
+  updateOwnFullName,
+  type UpdateOwnFullNameOutcome,
+} from '@finsoft/database/auth'
 import type { AuthContext } from '@finsoft/shared-types'
 import type { JWK } from 'jose'
 
@@ -54,7 +58,7 @@ export class AuthService {
   }
 
   async me(auth: AuthContext): Promise<{
-    user: { id: string; email: string; fullName: string }
+    user: { id: string; email: string; fullName: string; version: number }
     tenant: { id: string; code: string; name: string }
     sessionId: string
     permissionVersion: number
@@ -76,9 +80,17 @@ export class AuthService {
    * authorised write "tenant A can read and update its own record" needs.
    * No TenantContext.run here either — see .me()'s comment above; the same
    * reasoning applies.
+   *
+   * `expectedVersion`: M1-X, Council DB C3 — the caller's optimistic-
+   * concurrency token. A mismatch is reported as `version_conflict`, never
+   * silently applied.
    */
-  updateMe(userId: string, fullName: string) {
-    return updateOwnFullName(userId, fullName)
+  updateMe(
+    userId: string,
+    fullName: string,
+    expectedVersion: number,
+  ): Promise<UpdateOwnFullNameOutcome> {
+    return updateOwnFullName(userId, fullName, expectedVersion)
   }
 
   hashRefreshToken(raw: string): string {
