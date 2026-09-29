@@ -2966,6 +2966,12 @@ output.sav-num{display:inline-flex;align-items:center;justify-content:center;bac
 .coa2-kind{display:inline-block;padding:5px 10px;border-radius:6px;font-size:11.5px;font-weight:600;background:#EEF2F5;color:#3D5166}.coa2-kind.header{background:#EEF2F5;color:#3D5166}.coa2-kind.group{background:#E3F0FF;color:#1B74E4}.coa2-kind.postable{background:#E3F6EA;color:#0A8A47}.coa2-kind.sm{padding:3px 7px;font-size:9.5px;border-radius:5px;line-height:1.4;flex:none;white-space:nowrap}
 .coa2-count{display:inline-block;min-width:32px;text-align:center;padding:4px 9px;border-radius:6px;font-size:11.5px;font-weight:600;background:#EEF2F5;color:#5B6B80}.coa2-count.on{background:#E3F0FF;color:#1B74E4}
 .c-balance{font-weight:800;color:var(--c-green);font-size:13.5px}.coa2-tr.depth-4 .c-balance{font-weight:700}
+/* A real amount ("Rs 12,184,251.00 Dr") is longer than the demo data's undecimalled number
+ * ("Rs 12,184,251") this column was sized for — stacked amount-then-side (like .c-mod already
+ * does for its own two-line cell) instead of one inline string that wraps unpredictably and
+ * overflows into the row below it. M2-UI restoration, chart-of-accounts.tsx. */
+.coa2-tr>span.c-balance{flex-direction:column;align-items:flex-end!important;gap:0;line-height:1.25}
+.c-balance small{font-size:11px;font-weight:600;color:var(--c-mute)}
 .c-change em{font-style:normal;font-size:12px;font-weight:600;min-width:52px}.c-change.up em{color:var(--c-green)}.c-change.down em{color:#E0323F}.c-change.flat em{color:#8A98A8}.c-change .coa2-spark{width:44px;height:20px}.coa2-flat{width:44px;border-top:1.5px solid #C4CFDA}
 .c-mod{flex-direction:column;align-items:flex-start!important;gap:1px!important;line-height:1.3}.c-mod b{font-weight:500;font-size:12px}.c-mod small{font-size:11px;color:var(--c-mute)}
 .coa2-status{display:inline-block;padding:5px 10px;border-radius:6px;font-size:11.5px;font-weight:600}.coa2-status.on{background:#E3F6EA;color:#0A8A47}.coa2-status.off{background:#FDECEE;color:#E0323F}

@@ -68,13 +68,16 @@ test.describe('M2 accounting journey (real API, real tenant)', () => {
   }) => {
     await login(page, fixture.accountantEmail, fixture.password)
 
-    // 1. Chart of Accounts — real tree, read-only.
+    // 1. Chart of Accounts — the PO's original screen design, restored (M2-UI). Add/Edit/
+    // Delete are back in the DOM (the PO now wants account creation in the MVP) but disabled
+    // behind ACCOUNT_CREATE_ENABLED until a real POST /api/accounts exists — the chart itself
+    // is still read-only server-side (coa-standard.md §5).
     await page.goto('/accounts')
     await expect(
       page.getByRole('heading', { name: 'Chart of Accounts', exact: true }),
     ).toBeVisible()
     await expect(page.getByText('Cash in Hand')).toBeVisible()
-    await expect(page.getByRole('button', { name: /add account/i })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: /add account/i })).toBeDisabled()
 
     // 2. Post a balanced journal voucher: Dr Cash in Hand / Cr Owner's Capital.
     await page.goto('/vouchers/new')

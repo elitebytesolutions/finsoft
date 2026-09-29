@@ -5,8 +5,8 @@
  * REPORT/trial-balance@1 (docs/posting-rules/ledger-and-trial-balance.md §3).
  */
 import { useCallback, useEffect, useState } from 'react'
-import { CalendarDays, RotateCw, Scale, ShieldAlert } from 'lucide-react'
-import { Banner, Button, PageHead, Kpi } from '@finsoft/ui'
+import { CalendarDays, ChevronRight, RotateCw, Scale, ShieldAlert } from 'lucide-react'
+import { Banner, Button, Kpi } from '@finsoft/ui'
 import { moneyFromString } from '@finsoft/ui'
 import { Money } from '@finsoft/validation'
 import { getTrialBalance } from '@/lib/api/accounting-client'
@@ -44,12 +44,18 @@ export function TrialBalance() {
   }, [asOf, load])
 
   return (
-    <div>
-      <PageHead
-        eyebrow="Accounting / Trial balance"
-        title="Trial Balance"
-        description="Every account with activity, its net position, and the two totals — proven equal."
-        actions={
+    <div className="al">
+      <div className="al-head">
+        <div>
+          <div className="al-crumbs">
+            <span>Accounting</span>
+            <ChevronRight />
+            <span>Trial Balance</span>
+          </div>
+          <h1>Trial Balance</h1>
+          <p>Every account with activity, its net position, and the two totals — proven equal.</p>
+        </div>
+        <div className="al-head-actions">
           <label
             className="al-btn"
             style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
@@ -65,8 +71,8 @@ export function TrialBalance() {
               style={{ border: 0, font: 'inherit', color: 'inherit' }}
             />
           </label>
-        }
-      />
+        </div>
+      </div>
 
       {state.status === 'loading' && (
         <div className="state-page" role="status" aria-live="polite">
@@ -145,7 +151,7 @@ function TrialBalanceReady({ data }: { data: TrialBalanceResponse }) {
           : `Out of balance — debit ${moneyFromString(data.totalDebit)}, credit ${moneyFromString(data.totalCredit)}. This should not be possible; treat as a data-integrity incident, not a display bug to round away.`}
       </Banner>
 
-      <div className="table-wrap">
+      <div className="table-wrap al-table">
         <table>
           <thead>
             <tr>
@@ -159,9 +165,11 @@ function TrialBalanceReady({ data }: { data: TrialBalanceResponse }) {
             {data.lines.map((line) => (
               <tr key={line.accountId}>
                 <td>{line.code}</td>
-                <td>{line.name}</td>
-                <td className="num">{moneyFromString(line.debit, { zeroAsDash: true })}</td>
-                <td className="num">{moneyFromString(line.credit, { zeroAsDash: true })}</td>
+                <td className="part">
+                  <b>{line.name}</b>
+                </td>
+                <td className="num dr">{moneyFromString(line.debit, { zeroAsDash: true })}</td>
+                <td className="num cr">{moneyFromString(line.credit, { zeroAsDash: true })}</td>
               </tr>
             ))}
             <tr className="vou-total">

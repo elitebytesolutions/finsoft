@@ -1,17 +1,55 @@
 'use client'
 /*
- * /vouchers/:id (VoucherDetail) and /vouchers/new (VoucherForm) — real API.
- * docs/design-system/pages/{voucher-detail,voucher-new}/README.md.
+ * /vouchers/:id (VoucherDetail) and /vouchers/new (VoucherForm) — the PO's original design
+ * (8c5c283), restored around M2-S's real, tested posting logic, which is kept intact rather
+ * than rewritten (M2-UI brief: "keep everything correct that M2-S added... behind the original
+ * UI"). See the M2-UI report's DECISIONS for the two structural points that could not be a
+ * literal restore:
+ *
+ *   - The mock's "Accounting entries" table paired one dr-account with one cr-account per row
+ *     (`VoucherLine{debit,credit,amount}`). A real entry is N debit lines and M credit lines
+ *     (`JournalLineDto[]`, `journal-voucher.md`) with no guaranteed pairing — the paired-column
+ *     table cannot represent that without inventing pairings, so the restored table is one row
+ *     per real line (# / Account / Memo / Debit / Credit), matching M2-S's structure, inside
+ *     the original Panel/table chrome.
+ *   - Branch, Department, Approver, Cost Centre, Attachments, Comments, "Save as template" and
+ *     "Save Draft" have no backing field in `PostJournalRequest`/`JournalEntryDto` — M2 posts a
+ *     single-step JV, no draft, no approval (journal-voucher.md §1). Every one of these stays on
+ *     screen, visibly disabled/"coming soon" (never deleted, never sent to the server, never
+ *     silently pretending to work).
  */
 import { useMemo, useState, type FormEvent } from 'react'
-import { ArrowLeft, ChevronRight, Plus, RotateCw, ShieldAlert, Trash2 } from 'lucide-react'
+import {
+  ArrowLeft,
+  Banknote,
+  Check,
+  ChevronRight,
+  CloudUpload,
+  FileSpreadsheet,
+  FileText,
+  Landmark,
+  ListPlus,
+  MoreHorizontal,
+  Paperclip,
+  Plus,
+  ReceiptText,
+  RotateCw,
+  Save,
+  Scale,
+  Settings2,
+  ShieldAlert,
+  Trash2,
+  UserRound,
+  WalletCards,
+} from 'lucide-react'
 import {
   Badge,
   Banner,
   Button,
   Field,
   Modal,
-  PageHead,
+  Panel,
+  Table,
   TextInput,
   moneyFromString,
 } from '@finsoft/ui'
@@ -21,6 +59,7 @@ import { useApiQuery } from '@/lib/api/use-api-query'
 import { useIdempotencyKey } from '@/lib/api/idempotency-key'
 import { postableJournalAccounts } from '@/lib/accounting/account-tree'
 import { computeVoucherTotals } from '@/lib/accounting/voucher-totals'
+import { adaptVoucherLines, adaptVoucherTotal } from '@/lib/adapters/vouchers'
 import { todayIso } from '@/lib/date/local-date'
 import { ApiError } from '@/lib/api/types'
 import type {
@@ -110,12 +149,10 @@ function VoucherDetailReady({
 }) {
   const navigate = useNavigate()
   const [reverseOpen, setReverseOpen] = useState(false)
-  const nameOf = (accountId: string) => {
-    const a = accounts.find((x) => x.id === accountId)
-    return a ? `${a.name} (${a.code})` : accountId
-  }
   const isReversal = entry.reversalOf !== null
   const canReverse = entry.status === 'POSTED' && !isReversal
+  const lines = adaptVoucherLines(entry.lines, accounts)
+  const total = adaptVoucherTotal(entry)
 
   return (
     <>
@@ -154,32 +191,137 @@ function VoucherDetailReady({
         <Banner tone="info">This voucher reverses an earlier entry. {entry.reversalReason}</Banner>
       )}
 
-      <table>
-        <thead>
-          <tr>
-            <th>#</th>
-            <th>Account</th>
-            <th>Memo</th>
-            <th className="num">Debit (PKR)</th>
-            <th className="num">Credit (PKR)</th>
-          </tr>
-        </thead>
-        <tbody>
-          {entry.lines.map((line) => (
-            <tr key={line.lineNumber}>
-              <td>{line.lineNumber}</td>
-              <td>{nameOf(line.accountId)}</td>
-              <td>{line.memo ?? '—'}</td>
-              <td className="num money-debit">
-                {moneyFromString(line.debit, { zeroAsDash: true })}
-              </td>
-              <td className="num money-credit">
-                {moneyFromString(line.credit, { zeroAsDash: true })}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <div className="vd-grid">
+        <section className="vd-main">
+          <Panel title="Voucher header" sub="Posting information">
+            <div className="vd-fields">
+              <div>
+                <small>Voucher no.</small>
+                <b>{entry.entryNumber}</b>
+              </div>
+              <div>
+                <small>Voucher type</small>
+                <b>Journal Voucher</b>
+              </div>
+              <div>
+                <small>Voucher date</small>
+                <b>{entry.occurredAt}</b>
+              </div>
+              <div>
+                <small>Reference</small>
+                <b>{entry.reference || '—'}</b>
+              </div>
+              <div>
+                <small>Branch</small>
+                <b>—</b>
+              </div>
+              <div>
+                <small>Department</small>
+                <b>—</b>
+              </div>
+              <div>
+                <small>Currency</small>
+                <b>PKR — Pakistani Rupee</b>
+              </div>
+            </div>
+          </Panel>
+          <Panel title="Accounting entries" sub="Debit and credit lines · double-entry balanced">
+            <div className="vou-entries">
+              <table>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Account</th>
+                    <th>Memo</th>
+                    <th className="num">Debit (PKR)</th>
+                    <th className="num">Credit (PKR)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lines.map((l) => (
+                    <tr key={l.lineNumber}>
+                      <td>{l.lineNumber}</td>
+                      <td>
+                        <b>{l.accountName}</b>
+                      </td>
+                      <td>{l.memo}</td>
+                      <td className="num money-debit">{l.debit}</td>
+                      <td className="num money-credit">{l.credit}</td>
+                    </tr>
+                  ))}
+                  <tr className="vou-total">
+                    <td colSpan={3}>Total</td>
+                    <td className="num">
+                      <b>{total}</b>
+                    </td>
+                    <td className="num">
+                      <b>{total}</b>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </Panel>
+          <Panel title="Related documents" sub="Source and destination records">
+            {entry.sourceType === 'journal_voucher' ? (
+              <div className="empty-state">
+                This is a manual journal voucher — it has no source document.
+              </div>
+            ) : (
+              <Table
+                headers={['Source type', 'Source id']}
+                rows={[[entry.sourceType, entry.sourceId]]}
+              />
+            )}
+          </Panel>
+        </section>
+        <aside className="vd-rail">
+          <Panel title="Status & audit">
+            <div className="vd-info">
+              {/* Not a second "Posted"/"Reversed" Badge — the header above already carries that
+               * exact one-word fact; repeating the identical badge text here would give an
+               * automated check (and a screen-reader user) two indistinguishable
+               * "Reversed" elements on one page for no added information. This row adds the
+               * one thing the header doesn't: the entry number the status applies to. */}
+              <p>
+                <span>Entry</span>
+                <b>
+                  {entry.entryNumber} — {entry.status === 'POSTED' ? 'Posted' : 'Reversed'}
+                </b>
+              </p>
+              <p>
+                <span>Created by</span>
+                <b>—</b>
+              </p>
+              <p>
+                <span>Posted on</span>
+                <b>{entry.occurredAt}</b>
+              </p>
+              <p>
+                <span>Reversal reason</span>
+                <b>{entry.reversalReason || '—'}</b>
+              </p>
+            </div>
+          </Panel>
+          <Panel
+            title="Attachments"
+            sub="Not available yet"
+            action={
+              <Button kind="ghost" disabled>
+                <Paperclip size={14} /> Add
+              </Button>
+            }
+          >
+            <div className="empty-state">Attachments are not available yet.</div>
+          </Panel>
+          <Panel title="Comments" sub="Not available yet">
+            <div className="vd-comment">
+              <b>No comments yet</b>
+              <p>Comments are not available yet.</p>
+            </div>
+          </Panel>
+        </aside>
+      </div>
 
       {reverseOpen && (
         <ReverseDialog
@@ -278,6 +420,15 @@ interface FormLine {
 
 const emptyLine = (): FormLine => ({ accountId: '', debit: '', credit: '', memo: '' })
 
+const typeCards = [
+  { type: 'JV', label: 'Journal', sub: 'General entry', icon: FileSpreadsheet },
+  { type: 'CPV', label: 'Cash Payment', sub: 'Cash out', icon: WalletCards },
+  { type: 'CRV', label: 'Cash Receipt', sub: 'Cash in', icon: Banknote },
+  { type: 'BPV', label: 'Bank Payment', sub: 'From bank', icon: Landmark },
+  { type: 'BRV', label: 'Bank Receipt', sub: 'To bank', icon: ReceiptText },
+  { type: 'CV', label: 'More', sub: 'Other types', icon: MoreHorizontal },
+] as const
+
 export function VoucherForm() {
   const { state: accountsState, reload: reloadAccounts } = useApiQuery(
     () => listAccounts().then((r) => [...r.accounts]),
@@ -323,6 +474,7 @@ export function VoucherForm() {
 
 function VoucherFormReady({ accounts }: { accounts: AccountDto[] }) {
   const navigate = useNavigate()
+  const [preset, setPreset] = useState<(typeof typeCards)[number]['type']>('JV')
   const [date, setDate] = useState(todayIso())
   const [reference, setReference] = useState('')
   const [narration, setNarration] = useState('')
@@ -350,7 +502,11 @@ function VoucherFormReady({ accounts }: { accounts: AccountDto[] }) {
   const setLine = (i: number, patch: Partial<FormLine>) =>
     setLines((list) => list.map((l, j) => (j === i ? { ...l, ...patch } : l)))
   const addLine = () => setLines((list) => [...list, emptyLine()])
+  const addLines = (n: number) =>
+    setLines((list) => [...list, ...Array.from({ length: n }, emptyLine)])
   const removeLine = (i: number) => setLines((list) => list.filter((_, j) => j !== i))
+  const dupLine = (i: number) =>
+    setLines((list) => [...list.slice(0, i + 1), { ...list[i] }, ...list.slice(i + 1)])
 
   const canSubmit = totals.balanced && narration.trim().length > 0 && !submitting
 
@@ -414,15 +570,55 @@ function VoucherFormReady({ accounts }: { accounts: AccountDto[] }) {
   return (
     <>
       <form className="vn-page" onSubmit={requestSubmit} noValidate>
-        <PageHead
-          eyebrow="Accounting / Vouchers"
-          title="New Journal Voucher"
-          description="Post a balanced journal entry."
-        />
+        <div className="vn-head">
+          <button
+            type="button"
+            className="vn-back"
+            aria-label="Back to vouchers"
+            onClick={() => navigate('/vouchers')}
+          >
+            <ArrowLeft />
+          </button>
+          <div className="vn-title">
+            <h1>New Voucher</h1>
+            <p>Enter a balanced voucher — every debit has a matching credit.</p>
+          </div>
+          <div className="vn-types">
+            {typeCards.map((card) => {
+              const Icon = card.icon
+              return (
+                <button
+                  type="button"
+                  key={card.type}
+                  className={preset === card.type ? 'active' : ''}
+                  title="A preset label only — every voucher posts as a Journal Voucher in this release"
+                  onClick={() => setPreset(card.type)}
+                >
+                  <Icon />
+                  <b>{card.label}</b>
+                  <small>{card.sub}</small>
+                </button>
+              )
+            })}
+          </div>
+        </div>
 
         {formError && <Banner tone="danger">{formError}</Banner>}
 
         <section className="vn-card">
+          <div className="vn-card-head">
+            <span className="vn-ico">
+              <FileText />
+            </span>
+            <div>
+              <h2>Voucher Details</h2>
+              <p>Basic information about this voucher</p>
+            </div>
+            <span className="vn-auto">
+              Server assigns the number on post
+              <Settings2 />
+            </span>
+          </div>
           <div className="vn-grid4">
             <Field label="Voucher date" htmlFor="jv-date" required error={fieldErrors.date}>
               <input
@@ -436,6 +632,28 @@ function VoucherFormReady({ accounts }: { accounts: AccountDto[] }) {
             <Field label="Reference" htmlFor="jv-reference" helper="Optional, up to 100 characters">
               <TextInput id="jv-reference" value={reference} onChange={setReference} />
             </Field>
+            <label className="vn-fld">
+              <span>Branch</span>
+              <span className="vn-in sel">
+                <i>
+                  <Landmark />
+                </i>
+                <select disabled title="Coming soon">
+                  <option>Not available yet</option>
+                </select>
+              </span>
+            </label>
+            <label className="vn-fld">
+              <span>Department</span>
+              <span className="vn-in sel">
+                <i>
+                  <UserRound />
+                </i>
+                <select disabled title="Coming soon">
+                  <option>Not available yet</option>
+                </select>
+              </span>
+            </label>
           </div>
           <Field label="Narration" htmlFor="jv-narration" required error={fieldErrors.narration}>
             <TextInput id="jv-narration" value={narration} onChange={setNarration} required />
@@ -444,10 +662,21 @@ function VoucherFormReady({ accounts }: { accounts: AccountDto[] }) {
 
         <section className="vn-card">
           <div className="vn-card-head">
-            <h2>Voucher Entries</h2>
-            <button type="button" className="vn-btn solid" onClick={addLine}>
-              <Plus /> Add line
-            </button>
+            <span className="vn-ico">
+              <ListPlus />
+            </span>
+            <div>
+              <h2>Voucher Entries</h2>
+              <p>Add debit and credit lines. The voucher must be balanced.</p>
+            </div>
+            <div className="vn-entry-actions">
+              <button type="button" className="vn-btn ghost" onClick={() => addLines(3)}>
+                <Plus /> Add multiple lines
+              </button>
+              <button type="button" className="vn-btn solid" onClick={addLine}>
+                <Plus /> Add line
+              </button>
+            </div>
           </div>
           <div className="vn-table-wrap">
             <table className="vn-table">
@@ -455,75 +684,93 @@ function VoucherFormReady({ accounts }: { accounts: AccountDto[] }) {
                 <tr>
                   <th className="n">#</th>
                   <th>Account</th>
+                  <th>Code</th>
                   <th>Memo</th>
                   <th className="num">Debit (PKR)</th>
                   <th className="num">Credit (PKR)</th>
-                  <th className="act">Remove</th>
+                  <th>Cost Center</th>
+                  <th className="act">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {lines.map((line, i) => (
-                  <tr key={i}>
-                    <td className="n">{i + 1}</td>
-                    <td>
-                      <select
-                        aria-label={`Account line ${i + 1}`}
-                        value={line.accountId}
-                        onChange={(e) => setLine(i, { accountId: e.target.value })}
-                      >
-                        <option value="">Select an account</option>
-                        {accounts.map((a) => (
-                          <option key={a.id} value={a.id}>
-                            {a.name} ({a.code})
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                    <td>
-                      <input
-                        aria-label={`Memo line ${i + 1}`}
-                        value={line.memo}
-                        onChange={(e) => setLine(i, { memo: e.target.value })}
-                      />
-                    </td>
-                    <td>
-                      <input
-                        aria-label={`Debit line ${i + 1}`}
-                        inputMode="decimal"
-                        value={line.debit}
-                        onChange={(e) =>
-                          setLine(i, {
-                            debit: e.target.value,
-                            credit: e.target.value ? '' : line.credit,
-                          })
-                        }
-                      />
-                    </td>
-                    <td>
-                      <input
-                        aria-label={`Credit line ${i + 1}`}
-                        inputMode="decimal"
-                        value={line.credit}
-                        onChange={(e) =>
-                          setLine(i, {
-                            credit: e.target.value,
-                            debit: e.target.value ? '' : line.debit,
-                          })
-                        }
-                      />
-                    </td>
-                    <td className="act">
-                      <button
-                        type="button"
-                        aria-label={`Remove line ${i + 1}`}
-                        disabled={lines.length <= 2}
-                        onClick={() => removeLine(i)}
-                      >
-                        <Trash2 />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {lines.map((line, i) => {
+                  const account = accounts.find((a) => a.id === line.accountId)
+                  return (
+                    <tr key={i}>
+                      <td className="n">{i + 1}</td>
+                      <td>
+                        <select
+                          aria-label={`Account line ${i + 1}`}
+                          value={line.accountId}
+                          onChange={(e) => setLine(i, { accountId: e.target.value })}
+                        >
+                          <option value="">Select an account</option>
+                          {accounts.map((a) => (
+                            <option key={a.id} value={a.id}>
+                              {a.name} ({a.code})
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td>{account?.code ?? '—'}</td>
+                      <td>
+                        <input
+                          aria-label={`Memo line ${i + 1}`}
+                          value={line.memo}
+                          onChange={(e) => setLine(i, { memo: e.target.value })}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          aria-label={`Debit line ${i + 1}`}
+                          inputMode="decimal"
+                          value={line.debit}
+                          onChange={(e) =>
+                            setLine(i, {
+                              debit: e.target.value,
+                              credit: e.target.value ? '' : line.credit,
+                            })
+                          }
+                        />
+                      </td>
+                      <td>
+                        <input
+                          aria-label={`Credit line ${i + 1}`}
+                          inputMode="decimal"
+                          value={line.credit}
+                          onChange={(e) =>
+                            setLine(i, {
+                              credit: e.target.value,
+                              debit: e.target.value ? '' : line.debit,
+                            })
+                          }
+                        />
+                      </td>
+                      <td>
+                        <select disabled title="Coming soon">
+                          <option>—</option>
+                        </select>
+                      </td>
+                      <td className="act">
+                        <button
+                          type="button"
+                          aria-label={`Duplicate line ${i + 1}`}
+                          onClick={() => dupLine(i)}
+                        >
+                          <FileSpreadsheet />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Remove line ${i + 1}`}
+                          disabled={lines.length <= 2}
+                          onClick={() => removeLine(i)}
+                        >
+                          <Trash2 />
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
@@ -537,20 +784,86 @@ function VoucherFormReady({ accounts }: { accounts: AccountDto[] }) {
               <b>{moneyFromString(totals.totalCredit)}</b>
             </div>
             <div className={`vn-bal ${totals.balanced ? 'ok' : 'pending'}`}>
-              <b>{totals.balanced ? 'Balanced' : 'Unbalanced'}</b>
-              <small>
-                {totals.balanced
-                  ? 'Difference is zero'
-                  : `Difference ${moneyFromString(totals.difference)}`}
-              </small>
+              <span>{totals.balanced ? <Check /> : <Scale />}</span>
+              <div>
+                <b>{totals.balanced ? 'Balanced' : 'Unbalanced'}</b>
+                <small>
+                  {totals.balanced
+                    ? 'Difference is zero'
+                    : `Difference ${moneyFromString(totals.difference)}`}
+                </small>
+              </div>
             </div>
           </div>
         </section>
 
+        <div className="vn-lower">
+          <section className="vn-card">
+            <div className="vn-card-head">
+              <span className="vn-ico">
+                <Paperclip />
+              </span>
+              <div>
+                <h2>Attachments</h2>
+              </div>
+            </div>
+            <label className="cb-drop" title="Coming soon">
+              <CloudUpload />
+              <b>Attachments are not available yet</b>
+              <small>PDF, Excel, JPG — coming soon</small>
+              <input type="file" multiple hidden disabled />
+            </label>
+          </section>
+          <section className="vn-card">
+            <div className="vn-card-head">
+              <span className="vn-ico">
+                <FileText />
+              </span>
+              <div>
+                <h2>Additional Information</h2>
+              </div>
+            </div>
+            <div className="vn-extra">
+              <label className="vn-fld">
+                <span>Tags</span>
+                <span className="vn-in">
+                  <input placeholder="Coming soon" disabled />
+                </span>
+              </label>
+              <label className="vn-fld">
+                <span>Comments</span>
+                <span className="vn-in area plain">
+                  <textarea rows={2} placeholder="Coming soon" disabled />
+                </span>
+              </label>
+            </div>
+          </section>
+        </div>
+
         <div className="vn-actionbar">
+          <label
+            className="vn-switch"
+            title="Coming soon — M2 posts a single-step voucher, no draft"
+          >
+            <input type="checkbox" disabled />
+            <i />
+            <span>
+              <b>Save as template</b>
+              <small>Coming soon</small>
+            </span>
+          </label>
           <div className="vn-actionbar-right">
             <button type="button" className="vn-btn text" onClick={() => navigate('/vouchers')}>
               Cancel
+            </button>
+            <button
+              type="button"
+              className="vn-btn ghost"
+              disabled
+              title="Coming soon — M2 has no draft state"
+            >
+              <Save />
+              Save Draft
             </button>
             <Button type="submit" busy={submitting} disabled={!canSubmit}>
               Post voucher

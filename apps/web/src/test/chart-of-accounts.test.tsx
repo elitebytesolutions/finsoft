@@ -96,10 +96,17 @@ describe('ChartOfAccounts', () => {
     expect(screen.getByText(/loading the chart of accounts/i)).toBeInTheDocument()
 
     await waitFor(() => expect(screen.getByText('Cash in Hand')).toBeInTheDocument())
-    expect(screen.getByText('Assets')).toBeInTheDocument()
+    // "Assets" also names an <option> in the restored screen's category filter (absent from the
+    // M2-S-era read-only screen, which had no such filter) — getAllBy, not getBy.
+    expect(screen.getAllByText('Assets').length).toBeGreaterThanOrEqual(2)
     // The side is shown alongside the amount — Cash in Hand's normal side is Dr, and the trial
     // balance mock below has it in the debit column, so this is its normal (not abnormal) case.
-    expect(screen.getByText('Rs 5,000.00 Dr')).toBeInTheDocument()
+    // The restored screen's own "Total Assets" summary card is Assets' only child rolled up —
+    // in this two-account fixture that rollup is numerically identical to Cash in Hand's own
+    // row, so the same formatted string legitimately appears twice (row + KPI card); `getAllBy`
+    // rather than `getBy`, unlike the M2-S-era read-only screen which had no summary cards at
+    // all. See the M2-UI report's DECISIONS.
+    expect(screen.getAllByText('Rs 5,000.00 Dr').length).toBeGreaterThanOrEqual(1)
   })
 
   it('shows Cr, not Dr, for an abnormal balance — a credit on an asset must read as abnormal', async () => {
@@ -130,7 +137,8 @@ describe('ChartOfAccounts', () => {
 
     renderScreen()
     await waitFor(() => expect(screen.getByText('Cash in Hand')).toBeInTheDocument())
-    expect(screen.getByText('Rs 1,500.00 Cr')).toBeInTheDocument()
+    // See the note in the previous test — the "Total Assets" KPI card duplicates the row here.
+    expect(screen.getAllByText('Rs 1,500.00 Cr').length).toBeGreaterThanOrEqual(1)
     expect(screen.queryByText('Rs 1,500.00 Dr')).not.toBeInTheDocument()
   })
 
@@ -156,12 +164,18 @@ describe('ChartOfAccounts', () => {
     expect(screen.getAllByText('—').length).toBeGreaterThan(0)
   })
 
-  it('has no add/edit/delete affordance — the chart is read-only', async () => {
+  // M2-UI brief: the PO now wants account creation in the MVP, so the original screen's
+  // Add/Edit/Move/Activate/Deactivate/Delete affordances are restored to the DOM — but every
+  // one is disabled behind ACCOUNT_CREATE_ENABLED (feature-flags.ts) until a real
+  // POST /api/accounts exists (coa-standard.md §5 is still read-only today). This replaces the
+  // M2-S-era assertion that these buttons were entirely absent — see the M2-UI report's
+  // DECISIONS for why that assertion changed rather than just its selectors.
+  it('shows Add/Edit/Delete as present but disabled — the chart is still read-only server-side', async () => {
     mockBothCalls()
     renderScreen()
     await waitFor(() => expect(screen.getByText('Cash in Hand')).toBeInTheDocument())
-    expect(screen.queryByRole('button', { name: /add account/i })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /^delete$/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /add account/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /^delete$/i })).toBeDisabled()
     expect(screen.getByText(/not available yet/i)).toBeInTheDocument()
   })
 

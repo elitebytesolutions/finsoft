@@ -5,6 +5,7 @@ import {
   ArrowRight,
   ClipboardCheck,
   Clock3,
+  FileText,
   LockKeyhole,
   TrendingUp,
   Users,
@@ -29,6 +30,9 @@ import { closePeriod, listPeriods, reopenPeriod } from '@/lib/api/accounting-cli
 import { ApiError } from '@/lib/api/types'
 import type { FiscalPeriodDto } from '@/lib/api/accounting-types'
 
+// FieldSales is untouched by this lane — same file as PeriodClose in the ported prototype, but
+// owned elsewhere. Byte-identical to 8c5c283 and to HEAD before this restoration; do not edit
+// here.
 function FieldSales() {
   const navigate = useNavigate()
   const reps = [
@@ -129,10 +133,14 @@ function FieldSales() {
 }
 
 /*
- * /period-close — M2-S, real API. docs/design-system/pages/period-close/README.md
- * (superseded API note): GET /api/periods, POST /api/periods/:id/close,
- * POST /api/periods/:id/reopen. No lock route, no checklist, no revenue/COGS KPIs in M2
- * (periods.md §7 — deferred).
+ * /period-close — the PO's original two-panel design (8c5c283), restored, on real data:
+ * GET /api/periods, POST /api/periods/:id/{close,reopen}. No lock route, no bank-reconciliation
+ * or draft-purchase checks in M2 (periods.md §7 — deferred; the original mock's pre-close
+ * checklist items for those are not backed by any endpoint, so that panel is now an honest
+ * "not available yet" notice instead of four invented pass/fail rows). Revenue/COGS/"net
+ * surplus" KPIs are gone for the same reason the mock's own comment for the chart-of-accounts
+ * page flagged: they were `data.journals` summed in the browser — not available from the real
+ * fiscal-periods API at all, so the KPI row now shows real period counts instead.
  */
 function PeriodClose() {
   const { state, reload } = useApiQuery(() => listPeriods().then((r) => [...r.periods]), [])
@@ -142,7 +150,7 @@ function PeriodClose() {
       <PageHead
         eyebrow="Accounting / Period close"
         title="Period close"
-        description="Lock a fiscal month for posting. Correcting a closed period is by reversal, in an open period — never by reopening it lightly."
+        description="Lock the fiscal month for posting. Correcting a closed period is by reversal, in an open period — never by reopening it lightly."
       />
 
       {state.status === 'loading' && (
@@ -175,7 +183,89 @@ function PeriodClose() {
         </div>
       )}
 
-      {state.status === 'ready' && <PeriodTable periods={state.data} onChanged={reload} />}
+      {state.status === 'ready' &&
+        (state.data.length === 0 ? (
+          <div className="empty-state">No fiscal periods exist yet for this tenant.</div>
+        ) : (
+          <PeriodCloseReady periods={state.data} onChanged={reload} />
+        ))}
+    </>
+  )
+}
+
+function PeriodCloseReady({
+  periods,
+  onChanged,
+}: {
+  periods: FiscalPeriodDto[]
+  onChanged: () => void
+}) {
+  const ordered = [...periods].sort((a, b) => a.periodStart.localeCompare(b.periodStart))
+  const openPeriods = ordered.filter((p) => p.status === 'OPEN')
+  const closedPeriods = ordered.filter((p) => p.status === 'CLOSED')
+  const lockedPeriods = ordered.filter((p) => p.status === 'LOCKED')
+
+  return (
+    <>
+      {/* Counts only, deliberately — a period's own label (e.g. "2026-07") also appears as a
+       * table cell below; repeating it here as a KPI VALUE risks two elements with identical
+       * text, which is also just a worse way to say "see the table". */}
+      <div className="kpi-grid">
+        <Kpi
+          label="Fiscal periods"
+          value={String(periods.length)}
+          change="This tenant"
+          icon={FileText}
+        />
+        <Kpi
+          label="Open"
+          value={String(openPeriods.length)}
+          change="Earliest closes first"
+          icon={Clock3}
+          tone="teal"
+        />
+        <Kpi
+          label="Closed"
+          value={String(closedPeriods.length)}
+          change="Locked for posting"
+          icon={LockKeyhole}
+          tone="blue"
+        />
+        <Kpi
+          label="Locked"
+          value={String(lockedPeriods.length)}
+          change="Cannot be reopened"
+          icon={TrendingUp}
+          tone="yellow"
+        />
+      </div>
+      <div className="doc-grid">
+        <Panel title="Pre-close checklist" sub="Run before locking the period">
+          <div className="empty-state">
+            Automated pre-close checks (bank reconciliation, open drafts, date lock) are not
+            available yet — review these manually before closing a period.
+          </div>
+        </Panel>
+        <Panel title="Fiscal periods" sub="Closed periods are locked for posting">
+          <PeriodTable periods={ordered} onChanged={onChanged} />
+        </Panel>
+      </div>
+      <Panel title="What happens at close" sub="Mirrors the legacy posting controls">
+        <div className="summary-strip">
+          <span>
+            Posting<b>Locked for the closed period</b>
+          </span>
+          <span>
+            Vouchers<b>New period numbering</b>
+          </span>
+          <span>
+            Ledgers<b>Opening balances rolled</b>
+          </span>
+          <span>
+            Reports<b>Period frozen</b>
+          </span>
+        </div>
+      </Panel>
     </>
   )
 }
@@ -191,16 +281,11 @@ function PeriodTable({
   const [error, setError] = useState<string | null>(null)
   const [reopenTarget, setReopenTarget] = useState<FiscalPeriodDto | null>(null)
 
-  if (periods.length === 0) {
-    return <div className="empty-state">No fiscal periods exist yet for this tenant.</div>
-  }
-
   // Order rule (periods.md §4.1): close only the earliest OPEN period; reopen only the
   // latest CLOSED one. Computed client-side as a UX convenience — the server is the real
   // gate (409 period_close_out_of_order / period_reopen_out_of_order on any other attempt).
-  const ordered = [...periods].sort((a, b) => a.periodStart.localeCompare(b.periodStart))
-  const earliestOpenId = ordered.find((p) => p.status === 'OPEN')?.id
-  const closedPeriods = ordered.filter((p) => p.status === 'CLOSED')
+  const earliestOpenId = periods.find((p) => p.status === 'OPEN')?.id
+  const closedPeriods = periods.filter((p) => p.status === 'CLOSED')
   const latestClosedId = closedPeriods[closedPeriods.length - 1]?.id
 
   const doClose = async (period: FiscalPeriodDto) => {
@@ -221,7 +306,7 @@ function PeriodTable({
       {error && <Banner tone="danger">{error}</Banner>}
       <Table
         headers={['Period', 'Status', 'Start', 'End', 'Actions']}
-        rows={ordered.map((p) => [
+        rows={periods.map((p) => [
           p.label,
           <Badge tone={p.status === 'OPEN' ? 'good' : p.status === 'CLOSED' ? 'warn' : 'neutral'}>
             {p.status === 'OPEN' ? 'Open' : p.status === 'CLOSED' ? 'Closed' : 'Locked'}
@@ -290,8 +375,8 @@ function ReopenDialog({
       // call 403s is the caller not holding it, so a plain `forbidden` is mapped to a clear,
       // specific message rather than apiFetch's generic "You do not have permission to do
       // that." No real per-user permission list reaches the client to hide the Reopen button
-      // proactively for a non-Owner (see the M2-S page docs' shared note); this is the second
-      // line of defence, and the server's rejection is still the real gate either way.
+      // proactively for a non-Owner; this is the second line of defence, and the server's
+      // rejection is still the real gate either way.
       if (err instanceof ApiError && err.code === 'forbidden') {
         setError('Only the Owner can reopen a period.')
       } else {
