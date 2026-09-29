@@ -1,21 +1,28 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { closeDatabase } from '@finsoft/database'
-import { REPO_ROOT, migrateTestDatabase, prepareTestDatabase } from '@finsoft/database/testing'
+import { closeDatabase, openDatabase } from '@finsoft/database'
+import {
+  REPO_ROOT,
+  TEST_TARGET,
+  migrateTestDatabase,
+  prepareTestDatabase,
+} from '@finsoft/database/testing'
 import { constraints, columns } from '../../database/tests/catalog.ts'
 import { GLOBAL_TABLES } from '@finsoft/database'
 import { INVARIANTS, enforcedIds, pendingIds } from './invariants.ts'
+import { registerPostingInvariantChecks } from './posting-invariants.ts'
 
 /*
  * The FinancialInvariantSuite. NON_NEGOTIABLES §3: it runs on every PR, and
  * if it fails nothing merges.
  *
- * Wave 0 can execute exactly one of the ten. The other nine describe a
- * posting engine, a fiscal calendar and a stock ledger that do not exist
- * yet. The honest thing — and the thing §4 demands — is to register them as
- * pending rather than stub them green, and to make the pending set a ratchet
- * that can only shrink.
+ * M2-A executes seven of the ten (1, 2, 4, 5, 6, 7, 8) against the real
+ * kernel and a real PostgreSQL, as finsoft_app with RLS forced — the checks
+ * for 1, 2, 4, 5, 6, 8 live in posting-invariants.ts and are registered at
+ * the bottom of this file. 3, 9 and 10 describe a stock ledger and
+ * subledgers that do not exist yet; they stay registered as pending rather
+ * than stubbed green, and the pending set is a ratchet that can only shrink.
  */
 
 /*
@@ -28,13 +35,26 @@ import { INVARIANTS, enforcedIds, pendingIds } from './invariants.ts'
  */
 const BASELINE = join(REPO_ROOT, 'tests', 'accounting', 'pending-baseline.json')
 
+/*
+ * Invariant 8's race tests need two transactions on two REAL backends at
+ * once. The harness pins the pool to one connection (harness.ts), on which a
+ * second caller queues for the connection instead of racing — and the test
+ * passes whether or not the idempotency path works (observed: a mutant that
+ * leaked a document number survived on a pool of one). Same sanctioned
+ * pattern as database/tests/document-sequences.spec.ts: reopen with several
+ * connections for this file, restore the deterministic default afterwards.
+ */
 beforeAll(async () => {
   await prepareTestDatabase()
   await migrateTestDatabase()
+  await closeDatabase()
+  process.env['DATABASE_POOL_MAX'] = '4'
+  await openDatabase(TEST_TARGET)
 }, 120_000)
 
 afterAll(async () => {
   await closeDatabase()
+  process.env['DATABASE_POOL_MAX'] = '1'
 })
 
 describe('FinancialInvariantSuite: the ratchet', () => {
@@ -144,3 +164,5 @@ describe('Invariant 7: cross-tenant references are impossible', () => {
     expect(crossTable.length).toBeGreaterThan(0)
   })
 })
+
+registerPostingInvariantChecks()

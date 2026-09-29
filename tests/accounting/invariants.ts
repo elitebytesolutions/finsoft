@@ -1,9 +1,9 @@
 /*
  * The FinancialInvariantSuite registry. NON_NEGOTIABLES §3.
  *
- * Ten invariants, quoted verbatim. Seven of them describe a posting engine,
- * a fiscal calendar or a stock ledger that Wave 0 has not built, so they
- * cannot be executed yet.
+ * Ten invariants, quoted verbatim. Three of them (3, 9, 10) describe a stock
+ * ledger and subledgers that do not exist yet (Wave 5; M3's customer and
+ * invoice tables), so they cannot be executed yet.
  *
  * They are NOT silently omitted, and they are NOT stubbed green. Each is
  * registered with its real status and the thing that blocks it, and
@@ -27,14 +27,19 @@ export const INVARIANTS: readonly Invariant[] = [
   {
     id: 1,
     statement: '`Σ debit = Σ credit` for every posted journal entry',
-    status: 'pending',
-    note: 'Needs journal_entries and journal_lines. Wave 2, ADR-0005.',
+    status: 'enforced',
+    note:
+      'M2-A. Three points: the kernel (JV_UNBALANCED; assertEntryWellFormed for every rule, never ' +
+      'auto-corrected), the deferred balance trigger at COMMIT (migration 012), and this suite, which ' +
+      'checks every entry of every tenant and proves the database refuses an unbalanced commit.',
   },
   {
     id: 2,
     statement: 'Trial balance debits = trial balance credits, for every tenant, every period',
-    status: 'pending',
-    note: 'Needs the journal and a fiscal calendar. Wave 2.',
+    status: 'enforced',
+    note:
+      'M2-A. Checked for every tenant at every fiscal period end, from the journal itself (rule 11: ' +
+      'balances are SUM(journal_lines), never a cache).',
   },
   {
     id: 3,
@@ -45,20 +50,33 @@ export const INVARIANTS: readonly Invariant[] = [
   {
     id: 4,
     statement: 'A posted transaction cannot be modified',
-    status: 'pending',
-    note: 'Needs a posted record to try to modify. Wave 2, ADR-0006.',
+    status: 'enforced',
+    note:
+      'M2-A. The suite attempts every mutation path as finsoft_app — UPDATE of each immutable column, ' +
+      'the reverse status transition, UPDATE/DELETE of lines, appending a line — and asserts each is ' +
+      'refused and the entry is byte-identical afterwards. POSTED -> REVERSED is the only update.',
   },
   {
     id: 5,
     statement: 'A closed fiscal period cannot receive a posting',
-    status: 'pending',
-    note: 'Needs fiscal_periods and the posting engine. Wave 2, ADR-0012.',
+    status: 'enforced',
+    note:
+      'M2-A. Kernel: PERIOD_CLOSED / PERIOD_LOCKED for posts and reversals, no user = FORBIDDEN. ' +
+      'Database: a direct INSERT into a CLOSED or LOCKED period is refused by the trigger for ' +
+      'finsoft_app AND the BYPASSRLS migration role; a period/date mismatch is refused; posting-vs-close ' +
+      'is serialised both ways (database/tests/accounting-triggers.spec.ts). This suite repeats the ' +
+      'closed-period refusal for both roles, pinned to the trigger message rather than SQLSTATE 23514 ' +
+      'alone, and scans every entry of every tenant for a date inside its own fiscal period.',
   },
   {
     id: 6,
     statement: "A reversal exactly neutralises the original's financial impact",
-    status: 'pending',
-    note: 'Needs the reversal engine. Wave 2, ADR-0006.',
+    status: 'enforced',
+    note:
+      'M2-A. For every reversal pair of every tenant the WHOLE (account, party) residual map is ' +
+      'compared cell by cell with 0.0000; each pair has its original line count and its original is ' +
+      'REVERSED by it. The golden runner compares the whole per-account map too. Both date branches ' +
+      '(original period open / closed) are exercised. Subledger and stock legs arrive with M3/Wave 5.',
   },
   {
     id: 7,
@@ -73,8 +91,11 @@ export const INVARIANTS: readonly Invariant[] = [
   {
     id: 8,
     statement: 'A duplicated API call cannot double-post',
-    status: 'pending',
-    note: 'Needs the idempotency key path through the posting engine. Wave 2, ADR-0005.',
+    status: 'enforced',
+    note:
+      'M2-A. Sequential and genuinely concurrent duplicates (the loser forced to race past step 2) ' +
+      'produce one entry, one number, one posting audit record, and no gap in the series; key reuse ' +
+      'with different content is IDEMPOTENCY_KEY_REUSED.',
   },
   {
     id: 9,

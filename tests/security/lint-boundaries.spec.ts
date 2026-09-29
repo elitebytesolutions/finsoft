@@ -661,6 +661,318 @@ describe('packages/permissions may not construct queries either (Architecture se
   })
 })
 
+const KERNEL_LOGIC = 'packages/accounting-kernel keeps its query bodies in src/queries/**'
+const JOURNAL = 'journal_entries and journal_lines are written only by'
+const PARTIES = 'ADR-0026 Compliance 7'
+
+describe('packages/accounting-kernel: query bodies only in src/queries/** (ADR-0005, ADR-0026, M2-A)', () => {
+  /*
+   * The kernel DOES build queries — ADR-0005 puts the journal writes in it
+   * and ADR-0026 puts registerParty's INSERT in it, not in packages/database.
+   * What it may not do is build them in the posting pipeline, the reversal
+   * engine or a rule. A handle arriving through a callback is invisible to
+   * dependency-cruiser, so this is the only mechanism that sees it.
+   */
+  it('catches a builder query in kernel business logic', async () => {
+    const messages = await messagesFor(
+      'packages/accounting-kernel/src/posting-engine.ts',
+      `import type { TenantTx } from '@finsoft/database'
+       export function post(tx: TenantTx) {
+         return tx.selectFrom('journal_entries').select('id').execute()
+       }`,
+    )
+    expect(matching(messages, KERNEL_LOGIC)).toHaveLength(1)
+  })
+
+  it('catches an sql`` tag in kernel business logic', async () => {
+    const messages = await messagesFor(
+      'packages/accounting-kernel/src/rules/journal-voucher.ts',
+      "import { sql } from 'kysely'\nexport const q = sql`select 1`",
+    )
+    expect(matching(messages, KERNEL_LOGIC)).toHaveLength(1)
+  })
+
+  it('catches the parties INSERT placed in kernel logic rather than src/queries/', async () => {
+    const messages = await messagesFor(
+      'packages/accounting-kernel/src/parties.ts',
+      `export function registerParty(tx: any) { return tx.insertInto('parties').values({}).execute() }`,
+    )
+    expect(matching(messages, KERNEL_LOGIC)).toHaveLength(1)
+  })
+
+  it('leaves src/queries/** alone — the one place the journal and parties are written', async () => {
+    const messages = await messagesFor(
+      'packages/accounting-kernel/src/queries/journal-writes.ts',
+      "import { sql } from 'kysely'\n" +
+        `export async function w(tx: any) {
+           await tx.insertInto('journal_entries').values({}).execute()
+           await tx.insertInto('journal_lines').values({}).execute()
+           await tx.updateTable('journal_entries').set({}).execute()
+           await tx.insertInto('parties').values({}).execute()
+         }`,
+    )
+    expect(matching(messages, KERNEL_LOGIC)).toEqual([])
+    expect(matching(messages, JOURNAL)).toEqual([])
+    expect(matching(messages, PARTIES)).toEqual([])
+    expect(matching(messages, TX_CONTROL)).toEqual([])
+  })
+
+  it('still bans auth_lookup in the kernel (a later block must restate it, not drop it)', async () => {
+    const messages = await messagesFor(
+      'packages/accounting-kernel/src/reversal.ts',
+      `export const s = 'select * from auth_lookup.resolve_refresh($1)'`,
+    )
+    expect(matching(messages, 'auth_lookup is migration 006')).toHaveLength(1)
+  })
+
+  it('does not fire on a kernel spec file', async () => {
+    const messages = await messagesFor(
+      'packages/accounting-kernel/src/post.spec.ts',
+      `export function w(tx: any) { return tx.selectFrom('journal_entries') }`,
+    )
+    expect(matching(messages, KERNEL_LOGIC)).toEqual([])
+  })
+})
+
+const TX_CONTROL = 'ADR-0027 (K1): packages/accounting-kernel issues no transaction control'
+const JOURNAL_WRITES = 'packages/accounting-kernel/src/queries/journal-writes.ts'
+
+describe('packages/accounting-kernel issues no transaction control but the numbering savepoint (ADR-0027, K1)', () => {
+  /*
+   * The kernel runs inside the caller's transaction. ADR-0027 sanctions one
+   * savepoint, by one name, in one file, as three whole statements. Every
+   * other transaction-control statement anywhere in the kernel — including a
+   * differently-named savepoint in that same file — must fail the build.
+   */
+  const inQueries = (statement: string) =>
+    "import { sql } from 'kysely'\n" +
+    `export async function w(tx: any) { await sql\`${statement}\`.execute(tx) }`
+
+  it.each([
+    'SAVEPOINT finsoft_posting_number',
+    'RELEASE SAVEPOINT finsoft_posting_number',
+    'ROLLBACK TO SAVEPOINT finsoft_posting_number',
+  ])('allows exactly `%s` in journal-writes.ts', async (statement) => {
+    const messages = await messagesFor(JOURNAL_WRITES, inQueries(statement))
+    expect(matching(messages, TX_CONTROL)).toEqual([])
+  })
+
+  it.each([
+    // The case that used to pass as a "leave src/queries alone" fixture.
+    ['a savepoint named s', 'SAVEPOINT s'],
+    ['a near-miss name', 'SAVEPOINT finsoft_posting_number_2'],
+    ['RELEASE of another savepoint', 'RELEASE SAVEPOINT s'],
+    ['ROLLBACK TO another savepoint', 'ROLLBACK TO SAVEPOINT s'],
+    ['a second statement appended', 'RELEASE SAVEPOINT finsoft_posting_number; COMMIT'],
+    ['a bare ROLLBACK', 'ROLLBACK'],
+    ['COMMIT', 'COMMIT'],
+    ['BEGIN', 'BEGIN'],
+    ['SET TRANSACTION', 'SET TRANSACTION ISOLATION LEVEL SERIALIZABLE'],
+  ])('rejects %s even inside journal-writes.ts', async (_label, statement) => {
+    const messages = await messagesFor(JOURNAL_WRITES, inQueries(statement))
+    expect(matching(messages, TX_CONTROL)).toHaveLength(1)
+  })
+
+  it('rejects a dynamically named savepoint in journal-writes.ts', async () => {
+    const messages = await messagesFor(
+      JOURNAL_WRITES,
+      "import { sql } from 'kysely'\n" +
+        'export async function w(tx: any, n: string) { await sql`SAVEPOINT ${sql.id(n)}`.execute(tx) }',
+    )
+    expect(matching(messages, TX_CONTROL)).toHaveLength(1)
+  })
+
+  it.each([
+    [
+      'ROLLBACK in another queries file',
+      'packages/accounting-kernel/src/queries/periods.ts',
+      'ROLLBACK',
+    ],
+    [
+      'COMMIT in another queries file',
+      'packages/accounting-kernel/src/queries/parties.ts',
+      'COMMIT',
+    ],
+    [
+      'the ALLOWED statement, outside journal-writes.ts',
+      'packages/accounting-kernel/src/queries/periods.ts',
+      'ROLLBACK TO SAVEPOINT finsoft_posting_number',
+    ],
+    [
+      'START TRANSACTION in a new queries file',
+      'packages/accounting-kernel/src/queries/anything.ts',
+      'START TRANSACTION',
+    ],
+  ])('rejects %s', async (_label, file, statement) => {
+    const messages = await messagesFor(file, inQueries(statement))
+    expect(matching(messages, TX_CONTROL)).toHaveLength(1)
+  })
+
+  it.each([
+    [
+      'ROLLBACK via sql.raw in the reversal engine',
+      'packages/accounting-kernel/src/reversal.ts',
+      `import { sql } from 'kysely'\nexport const r = (tx: any) => sql.raw('ROLLBACK').execute(tx)`,
+    ],
+    [
+      'COMMIT via a raw compiled query in the posting engine',
+      'packages/accounting-kernel/src/posting-engine.ts',
+      `export const c = (tx: any, q: any) => tx.executeQuery(q.raw('COMMIT'))`,
+    ],
+    [
+      'Kysely savepoint() in a rule',
+      'packages/accounting-kernel/src/rules/journal-voucher.ts',
+      `export const s = (trx: any) => trx.savepoint('sp').execute()`,
+    ],
+    [
+      'Kysely commit() in the period engine',
+      'packages/accounting-kernel/src/periods.ts',
+      `export const c = (trx: any) => trx.commit().execute()`,
+    ],
+    [
+      'Kysely rollbackToSavepoint() in a queries file',
+      'packages/accounting-kernel/src/queries/journal-writes.ts',
+      `export const r = (trx: any) => trx.rollbackToSavepoint('finsoft_posting_number').execute()`,
+    ],
+  ])('rejects %s', async (_label, file, code) => {
+    const messages = await messagesFor(file, code)
+    expect(matching(messages, TX_CONTROL)).toHaveLength(1)
+  })
+
+  it('does not fire on prose or on a CASE ... END inside a query', async () => {
+    const messages = await messagesFor(
+      'packages/accounting-kernel/src/queries/periods.ts',
+      "import { sql } from 'kysely'\n" +
+        `export const m = 'does not balance at commit; rollback happens in the caller'
+         export const q = (tx: any, x: string) => sql\`SELECT CASE WHEN a THEN \${x}
+           END AS b FROM t\`.execute(tx)`,
+    )
+    expect(matching(messages, TX_CONTROL)).toEqual([])
+  })
+
+  it('leaves the real journal-writes.ts and the rest of the kernel clean', async () => {
+    const results = await eslint.lintFiles(['packages/accounting-kernel/src/**/*.ts'])
+    const hits = results.flatMap((r) =>
+      r.messages
+        .filter((m) => m.message.includes(TX_CONTROL))
+        .map((m) => `${r.filePath}:${m.line}`),
+    )
+    expect(hits).toEqual([])
+    const jw = results.find((r) => r.filePath.replace(/\\/g, '/').endsWith(JOURNAL_WRITES))
+    expect(jw, 'journal-writes.ts was linted').toBeDefined()
+  })
+})
+
+describe('the journal is written only by the kernel (ADR-0005 Compliance)', () => {
+  it.each([
+    [
+      'modules/sales/infrastructure/invoice-repo.ts',
+      `export const w = (tx: any) => tx.insertInto('journal_entries').values({}).execute()`,
+    ],
+    [
+      'modules/sales/infrastructure/invoice-repo.ts',
+      `export const w = (tx: any) => tx.insertInto('journal_lines as jl').values({}).execute()`,
+    ],
+    [
+      'modules/banking/infrastructure/repo.ts',
+      `export const w = (tx: any) => tx.updateTable('journal_entries').set({}).execute()`,
+    ],
+    [
+      'modules/banking/infrastructure/repo.ts',
+      `export const w = (tx: any) => tx.deleteFrom('journal_lines').execute()`,
+    ],
+    [
+      'apps/api/src/admin/fix.ts',
+      "import { sql } from 'kysely'\nexport const q = sql`INSERT INTO journal_lines (debit) VALUES (1)`",
+    ],
+    [
+      'apps/worker/src/jobs/import.ts',
+      `export const q = 'UPDATE journal_entries SET narration = $1'`,
+    ],
+    [
+      'packages/reporting/src/ledger.ts',
+      `export const q = \`delete from public.journal_entries where id = $1\``,
+    ],
+    [
+      'packages/database/src/accounting/customers.ts',
+      `export const w = (tx: any) => tx.insertInto('journal_entries').values({}).execute()`,
+    ],
+    ['tools/seed/backfill.mjs', `export const q = 'insert into journal_entries (id) values ($1)'`],
+  ])('fires in %s', async (file, code) => {
+    expect(matching(await messagesFor(file, code), JOURNAL), `${file}: ${code}`).toHaveLength(1)
+  })
+
+  it('does not fire on a read, or on prose that merely names the table', async () => {
+    const messages = await messagesFor(
+      'modules/sales/infrastructure/invoice-repo.ts',
+      `export const r = (tx: any) => tx.selectFrom('journal_entries').select('id').execute()
+       export const note = 'balances come from journal_lines'`,
+    )
+    expect(matching(messages, JOURNAL)).toEqual([])
+  })
+
+  it('fires inside packages/database too — no production exemption remains (ADR-0005)', async () => {
+    // The former named exemption for packages/database/src/accounting/journal.ts
+    // is gone with insertJournalEntry/markEntryReversed: every module may
+    // import packages/database, so a journal write there is a kernel bypass.
+    for (const file of [
+      'packages/database/src/accounting/journal.ts',
+      'packages/database/src/accounting/ledger.ts',
+    ]) {
+      const messages = await messagesFor(
+        file,
+        `export const w = (tx: any) => tx.insertInto('journal_entries').values({}).execute()`,
+      )
+      expect(matching(messages, JOURNAL), file).toHaveLength(1)
+    }
+  })
+})
+
+describe('the parties register is written only by the kernel (ADR-0026 Compliance 7)', () => {
+  it.each([
+    [
+      'modules/sales/infrastructure/customer-repo.ts',
+      `export const w = (tx: any) => tx.insertInto('parties').values({}).execute()`,
+    ],
+    [
+      'modules/sales/infrastructure/customer-repo.ts',
+      `export const w = (tx: any) => tx.updateTable('parties').set({}).execute()`,
+    ],
+    [
+      'modules/sales/infrastructure/customer-repo.ts',
+      `export const w = (tx: any) => tx.deleteFrom('parties').execute()`,
+    ],
+    // Including inside packages/database, which every module may import.
+    [
+      'packages/database/src/accounting/customers.ts',
+      `export const w = (tx: any) => tx.insertInto('parties').values({}).execute()`,
+    ],
+    [
+      'packages/database/src/accounting/journal.ts',
+      `export const w = (tx: any) => tx.insertInto('parties').values({}).execute()`,
+    ],
+    [
+      'modules/sales/infrastructure/customer-repo.ts',
+      "import { sql } from 'kysely'\nexport const q = sql`select id from parties where tenant_id = ${'x'}`",
+    ],
+    [
+      'apps/api/src/admin/fix.ts',
+      `export const q = 'INSERT INTO parties (tenant_id, party_type) VALUES ($1, $2)'`,
+    ],
+  ])('fires in %s', async (file, code) => {
+    expect(matching(await messagesFor(file, code), PARTIES), `${file}: ${code}`).toHaveLength(1)
+  })
+
+  it('does not fire on a builder read, or on unrelated text', async () => {
+    const messages = await messagesFor(
+      'modules/sales/infrastructure/customer-repo.ts',
+      `export const r = (tx: any) => tx.selectFrom('parties').select('id').execute()
+       export const note = 'third parties are not parties to this contract'`,
+    )
+    expect(matching(messages, PARTIES)).toEqual([])
+  })
+})
+
 describe('connection ownership (ADR-0013, ADR-0004)', () => {
   it('catches a transaction opened outside packages/database', async () => {
     const messages = await messagesFor(

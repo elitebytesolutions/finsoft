@@ -122,3 +122,107 @@ export type { AuditEventFilter, AuditEventPage, AuditEventRow } from './audit/qu
 export { selectEffectivePermissionCodes } from './rbac/resolve-permissions.ts'
 export { insertSeededRoles } from './rbac/seed-roles.ts'
 export type { RoleSeed } from './rbac/seed-roles.ts'
+
+/*
+ * Accounting query surface. M2-A.
+ *
+ * THE RULE (Council T3, Arch 1/2/5): this package holds READS of the
+ * accounting tables, plus only those WRITES that ADR-0013:31 permits a
+ * non-kernel package on its query-construction allowlist — i.e. none to a
+ * kernel-owned register. journal_entries / journal_lines (ADR-0005), parties
+ * (ADR-0026 statement 5) and fiscal_periods transitions (Council T3) are
+ * written only by packages/accounting-kernel/src/queries/**; ESLint's
+ * financialTruthWriteSyntax fails the build if any of them is written here,
+ * because modules/*\/infrastructure may import this package and an export
+ * here would be a path around the kernel.
+ *
+ * NOT the rule: an earlier version of this comment cited ADR-0023 A1 ("all
+ * query construction lives in packages/database") as the licence. That
+ * widening moved query bodies out of packages/auth and packages/permissions,
+ * which are NOT on the ADR-0013 allowlist. It never licensed this package to
+ * write tables the kernel owns — the kernel IS on the allowlist, and
+ * ADR-0026's Architecture-seat signature says so explicitly.
+ *
+ * Two kinds of export below are kernel-only by lint rather than by location:
+ * assignDocumentNumber / assignTenantDocumentNumber (numbering, LOCK_REGISTRY
+ * 5c) and lockEntryForReversal (LOCK_REGISTRY 5a) — ESLint
+ * kernelOnlyCallSyntax confines their callers to packages/accounting-kernel
+ * and the database test suites. Period transitions (close / reopen / lock)
+ * are not here at all: they are periodEngine in packages/accounting-kernel.
+ *
+ * Nothing below carries a posting rule, rounding or account-role policy.
+ * `seedChartOfAccounts`/`createFiscalYear` are deliberately NOT re-exported
+ * here a second time; they live only on `@finsoft/database/provisioning`
+ * (see that file's header for why).
+ */
+export {
+  findAccountsByIds,
+  listAllAccounts,
+  listPostableAccounts,
+  resolveAccountsByRole,
+} from './accounting/accounts.ts'
+export type { AccountRow } from './accounting/accounts.ts'
+
+export { findPeriodById, findPeriodForDate } from './accounting/periods.ts'
+export type { FiscalPeriodRow, PeriodStatus } from './accounting/periods.ts'
+
+export { assignDocumentNumber, assignTenantDocumentNumber } from './accounting/sequences.ts'
+
+export {
+  constraintName as journalConstraintName,
+  findEntryById,
+  findEntryByIdempotencyKey,
+  findEntryBySource,
+  findLinesByEntryId,
+  lockEntryForReversal,
+  sqlstate as journalSqlstate,
+  UNIQUE_VIOLATION,
+} from './accounting/journal.ts'
+export type {
+  JournalEntryRow,
+  JournalLineRow,
+  NewJournalEntry,
+  NewJournalLine,
+} from './accounting/journal.ts'
+
+export {
+  accountLedgerLines,
+  LEDGER_PAGE_MAX,
+  accountOpeningBalance,
+  partyControlBalance,
+  trialBalanceRawSums,
+} from './accounting/ledger.ts'
+export type {
+  LedgerCursor,
+  LedgerLineRow,
+  LedgerPage,
+  TrialBalanceRow,
+} from './accounting/ledger.ts'
+
+export { COA_TEMPLATE_ID, STANDARD_V1 } from './accounting/coa-standard-v1.ts'
+export type { AccountTemplateEntry, ControlKind } from './accounting/coa-standard-v1.ts'
+
+export {
+  DEFAULT_FISCAL_YEAR_START_MONTH,
+  findTenantTimezone,
+} from './accounting/tenant-settings.ts'
+
+/*
+ * The kernel's acting-principal accessor. Council ruling (Architecture +
+ * Security seats, M2-A T3 final review): TenantContext stays importable
+ * only inside packages/database and packages/auth (M1-X T2); the kernel
+ * gets this narrow, read-only, frozen-copy accessor instead of importing
+ * TenantContext itself. See accounting/principal.ts's own header.
+ */
+export { postingPrincipalOf, type PostingPrincipal } from './accounting/principal.ts'
+
+/*
+ * computeRequestFingerprint lives here, not in packages/accounting-kernel,
+ * because it needs node:crypto — dependency-cruiser's kernel-imports-only-
+ * allowed rule confines a kernel to packages/database, packages/validation
+ * and packages/shared-types, with NO node builtin escape hatch (ADR-0001,
+ * ARCHITECTURE §5). The canonicalisation itself has no SQL and no tenant
+ * concern; it lives on this package's surface purely so the kernel can reach
+ * it at all.
+ */
+export { computeRequestFingerprint, type FingerprintInput } from './accounting/fingerprint.ts'

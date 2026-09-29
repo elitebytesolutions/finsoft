@@ -23,6 +23,32 @@ export type JsonValue = JsonArray | JsonObject | JsonPrimitive;
 
 export type Timestamp = ColumnType<Date, Date | string, Date | string>;
 
+export interface Accounts {
+  code: string;
+  control_kind: Generated<string>;
+  created_at: Generated<Timestamp>;
+  created_by: string;
+  id: Generated<string>;
+  is_active: Generated<boolean>;
+  kind: string;
+  name: string;
+  normal_balance: string;
+  parent_id: string | null;
+  /**
+   * coa-standard.md §3: closed to manual JV for a reason other than being a control account (Retained Earnings, COGS, Rounding Differences).
+   */
+  restricted: Generated<boolean>;
+  /**
+   * The stable identifier a posting rule names (AR_CONTROL, CASH_DEFAULT, ...). Resolution is by role, never by code or name (rule 17).
+   */
+  role: string | null;
+  tenant_id: string;
+  type: string;
+  updated_at: Generated<Timestamp>;
+  updated_by: string;
+  version: Generated<number>;
+}
+
 export interface AuditLog {
   action: string;
   actor_user_id: string | null;
@@ -57,6 +83,109 @@ export interface AuditLog {
    */
   seq: ColumnType<string, string, string>;
   tenant_id: string;
+}
+
+export interface DocumentSequences {
+  created_at: Generated<Timestamp>;
+  created_by: string;
+  fiscal_year: number | null;
+  id: Generated<string>;
+  /**
+   * The number most recently assigned. Transactional: a rolled-back caller's increment rolls back with it, so a rejected or rolled-back posting consumes no number. A gap arises only if a caller commits an increment without committing the numbered document (never on a kernel path). Duplicates are impossible.
+   */
+  last_number: Generated<ColumnType<string, string, string>>;
+  scope: string;
+  series: string;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+  updated_by: string;
+  version: Generated<number>;
+}
+
+export interface FiscalPeriods {
+  closed_at: Timestamp | null;
+  closed_by: string | null;
+  created_at: Generated<Timestamp>;
+  created_by: string;
+  /**
+   * The calendar year the fiscal year ENDS in (periods.md §2) — 1 Jul 2026-30 Jun 2027 is FY2027.
+   */
+  fiscal_year: number;
+  id: Generated<string>;
+  label: string;
+  locked_at: Timestamp | null;
+  locked_by: string | null;
+  period_end: Timestamp;
+  period_index: number;
+  period_start: Timestamp;
+  reopen_reason: string | null;
+  reopened_at: Timestamp | null;
+  reopened_by: string | null;
+  /**
+   * OPEN -> CLOSED -> LOCKED. CLOSED may reopen to OPEN (reason required). LOCKED never transitions again, for any role (ADR-0012).
+   */
+  status: Generated<string>;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+  updated_by: string;
+  version: Generated<number>;
+}
+
+export interface JournalEntries {
+  created_at: Generated<Timestamp>;
+  created_by: string;
+  entry_number: string;
+  /**
+   * The FinancialEvent this entry (or, for a reversal, the ORIGINAL entry) was raised for. A reversal shares its original's event so event-grouped reports net the pair (reversal.md §1).
+   */
+  event: string;
+  fiscal_period_id: string;
+  id: Generated<string>;
+  idempotency_key: string;
+  narration: string;
+  occurred_at: Timestamp;
+  posting_rule: string;
+  reference: string | null;
+  /**
+   * sha256 hex of the canonical (event, referenceType, referenceId, occurredAt, actor, payload) tuple. A replay of idempotency_key with a different fingerprint is IDEMPOTENCY_KEY_REUSED.
+   */
+  request_fingerprint: string;
+  reversal_of: string | null;
+  reversal_reason: string | null;
+  reversed_at: Timestamp | null;
+  /**
+   * The REVERSING ENTRY (R.id), per reversal.md — not a user. The acting user is R.created_by / E.updated_by.
+   */
+  reversed_by: string | null;
+  source_id: string;
+  source_type: string;
+  status: Generated<string>;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+  updated_by: string;
+  version: Generated<number>;
+}
+
+export interface JournalLines {
+  /**
+   * ADR-0026: the account's control_kind at posting time, pinned by FK. AR <=> party CUSTOMER, AP <=> party VENDOR, NONE/INVENTORY <=> no party.
+   */
+  account_control: string;
+  account_id: string;
+  created_at: Generated<Timestamp>;
+  created_by: string;
+  credit: Generated<ColumnType<string, string, string>>;
+  debit: Generated<ColumnType<string, string, string>>;
+  entry_id: string;
+  id: Generated<string>;
+  line_number: number;
+  memo: string | null;
+  party_id: string | null;
+  party_type: string | null;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+  updated_by: string;
+  version: Generated<number>;
 }
 
 export interface Outbox {
@@ -124,6 +253,17 @@ export interface Outbox {
   /**
    * Optimistic lock. The application bumps it in the UPDATE WHERE clause; no trigger touches it. NOT the lease fence — see lease_id.
    */
+  version: Generated<number>;
+}
+
+export interface Parties {
+  created_at: Generated<Timestamp>;
+  created_by: string;
+  id: Generated<string>;
+  party_type: string;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+  updated_by: string;
   version: Generated<number>;
 }
 
@@ -308,8 +448,14 @@ export interface Users {
 }
 
 export interface DB {
+  accounts: Accounts;
   audit_log: AuditLog;
+  document_sequences: DocumentSequences;
+  fiscal_periods: FiscalPeriods;
+  journal_entries: JournalEntries;
+  journal_lines: JournalLines;
   outbox: Outbox;
+  parties: Parties;
   refresh_token_families: RefreshTokenFamilies;
   refresh_tokens: RefreshTokens;
   role_permissions: RolePermissions;

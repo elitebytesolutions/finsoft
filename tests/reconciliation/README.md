@@ -19,7 +19,7 @@ valuation against the stock ledger.
 | `reconciler.ts` | `reconcileSubledgerToGeneralLedger` and `reconcileValuationToStockLedger`. Pure functions over rows. No tolerance parameter exists, and a test greps to keep it that way |
 | `subledger-to-gl.spec.ts` | Criteria 1-4 below, against fixtures including deliberate breaks |
 | `valuation-to-ledger.spec.ts` | The Wave 6 criteria, including the `9533.3333` vs `9533.3334` case the forbidden recomputation produces |
-| `dormant.spec.ts` | **The tripwire.** Fails the moment a kernel stops being `export {}` or a reconcilable table is migrated |
+| `dormant.spec.ts` | **The tripwire.** Fails the moment a posting rule that can reach AR/AP is enabled, the inventory kernel stops being `export {}`, or a subledger/stock table is migrated (re-armed in M2-A — see below) |
 
 Nothing here imports a kernel, a repository or a posting engine, and nothing
 ever should. A control that shares an implementation with the thing it checks
@@ -58,6 +58,7 @@ it at.
 | **Deferred to** | **Wave 5** for the first suite (posting exists), **Wave 6** for inventory valuation |
 | **Blocked by** | ADR-0005's posting engine and ADR-0008/0018's movement ledger. ADR-0018 is currently **rejected** and carries 19 required changes |
 | **Owner** | Accounting Guardian for the invariants; QA Engineer for the suites |
+| **M2-A (2026-09-28)** | The accounting tripwire fired: migration 012 created the journal and the kernel gained a posting engine. The GL side now exists and is checked live for every tenant by the FinancialInvariantSuite (Invariants 1, 2, 6). Subledger-to-GL stays deferred to **M3**: no document subledger exists, and no enabled path reaches a control account (manual JV to AR/AP is `ACCOUNT_CONTROL_MANUAL_FORBIDDEN`; `SALE_POSTED` / `CUSTOMER_PAYMENT_RECEIVED` are `RULE_NOT_ENABLED`). The tripwire is re-armed on those two facts. The FND-012 register entry is outside this lane and still needs the same note |
 
 ---
 

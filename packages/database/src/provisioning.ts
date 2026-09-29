@@ -16,6 +16,17 @@
  * directly from `./audit/anchor.ts`, not through this file — it is inside
  * the package, not a consumer of its public surface.
  *
+ * `seedChartOfAccounts` and `createFiscalYear` (M2-A) join this surface for
+ * the same reason: coa-standard.md §6 and periods.md §3 both require the
+ * template and the fiscal year to be created "in the same transaction that
+ * creates the tenant" — provisioning-time operations, not something an
+ * ordinary request handler calls. Unlike `createAuditChainAnchor` they are
+ * NOT privileged in the RLS sense (no advisory lock, no BYPASSRLS
+ * consideration) — they are ordinary tenant-scoped inserts under
+ * `withTenant`, kept on this narrow surface purely to keep "what tenant
+ * provisioning does" in one place rather than scattering it across the
+ * general-purpose root export.
+ *
  * M1-X, Council S3: `tools/seed/demo-tenants.mjs` is the first real
  * (non-test) caller. Every query body it needs lives here, as a named
  * export taking parameters and returning rows or ids — Architecture seat
@@ -50,6 +61,9 @@ import { TenantContext } from './tenant-context.ts'
 import { withGlobal, withTenant } from './transaction.ts'
 
 export { createAuditChainAnchor }
+export { hasChartOfAccounts, seedChartOfAccounts } from './accounting/accounts.ts'
+export { createFiscalYear, hasFiscalYear } from './accounting/periods.ts'
+export type { AuditOrigin } from './accounting/audit-origin.ts'
 
 export interface ProvisioningTenantRow {
   readonly id: string

@@ -18,12 +18,38 @@ import { FinDecimal, Rounding, type Dec, type RoundingMode } from './decimal.ts'
  * `serialize`.
  */
 
+/**
+ * Why an amount was refused, as a stable machine-readable fact. Callers that
+ * translate a refusal into a domain error code (the posting kernel's
+ * AMOUNT_NOT_STRING / AMOUNT_SCALE / AMOUNT_OUT_OF_RANGE) switch on this —
+ * never on the message text, which is for developers and may be reworded.
+ */
+export type AmountErrorReason =
+  'NOT_STRING' | 'NOTATION' | 'SCALE' | 'RANGE' | 'NON_FINITE' | 'DIVISION_BY_ZERO' | 'BOUNDARY'
+
 export class AmountError extends Error {
-  constructor(message: string) {
+  readonly reason: AmountErrorReason
+
+  constructor(message: string, reason: AmountErrorReason = 'BOUNDARY') {
     super(message)
     this.name = 'AmountError'
+    this.reason = reason
   }
 }
+
+/*
+ * ADR-0014's BLOCKING PRECONDITION on the posting-engine contract, closed:
+ * "Amount.value becomes internal before any code outside packages/validation
+ * consumes an Amount." packages/accounting-kernel now consumes Amounts, so the
+ * raw decimal is held under a module-private symbol instead of a public
+ * `value` field. `Money.from('1').value.toNumber()` — the float-egress path
+ * the ADR names — no longer compiles anywhere, and there is no supported way
+ * to reach the decimal outside this package. `AMOUNT_VALUE` is exported from
+ * this FILE for packages/validation's own tests; it is deliberately NOT
+ * re-exported from the package index.
+ */
+export const AMOUNT_VALUE: unique symbol = Symbol('Amount.value')
+const VALUE: typeof AMOUNT_VALUE = AMOUNT_VALUE
 
 /** Scale and total digits, taken from the column definitions in ADR-0011. */
 const SPEC = {
@@ -43,7 +69,7 @@ export type Kind = keyof typeof SPEC
  */
 export class Amount<K extends Kind> {
   readonly kind: K
-  readonly value: Dec
+  readonly [VALUE]: Dec
   readonly scale: number
 
   /** @internal Use Money.from, Quantity.from, and so on. */
@@ -69,11 +95,12 @@ export class Amount<K extends Kind> {
           'serialises to a string PostgreSQL accepts as numeric, where NaN = NaN is TRUE — ' +
           'so an entry of NaN lines would satisfy a SUM(debit) = SUM(credit) check while ' +
           'balancing nothing (NON_NEGOTIABLES Invariant 1).',
+        'NON_FINITE',
       )
     }
 
     this.kind = kind
-    this.value = value
+    this[VALUE] = value
     this.scale = SPEC[kind].scale
     Object.freeze(this)
   }
@@ -109,25 +136,25 @@ export class Amount<K extends Kind> {
   private fixedOrThrow(via: string): string {
     /*
      * Belt and braces. The constructor rejects non-finite values, so this is
-     * unreachable through the sanctioned path — but `value` is a public
-     * readonly field holding a mutable decimal, and the scale check below
+     * unreachable through the sanctioned path — but the decimal held under
+     * the private symbol is still a mutable object, and the scale check below
      * silently passes anything non-finite (NaN > scale is false).
      */
-    if (!this.value.isFinite()) {
+    if (!this[VALUE].isFinite()) {
       throw new AmountError(
         `${this.kind}.${via}() refused: the value is not finite. See the constructor.`,
       )
     }
 
-    if (this.value.decimalPlaces() > this.scale) {
+    if (this[VALUE].decimalPlaces() > this.scale) {
       throw new AmountError(
-        `${this.kind}.${via}() refused: the value carries ${this.value.decimalPlaces()} decimal ` +
+        `${this.kind}.${via}() refused: the value carries ${this[VALUE].decimalPlaces()} decimal ` +
           `places but the scale is ${this.scale}. Rounding once, explicitly, is the rule — ` +
           `call ${this.kind}.round() first, or ${this.kind}.serialize(value, scale) if you ` +
           'mean to round for presentation.',
       )
     }
-    return this.value.toFixed(this.scale)
+    return this[VALUE].toFixed(this.scale)
   }
 }
 
@@ -155,12 +182,14 @@ function parse<K extends Kind>(kind: K, input: string): Amount<K> {
     throw new AmountError(
       `${kind} must be constructed from a string, received ${typeof input}. ` +
         'A JavaScript number has already lost the value (ADR-0011).',
+      'NOT_STRING',
     )
   }
   if (!DECIMAL_NOTATION.test(input)) {
     throw new AmountError(
       `${kind}: "${input}" is not plain decimal notation. ` +
         'Hexadecimal, binary, octal, exponential, NaN and Infinity are rejected.',
+      'NOTATION',
     )
   }
 
@@ -169,16 +198,17 @@ function parse<K extends Kind>(kind: K, input: string): Amount<K> {
     throw new AmountError(
       `${kind}: "${input}" carries ${fracPart.length} decimal places but the scale is ${scale}. ` +
         'Round explicitly — rounding never happens implicitly.',
+      'SCALE',
     )
   }
   if (intPart.length + scale > totalDigits) {
-    throw new AmountError(`${kind}: "${input}" exceeds numeric(${totalDigits},${scale}).`)
+    throw new AmountError(`${kind}: "${input}" exceeds numeric(${totalDigits},${scale}).`, 'RANGE')
   }
 
   const value = new FinDecimal(input)
   /* Belt and braces: the regex already excludes these. */
   if (!value.isFinite()) {
-    throw new AmountError(`${kind}: "${input}" is not finite.`)
+    throw new AmountError(`${kind}: "${input}" is not finite.`, 'NON_FINITE')
   }
   return new Amount(kind, value)
 }
@@ -196,25 +226,25 @@ function ops<K extends Kind>(kind: K) {
     zero: (): Amount<K> => wrap(new FinDecimal(0)),
 
     /** Full precision — does not round. */
-    add: (a: Amount<K>, b: Amount<K>): Amount<K> => wrap(a.value.plus(b.value)),
+    add: (a: Amount<K>, b: Amount<K>): Amount<K> => wrap(a[VALUE].plus(b[VALUE])),
 
     /** Full precision — does not round. */
-    subtract: (a: Amount<K>, b: Amount<K>): Amount<K> => wrap(a.value.minus(b.value)),
+    subtract: (a: Amount<K>, b: Amount<K>): Amount<K> => wrap(a[VALUE].minus(b[VALUE])),
 
     /** ADR-0006: a reversal negates the original exactly. */
-    negate: (a: Amount<K>): Amount<K> => wrap(a.value.negated()),
+    negate: (a: Amount<K>): Amount<K> => wrap(a[VALUE].negated()),
 
-    abs: (a: Amount<K>): Amount<K> => wrap(a.value.abs()),
+    abs: (a: Amount<K>): Amount<K> => wrap(a[VALUE].abs()),
 
     sum: (xs: readonly Amount<K>[]): Amount<K> =>
-      wrap(xs.reduce((acc, x) => acc.plus(x.value), new FinDecimal(0))),
+      wrap(xs.reduce((acc, x) => acc.plus(x[VALUE]), new FinDecimal(0))),
 
     /**
      * Round once, explicitly, half-up. ADR-0011.
      * Defaults to this kind's own scale.
      */
     round: (a: Amount<K>, toScale: number = scale, mode: RoundingMode = Rounding.HALF_UP) =>
-      wrap(a.value.toDecimalPlaces(toScale, mode)),
+      wrap(a[VALUE].toDecimalPlaces(toScale, mode)),
 
     /** Division never has an implicit scale. ADR-0011. */
     divide: (
@@ -223,17 +253,48 @@ function ops<K extends Kind>(kind: K) {
       toScale: number,
       mode: RoundingMode = Rounding.HALF_UP,
     ): Amount<K> => {
-      if (by.value.isZero()) throw new AmountError(`${kind}: division by zero.`)
-      return wrap(a.value.div(by.value).toDecimalPlaces(toScale, mode))
+      if (by[VALUE].isZero())
+        throw new AmountError(`${kind}: division by zero.`, 'DIVISION_BY_ZERO')
+      return wrap(a[VALUE].div(by[VALUE]).toDecimalPlaces(toScale, mode))
     },
 
-    compare: (a: Amount<K>, b: Amount<K>): -1 | 0 | 1 => a.value.comparedTo(b.value) as -1 | 0 | 1,
-    equals: (a: Amount<K>, b: Amount<K>): boolean => a.value.equals(b.value),
-    isZero: (a: Amount<K>): boolean => a.value.isZero(),
-    isNegative: (a: Amount<K>): boolean => a.value.isNegative() && !a.value.isZero(),
+    compare: (a: Amount<K>, b: Amount<K>): -1 | 0 | 1 =>
+      a[VALUE].comparedTo(b[VALUE]) as -1 | 0 | 1,
+    equals: (a: Amount<K>, b: Amount<K>): boolean => a[VALUE].equals(b[VALUE]),
+    isZero: (a: Amount<K>): boolean => a[VALUE].isZero(),
+    isNegative: (a: Amount<K>): boolean => a[VALUE].isNegative() && !a[VALUE].isZero(),
 
-    /** The fixed-scale string that crosses HTTP, the outbox and exports. */
-    serialize: (a: Amount<K>, toScale: number = scale): string => a.value.toFixed(toScale),
+    /**
+     * The fixed-scale string that crosses HTTP, the outbox and exports.
+     *
+     * ADR-0014's open item, resolved: `toScale` has no default. A defaulted
+     * scale made this a second, undeclared rounding boundary — `toJSON()` and
+     * `toString()` THROW on a value carrying more decimals than its scale,
+     * deliberately, because an implicit `toFixed` on the way out is the
+     * "rounded twice" failure ADR-0011 forbids; but the old
+     * `serialize: (a, toScale = scale) => a.value.toFixed(toScale)` rounded
+     * SILENTLY when no scale was named, so `260.000001` threw through
+     * `toJSON()` and became `"260.0000"` through `serialize(x)`. Requiring the
+     * argument — matching `divide`, above, which has never had a default —
+     * makes every rounding boundary in this module the same shape: explicit,
+     * at the call site, or not at all.
+     */
+    serialize: (a: Amount<K>, toScale: number): string => {
+      /*
+       * The type makes `toScale` required; this makes it required at RUNTIME
+       * too. A JavaScript caller (or a cast) that omits it would otherwise
+       * reach `toFixed(undefined)`, which does not round but emits however
+       * many decimals the value happens to carry — an unscaled string on a
+       * boundary whose whole contract is a fixed scale.
+       */
+      if (!Number.isInteger(toScale) || toScale < 0) {
+        throw new AmountError(
+          `${kind}.serialize: toScale must be an explicit non-negative integer, got ${String(toScale)}. ` +
+            'There is no default scale: naming it is what makes the rounding boundary explicit (ADR-0014).',
+        )
+      }
+      return a[VALUE].toFixed(toScale)
+    },
   }
 }
 
@@ -245,11 +306,11 @@ export const Money = {
    * point the figure is persisted or presented.
    */
   multiply: (quantity: Quantity, unitCost: UnitCost): Money =>
-    new Amount('Money', quantity.value.times(unitCost.value)),
+    new Amount('Money', quantity[VALUE].times(unitCost[VALUE])),
 
   /** amount × percentage (as a percentage, not a fraction). Full precision. */
   applyPercentage: (amount: Money, percentage: Percentage): Money =>
-    new Amount('Money', amount.value.times(percentage.value).div(100)),
+    new Amount('Money', amount[VALUE].times(percentage[VALUE]).div(100)),
 }
 
 export const UnitCost = {
@@ -260,12 +321,12 @@ export const UnitCost = {
    * quantity, rounded once to 6 decimal places.
    */
   weightedAverage: (totalValue: Money, totalQuantity: Quantity): UnitCost => {
-    if (totalQuantity.value.isZero()) {
+    if (totalQuantity[VALUE].isZero()) {
       throw new AmountError('UnitCost: weighted average of a zero quantity is undefined.')
     }
     return new Amount(
       'UnitCost',
-      totalValue.value.div(totalQuantity.value).toDecimalPlaces(6, Rounding.HALF_UP),
+      totalValue[VALUE].div(totalQuantity[VALUE]).toDecimalPlaces(6, Rounding.HALF_UP),
     )
   },
 }

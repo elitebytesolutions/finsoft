@@ -8,7 +8,16 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "dependencies": {
+    "@finsoft/database": "*",
+    "@finsoft/validation": "*",
+    "kysely": "0.29.6"
+  },
+  "devDependencies": {
+    "vitest": "4.1.11"
+  },
   "scripts": {
+    "test": "vitest run",
     "typecheck": "tsc --noEmit"
   }
 }
