@@ -53,6 +53,6 @@ document):** the invoice detail page's "reversal into the first open period" con
 [reversal.md](../../posting-rules/reversal.md) §4. The rule wins, and the page document is
 corrected in M4.
 
-**Recorded in [README](README.md) §6, resolved by ADR-0027:** [ARCHITECTURE](../../ARCHITECTURE.md)
+**Recorded in [README](README.md) §6, resolved by ADR-0028:** [ARCHITECTURE](../../ARCHITECTURE.md)
 §2's per-module `ui/` layer contradicts `.dependency-cruiser.cjs` `web-is-ui-only`, which forbids
 `apps/web` from importing `modules/**`. It went unnoticed because `modules/` has been empty.

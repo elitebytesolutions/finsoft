@@ -68,7 +68,7 @@ renumbers on its own, and a number is never changed after review, because `CHECK
                  ┌── M3-C  customers module + module platform ──┐ merges first (014)
 M2-A merged ─────┤                                               ├──► M3 demo ──► M4 UI
 ADR-0026 Accepted│                                               │
-ADR-0027 Accepted└── M3-P  receivables: invoice + receipt ───────┘ merges second (015, 016)
+ADR-0028 Accepted└── M3-P  receivables: invoice + receipt ───────┘ merges second (015, 016)
                       posting, T3, ONE lane
                       M3-Q  invariant 9 + golden runner ── parallel with M3-P, tests only
 ```
@@ -155,7 +155,7 @@ M3 route merges before that.** A money-moving endpoint whose permission is not e
 M3 is the first time `modules/` holds code, so four boundary rules that have never had anything to
 check start running. They must be shown to fire before any module code depends on them:
 
-1. **ADR-0027 Accepted** (§6).
+1. **ADR-0028 Accepted** (§6).
 2. **Workspaces and build:** `"modules/*"` added to root `workspaces`; `modules/.scaffold/`
    deleted ([its own README](../../../modules/.scaffold/README.md) says to); `modules/**` added to
    `tools/ci/risk-tiers.json` `images.api` (without it a module change does not rebuild the API
@@ -183,7 +183,7 @@ check start running. They must be shown to fire before any module code depends o
 
 | Record | Decision | Why it cannot be LEVEL 3 |
 |---|---|---|
-| **ADR-0027 — module packaging and runtime** (Architecture seat, to be written; next free number after ADR-0026) | (a) each module is a workspace package run under Node type stripping, like `packages/*`; (b) **NestJS controllers for a module live in `apps/api/src/<module>/`** as thin adapters, and the module's `api/` layer holds the framework-free HTTP contract (zod request schemas, response mappers, error-code → status table); (c) modules have **no `ui/` layer**, and screens live in `apps/web/src/screens`; (d) application-layer ports are typed with `TenantTx` and implemented in `infrastructure/`, which may import `application/ports.ts` **type-only** | It amends [ARCHITECTURE](../../ARCHITECTURE.md) §2, which puts controllers and decorators in `modules/*/api/` and route segments in `modules/*/ui/`. Both are unworkable as written: decorators cannot run under type stripping, which is how every workspace package runs (`apps/api/tsconfig.json` header), and `web-is-ui-only` already forbids `apps/web → modules/**`, so a module `ui/` layer could never be imported. The reasoning is in [modules.md](modules.md) §1 |
+| **ADR-0028 — module packaging and runtime** (Architecture seat, to be written; ADR-0027 is the posting-idempotency record) | (a) each module is a workspace package run under Node type stripping, like `packages/*`; (b) **NestJS controllers for a module live in `apps/api/src/<module>/`** as thin adapters, and the module's `api/` layer holds the framework-free HTTP contract (zod request schemas, response mappers, error-code → status table); (c) modules have **no `ui/` layer**, and screens live in `apps/web/src/screens`; (d) application-layer ports are typed with `TenantTx` and implemented in `infrastructure/`, which may import `application/ports.ts` **type-only** | It amends [ARCHITECTURE](../../ARCHITECTURE.md) §2, which puts controllers and decorators in `modules/*/api/` and route segments in `modules/*/ui/`. Both are unworkable as written: decorators cannot run under type stripping, which is how every workspace package runs (`apps/api/tsconfig.json` header), and `web-is-ui-only` already forbids `apps/web → modules/**`, so a module `ui/` layer could never be imported. The reasoning is in [modules.md](modules.md) §1 |
 | **ADR-0026** (Database seat, pending) | Party dimension (§4) | Kernel table referencing a module table, per posting-rules README §5 |
 
 ## 7. Definition of done — M3

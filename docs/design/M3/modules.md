@@ -28,7 +28,7 @@ later by sales, credit control, cheques and statements. None of them may reach i
 tables. It is also the first real use of the published-interface pattern, which is better proved
 on a small interface in M3 than on a large one in Wave 7.
 
-### Packaging — ADR-0027, required before code ([README](README.md) §6)
+### Packaging — ADR-0028, required before code ([README](README.md) §6)
 
 ```
 modules/receivables/
@@ -63,7 +63,7 @@ already makes it unimportable.
 `domain/` may not see `@finsoft/database`, not even as a type
 (`eslint.config.mjs` module-domain block). So repository interfaces live in
 `application/ports.ts`, and `infrastructure/` implements them with a **type-only** import of that
-one file. Dependencies still point inward; ADR-0027 records it so the arrow in §2 is not read as
+one file. Dependencies still point inward; ADR-0028 records it so the arrow in §2 is not read as
 forbidding it. A depcruise rule confines the edge to `application/ports.ts` and to type-only.
 
 ## 2. What each module owns
