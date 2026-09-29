@@ -7,7 +7,7 @@
 - **Decisions needed** name the decider and the date asked; each closes within 2 working days.
 - **Demo ready** holds only workflows running against the real API on staging. Mock screens never go here.
 
-*Last updated: 2026-09-27 (M1-000f: ADR-0025 Accepted, with the Database/Security seat signed; ADR-0023's conflict notice replaced by the permanent scope notice; TD-006 booked).*
+*Last updated: 2026-09-28 (M2-000b: ADR-0027 Accepted, which supersedes ADR-0005 step 2 only; permanent scope notice on ADR-0005; condition K1 binds the M2-A merge; the M3 pack's planned "ADR-0027" is renumbered ADR-0028).*
 
 ---
 
@@ -61,6 +61,8 @@ Then **M2** accounting core · **M3** customers, service invoice, receipts · **
 
 | Date | Decider | Decision |
 |---|---|---|
+| 2026-09-28 | **Council — Architecture + Accounting** | [ADR-0027](adr/ADR-0027-posting-idempotency-resolved-against-the-journal.md) Accepted. Posting idempotency is resolved against `journal_entries`' `(tenant_id, idempotency_key)` unique index. Step 2 is a lookup, and a replay returns the prior result. Numbering and the entry INSERT run inside one named kernel savepoint, rolled back on a lost race, so no number is consumed. That savepoint is the only transaction control the kernel issues. Supersedes ADR-0005:56 only, and a permanent scope notice at ADR-0005's head (+21) marks it. **Condition K1 binds the M2-A merge:** an ESLint rule rejects transaction-control SQL and transaction or savepoint APIs in `packages/accounting-kernel`, except the three `finsoft_posting_number` statements in `queries/journal-writes.ts`. `lint-boundaries.spec.ts`'s accepted `SAVEPOINT s` case flips to rejected |
+| 2026-09-28 | **Orchestrator** | **ADR numbering.** The M3 design pack's planned "ADR-0027" (module controllers in `apps/api`, no module `ui/` layer) becomes **ADR-0028**. ADR-0027 is the posting-idempotency record. References in `docs/design/M3/**` and the M3 BOARD row on `feature/M3-000b-design-pack` still say 0027 and must be corrected on that branch before it merges |
 | 2026-09-27 | **Council — Architecture + `devops-guardian`**, Security seat concurring | **Refresh-cookie prefix; the ADR-0023 *Open* gate is lifted.** Staging: `__Host-finsoft_rt`, `Path=/`, because `sslip.io` is not on the Public Suffix List. Production: `__Secure-finsoft_rt`, `Path=/api/auth`, provided no untrusted host shares its registrable domain (otherwise `__Host-` there too), confirmed by `devops-guardian` when the domain is chosen. Recorded in the [ADR-0023](adr/ADR-0023-pre-tenant-authentication-reads.md) addendum |
 | 2026-09-27 | **Product Owner** | **Weekly demo day: Monday.** The weekly status page (`docs/status/YYYY-Www.md`) is written the day before, Sunday |
 | 2026-09-27 | **Council — Architecture** | ADR-0023 addendum: **A1 widened** (every auth and RBAC query body in `packages/database`), **A4 withdrawn** (no ADR-0013 extension), **A5 delivered** (head notices on ADR-0009 and ADR-0004) |
