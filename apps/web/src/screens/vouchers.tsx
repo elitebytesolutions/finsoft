@@ -328,6 +328,7 @@ export function VoucherForm() {
 
 function VoucherFormReady({ accounts }: { accounts: AccountDto[] }) {
   const navigate = useNavigate()
+  const { can } = useAuth()
   const [date, setDate] = useState(todayIso())
   const [reference, setReference] = useState('')
   const [narration, setNarration] = useState('')
@@ -357,7 +358,11 @@ function VoucherFormReady({ accounts }: { accounts: AccountDto[] }) {
   const addLine = () => setLines((list) => [...list, emptyLine()])
   const removeLine = (i: number) => setLines((list) => list.filter((_, j) => j !== i))
 
-  const canSubmit = totals.balanced && narration.trim().length > 0 && !submitting
+  // M4-W: `voucher.post` gates the button, same UI-affordance-only reasoning as
+  // PeriodTable's Close/Reopen and VoucherDetailReady's Reverse — the server's own
+  // @RequirePermission on POST /api/journals is the real gate regardless.
+  const canSubmit =
+    totals.balanced && narration.trim().length > 0 && !submitting && can('voucher.post')
 
   // Opens the confirm dialog — posting itself happens only from there, in doPost below.
   const requestSubmit = (e: FormEvent) => {
