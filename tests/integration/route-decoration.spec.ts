@@ -8,6 +8,33 @@ import { RouteDecorationCheck } from '../../apps/api/src/common/route-decoration
 import { Public } from '../../apps/api/src/common/tenant.guard.ts'
 
 /*
+ * M1-X, Council re-review R4/R5: a route must carry EXACTLY one of the three
+ * markers, and an empty @RequirePermission() is a boot-time failure, not a
+ * request-time one.
+ */
+
+@Controller('ambiguous')
+class AmbiguouslyDecoratedController {
+  /** Both @Public() and @RequirePermission(...) — two contradictory decisions. */
+  @Public()
+  @RequirePermission('audit.view')
+  @Get('both')
+  both() {
+    return { reached: true }
+  }
+}
+
+@Controller('empty-permission')
+class EmptyPermissionController {
+  /** @RequirePermission() with no codes — a configuration mistake (SEC-C3). */
+  @RequirePermission()
+  @Get('whoops')
+  whoops() {
+    return { reached: true }
+  }
+}
+
+/*
  * M1-X, Council SEC-C1/C2: the startup check that every route declares
  * @Public(), @RequirePermission(...) or @AuthenticatedOnly(). This is the
  * "aborts boot" half of the contract, exercised directly rather than through
@@ -78,6 +105,38 @@ describe('RouteDecorationCheck: the startup route-decoration check', () => {
     const app = moduleRef.createNestApplication()
 
     await expect(app.init()).resolves.toBeDefined()
+    await app.close()
+  })
+
+  it('M1-X, Council R4: aborts app.init() when a route carries more than one marker', async () => {
+    @Module({
+      imports: [DiscoveryModule],
+      controllers: [AmbiguouslyDecoratedController],
+      providers: [RouteDecorationCheck],
+    })
+    class AmbiguousModule {}
+
+    const moduleRef = await Test.createTestingModule({ imports: [AmbiguousModule] }).compile()
+    const app = moduleRef.createNestApplication()
+
+    await expect(app.init()).rejects.toThrow(/AmbiguouslyDecoratedController\.both/)
+    await app.close()
+  })
+
+  it('M1-X, Council R5: aborts app.init() when @RequirePermission() names no codes', async () => {
+    @Module({
+      imports: [DiscoveryModule],
+      controllers: [EmptyPermissionController],
+      providers: [RouteDecorationCheck],
+    })
+    class EmptyPermissionModule {}
+
+    const moduleRef = await Test.createTestingModule({
+      imports: [EmptyPermissionModule],
+    }).compile()
+    const app = moduleRef.createNestApplication()
+
+    await expect(app.init()).rejects.toThrow(/EmptyPermissionController\.whoops/)
     await app.close()
   })
 })

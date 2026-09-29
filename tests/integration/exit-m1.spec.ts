@@ -3,9 +3,9 @@ import { INestApplication } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 import { Redis } from 'ioredis'
 import request from 'supertest'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { sql } from 'kysely'
-import { hashRefreshToken } from '@finsoft/auth'
+import { ACCESS_TOKEN_TTL_SECONDS, hashRefreshToken } from '@finsoft/auth'
 import { listAuditEvents, withGlobal, withTenant } from '@finsoft/database'
 import { prepareTestDatabase, runAs, teardownTestDatabase, unique } from '@finsoft/database/testing'
 import { seedSystemRoles } from '@finsoft/permissions'
@@ -445,6 +445,78 @@ describe('W1-006 criterion 3: missing, tampered, expired and revoked credentials
       .set(CSRF)
       .send()
     expect(res.status).toBe(401)
+  })
+
+  /*
+   * M1-X, Council re-review exit-suite addition: the "expired" case above
+   * (refresh_tokens_enforce_transition, migration 005) proves a REFRESH
+   * token's own expiry is enforced. It says nothing about an ACCESS token's
+   * `exp` claim — verified independently, by `jose`, inside
+   * `verifyAccessToken` (packages/auth/src/jwt.ts), against a bearer token
+   * on every request. This proves that path too, through the real HTTP
+   * surface rather than by calling `verifyAccessToken` directly.
+   *
+   * `vi.useFakeTimers({ toFake: ['Date'] })` fakes only `Date`/`Date.now()`
+   * — not `setTimeout`/`setImmediate`/timers — so the real event loop, the
+   * real Postgres/Redis clients this request still touches on its way to
+   * (correctly) failing early, and every OTHER concurrently-running test's
+   * async work keep ticking on the real clock. Only `jose`'s own
+   * `exp`-vs-"now" comparison (which reads `new Date()`) sees the future.
+   */
+  it('expired: an access token past its own exp claim is rejected', async () => {
+    // A dedicated user, not `a.user`: `login:ip-email` (packages/auth's
+    // throttle) is keyed on (ip, email) with a limit of 5 per 5 minutes, and
+    // `a.user` already spends several of that budget elsewhere in this
+    // file. A fresh identity keeps this test's login independent of how
+    // many other tests around it happen to log the same principal in.
+    const dedicated = await createActiveUserFixture('X1EXP')
+    const login = await loginAs(dedicated)
+    const realNow = Date.now()
+
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(realNow + (ACCESS_TOKEN_TTL_SECONDS + 60) * 1000)
+
+      const res = await request(app.getHttpServer())
+        .get('/api/auth/me')
+        .set('Authorization', `Bearer ${login.accessToken}`)
+      expect(res.status).toBe(401)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  /*
+   * M1-X, Council re-review exit-suite addition: logout must reject the OLD
+   * access token IMMEDIATELY, not merely once the session-active cache's
+   * 15s TTL (packages/auth/src/session-cache.ts) happens to expire on its
+   * own. `logout()` calls `invalidateSessionCache` before returning, so
+   * this makes the very next request with no artificial delay — proving the
+   * flush, not just eventual consistency with a cache that would have
+   * expired anyway by the time a slower test got around to asserting it.
+   */
+  it('logged out: an access token from a logged-out session is rejected immediately, not just eventually', async () => {
+    // Same reasoning as the expired-access-token test above: a dedicated
+    // user keeps this test's one login off `a.user`'s shared throttle
+    // budget.
+    const dedicated = await createActiveUserFixture('X1OUT')
+    const login = await loginAs(dedicated)
+
+    const before = await request(app.getHttpServer())
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${login.accessToken}`)
+    expect(before.status).toBe(200) // sanity: the token works before logout
+
+    await request(app.getHttpServer())
+      .post('/api/auth/logout')
+      .set('Authorization', `Bearer ${login.accessToken}`)
+      .set(CSRF)
+      .send()
+
+    const after = await request(app.getHttpServer())
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${login.accessToken}`)
+    expect(after.status).toBe(401)
   })
 })
 
