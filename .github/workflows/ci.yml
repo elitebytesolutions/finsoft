@@ -787,10 +787,27 @@ jobs:
 
       # A deploy that reports success without asking the thing whether it
       # works is a deploy that reports success.
+      #
+      # `vars.STAGING_URL` is the deployment's real, HTTPS, public address
+      # (PRD §6.1: `https://31-220-74-159.sslip.io` on the current host) — a
+      # repo variable rather than a hardcoded literal so the hostname can
+      # change without editing this file. REQUIRED, with no fallback: the
+      # Caddyfile (infrastructure/staging/Caddyfile) has exactly one site
+      # block, for the `31-220-74-159.sslip.io` hostname. A request with
+      # Host: 31.220.74.159 (what a fallback to `http://$STAGING_HOST` would
+      # send) matches no site block in Caddy and gets nothing usable back —
+      # so a fallback here would not be a degraded smoke test, it would be a
+      # smoke test that silently tests nothing. Fail fast instead
+      # (docs/workflows/ci-tiers.md has the cut-over steps).
       - name: smoke
         env:
-          HOST: ${{ vars.STAGING_HOST }}
-        run: bash infrastructure/staging/smoke.sh "http://$HOST"
+          BASE: ${{ vars.STAGING_URL }}
+        run: |
+          if [ -z "$BASE" ]; then
+            echo "::error::vars.STAGING_URL is not set. Set Settings -> Secrets and variables -> Actions -> Variables -> STAGING_URL to the staging HTTPS origin (e.g. https://31-220-74-159.sslip.io) before deploy-staging can run smoke tests. There is no bare-IP fallback: the Caddyfile has no site block for the bare host, so http://\$STAGING_HOST matches nothing. See docs/workflows/ci-tiers.md." >&2
+            exit 1
+          fi
+          bash infrastructure/staging/smoke.sh "$BASE"
 
       # A real browser against the real deployment, which curl cannot stand in
       # for: smoke.sh proves each endpoint answers, not that a document loaded
@@ -809,10 +826,20 @@ jobs:
       - name: install browser
         run: npx playwright install --with-deps chromium
 
+      # Same requirement as the smoke step above, and for the same reason:
+      # `http://$STAGING_HOST` matches no site block in the Caddyfile, so a
+      # fallback here would point a real browser at a host that answers
+      # nothing meaningful rather than exercising the deployed origin.
       - name: browser against the deployed origin
         env:
-          E2E_BASE_URL: http://${{ vars.STAGING_HOST }}
-        run: npx playwright test --config tests/e2e/playwright.deployed.config.ts
+          BASE: ${{ vars.STAGING_URL }}
+        run: |
+          if [ -z "$BASE" ]; then
+            echo "::error::vars.STAGING_URL is not set. Set Settings -> Secrets and variables -> Actions -> Variables -> STAGING_URL to the staging HTTPS origin (e.g. https://31-220-74-159.sslip.io) before deploy-staging can run the deployed Playwright suite. There is no bare-IP fallback: the Caddyfile has no site block for the bare host. See docs/workflows/ci-tiers.md." >&2
+            exit 1
+          fi
+          export E2E_BASE_URL="$BASE"
+          npx playwright test --config tests/e2e/playwright.deployed.config.ts
 
   # ------------------------------------------------------------------ #
   # GAP-002 (docs/COMPLIANCE_GAPS.md) — the blocking half. Fails the run on

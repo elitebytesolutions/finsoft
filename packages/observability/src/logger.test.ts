@@ -115,6 +115,32 @@ describe('correlation', () => {
     expect(line().requestId).toBeUndefined()
   })
 
+  /*
+   * M1-C, Architecture seat condition: `ip` is carried on
+   * `CorrelationContext` solely so `recordAudit` can default an audit row's
+   * `ip` column from it — it must NEVER reach a log line. An IP address is
+   * personal data, and broadcasting one onto every line of output for the
+   * life of a request is a data-protection policy decision, not something
+   * ADR-0016's secret/topology redaction layers were built to gate. This
+   * asserts the actual logger OUTPUT, not `mixin()` in isolation, so a
+   * regression that bypassed the strip (e.g. a future field spread after
+   * it) would still be caught here.
+   */
+  it('never logs the ip, even though requestId and other fields still appear', () => {
+    const { stream, line } = capture()
+    const log = pino(baseOptions({ service: 'api' }), stream)
+    const requestId = newRequestId()
+
+    withCorrelation({ requestId, tenantId: 'tenant-1', ip: '203.0.113.7' }, () => {
+      log.info('inside')
+    })
+
+    expect(line().requestId).toBe(requestId)
+    expect(line().tenantId).toBe('tenant-1')
+    expect(line().ip).toBeUndefined()
+    expect(JSON.stringify(line())).not.toContain('203.0.113.7')
+  })
+
   it('extends the context without leaking into a sibling scope', () => {
     const outer = { requestId: 'req-1' }
 

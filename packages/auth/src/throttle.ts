@@ -305,3 +305,58 @@ export function refreshLayers(input: {
     { key: `refresh:token:${input.presentedTokenHash}`, limit: 10, windowSeconds: 5 * 60 },
   ]
 }
+
+/**
+ * M1-X, Council Sec 5. A blocking cap, per TENANT CODE ALONE (not combined
+ * with email — every one of `loginLayers`' existing layers is already keyed
+ * that way, and none of them bounds the TOTAL number of failed-login AUDIT
+ * WRITES a tenant's chain absorbs when the attacker varies the email tried).
+ *
+ * This does not throttle the LOGIN response — ADR-0023 §4's identical-401 is
+ * unaffected either way, and a login is never rejected because of this layer.
+ * It bounds only whether `USER_SIGN_IN_FAILED` gets WRITTEN: once a tenant's
+ * budget for failed-login audits is spent in the window, further failures in
+ * that window still 401 normally, and simply stop appending to the chain —
+ * which is what keeps an unauthenticated attacker from being able to
+ * serialise a tenant's whole audit chain behind a flood of wrong passwords
+ * (ADR-0020 §5's per-tenant advisory lock is exactly what a flood of these
+ * would otherwise contend on).
+ */
+export function failedLoginAuditLayer(normalisedTenantCode: string): ThrottleLayer {
+  return { key: `login:failed-audit:${normalisedTenantCode}`, limit: 30, windowSeconds: 5 * 60 }
+}
+
+/**
+ * M1-X, Council re-review item 4 (Sec F5). Once `failedLoginAuditLayer`'s
+ * cap is exhausted for a tenant, the caller must not drop the fact silently
+ * — but writing one audit row per SUPPRESSED attempt would defeat the cap's
+ * own purpose (bounding total writes against that tenant's chain). This is
+ * the same atomic `SET NX EX` dedup `shouldAlert` above uses, in its own key
+ * namespace and with its own TTL: exactly one caller, across however many
+ * suppressed attempts land inside `failedLoginAuditLayer`'s 5-minute window
+ * for that tenant, gets `true` back and writes the marker row; every other
+ * caller in the same window sees the key already set. The window length
+ * matches `failedLoginAuditLayer`'s own `windowSeconds` deliberately — this
+ * is "one marker per cap window", not an independent dedup interval.
+ *
+ * Fails CLOSED in the sense that matters here: on a Redis error, this
+ * returns `false` (no marker written) rather than throwing, because a
+ * suppressed login attempt has already 401'd — there is no request outcome
+ * left for a thrown error to protect, only a side effect to skip.
+ */
+export async function shouldMarkFailedLoginAuditSuppression(
+  normalisedTenantCode: string,
+): Promise<boolean> {
+  try {
+    const result = await client().set(
+      `throttle:failed-audit-suppressed-marker:${normalisedTenantCode}`,
+      '1',
+      'EX',
+      failedLoginAuditLayer(normalisedTenantCode).windowSeconds,
+      'NX',
+    )
+    return result === 'OK'
+  } catch {
+    return false
+  }
+}

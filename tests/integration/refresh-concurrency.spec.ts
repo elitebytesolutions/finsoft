@@ -94,6 +94,7 @@ describe('refresh concurrency, through spendRefreshToken itself', () => {
         newTokenHash: hashRefreshToken(mintRefreshToken().raw),
         deviceId: null,
       },
+      undefined,
       {
         beforeSpend: async () => {
           // Simulate a concurrent logout: revoke the family directly, on a

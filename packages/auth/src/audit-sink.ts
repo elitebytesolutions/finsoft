@@ -1,54 +1,112 @@
+import { recordAudit, TenantContext, type TenantTx } from '@finsoft/database'
+
 /*
- * The seam for M1-D's audit lane.
+ * The audit sink for session lifecycle events. Rule 9: every financial
+ * mutation writes an append-only audit record in the same transaction as
+ * the change. Login/logout/refresh are not financial mutations, but session
+ * lifecycle is the kind of thing an incident review needs an authoritative
+ * record of, and now that migration 009's `audit_log` exists, there is no
+ * reason to settle for a business-event log line instead
+ * (`@finsoft/observability`'s own `events.ts` is explicit that a business
+ * event is not the audit trail).
  *
- * Rule 9 requires an append-only audit record for every financial mutation
- * "in the same transaction as the change". Login/logout/refresh are not
- * financial mutations, but session lifecycle events are the kind of thing an
- * incident review needs an authoritative record of — and that table does not
- * exist yet (docs/WAVE_1_REGISTER.md W1-005, blocked on ADR-0020's
- * signatures). Rather than create an audit table out of turn, or silently
- * satisfy the requirement with a log line (packages/observability's own
- * events.ts is explicit that a business event is not the audit trail — it
- * can be lost to a full disk or a sampling rule, and none of that is a bug),
- * this interface names the seam and ships a no-op default.
- *
- * M1-D wires a real implementation once migration 009 lands. Until then,
- * calling this records nothing durable — which is the honest state of the
- * system, not a claim of compliance this package cannot back up.
- *
- * ITEM 7, security/database re-review 2026-09-27: every `.record()` call
- * site in this package (login.ts, refresh.ts, logout.ts) runs AFTER the
- * mutation's own transaction has already committed, never inside it — rule
- * 9 ("in the same transaction as the change") is NOT satisfied by the
- * current call sites, and cannot be, without restructuring the boundary
- * this task built: `packages/auth` never holds a `TenantTx` (it does not
- * import Kysely at all — see eslint's `packagesAuthQuerySyntax`), so it has
- * no transaction to write an audit row inside even if the table existed.
- * When M1-D wires a real sink, the call sites here will need to move INTO
- * `packages/database/src/auth/{login,refresh,logout}.ts`'s own
- * transactions — passed in as a callback the way `decide` already is,
- * writing the audit row before the transaction returns — rather than being
- * called from this package after the fact. Left as a note rather than
- * restructured now, because there is no audit table to write to yet and
- * speculative plumbing for one is more likely to be wrong than helpful.
+ * M1-X (audit wiring). Earlier revisions of this file recorded events AFTER
+ * their owning transaction had already committed — which this file's own
+ * header used to say could not satisfy rule 9's "in the same transaction",
+ * because `packages/auth` holds no `TenantTx` (it does not import Kysely at
+ * all — see eslint's `packagesAuthQuerySyntax`). That is still true, and it
+ * is why `record` takes the CALLER's own `tx`: `packages/database/src/auth/
+ * {login,refresh}.ts` invoke it as a callback from INSIDE their own
+ * transactions (login's write transaction, refresh's reuse-detection
+ * transaction), the same shape `decide` already uses there. `logout`'s case
+ * is simpler and does not go through this interface at all: `revokeSession`
+ * (packages/database/src/auth/session.ts) calls `recordAudit` directly,
+ * inside its own `withTenant` transaction, because by the time it runs,
+ * `TenantContext` is already established by `packages/auth/src/logout.ts`'s
+ * own `TenantContext.run` — there is no C2-style restriction on that file
+ * the way there is on login.ts/refresh.ts, so no hook needs to cross the
+ * boundary there at all.
  */
 
 export interface AuthAuditEvent {
   readonly tenantId: string
   readonly actorUserId: string | null
   readonly action:
-    'LOGIN_SUCCEEDED' | 'LOGIN_FAILED' | 'REFRESH_ROTATED' | 'REFRESH_REUSE_DETECTED' | 'LOGOUT'
-  readonly entityType: 'session' | 'refresh_token_family'
+    | 'USER_SIGNED_IN'
+    | 'USER_SIGN_IN_FAILED'
+    | 'REFRESH_REUSE_DETECTED'
+    /**
+     * M1-X, Council re-review item 4 (Sec F5). ONE per tenant per
+     * failedLoginAuditLayer window — see
+     * shouldMarkFailedLoginAuditSuppression's own doc comment
+     * (throttle.ts). actorUserId is always null (no session did this; the
+     * throttle layer did), entityType 'tenant', entityId the tenant's own
+     * id.
+     */
+    | 'FAILED_LOGIN_AUDIT_SUPPRESSED'
+  /**
+   * 'user': M1-X, Council Sec 5 — USER_SIGN_IN_FAILED names its TARGET in
+   * entityId (the candidate user, if one existed at that email; null
+   * otherwise), never its actor. An unverified credential is not proof of
+   * who acted, so actorUserId is always null for this action — see
+   * authAuditSink's own note.
+   *
+   * 'tenant': M1-X, Council re-review item 4 — FAILED_LOGIN_AUDIT_SUPPRESSED
+   * is about the tenant's audit chain itself, not any one session or user.
+   */
+  readonly entityType: 'session' | 'refresh_token_family' | 'user' | 'tenant'
   readonly entityId: string | null
-  readonly detail?: Record<string, unknown>
+  /** From the verified request context (trusted-proxy `clientIp`), never re-derived here. */
+  readonly ip: string | null
+  readonly detail?: Record<string, string | null>
 }
 
 export interface AuthAuditSink {
-  record(event: AuthAuditEvent): Promise<void>
+  record(tx: TenantTx, event: AuthAuditEvent): Promise<void>
 }
 
+/**
+ * TEST/OPT-OUT ONLY. Records nothing. `apps/api`'s production wiring passes
+ * `authAuditSink` (below); tests that do not care about the audit trail may
+ * keep using this default rather than asserting against real rows.
+ */
 export const noopAuthAuditSink: AuthAuditSink = {
   async record(): Promise<void> {
     // Intentionally empty. See this file's header.
+  },
+}
+
+/**
+ * The real sink. `recordAudit` requires `TenantContext` to be set (it reads
+ * the tenant from there, not from `tx`, so that a caller cannot lie about
+ * which tenant it is writing to independently of the transaction's own
+ * `app.tenant_id`) — established here, narrowly, for exactly this one
+ * write, since `packages/auth` is one of the places `TenantContext.run` may
+ * be called (the ESLint rule in `eslint.config.mjs`, M1-X C5).
+ *
+ * Rule 20 (no secrets, ever): `detail`, if present, is passed straight
+ * through to `recordAudit`'s `after_json`, and `assertNoSecretLikeKeys`
+ * there rejects a secret-shaped key outright — this sink adds no filtering
+ * of its own because none is needed; the writer's own control already
+ * covers it.
+ */
+export const authAuditSink: AuthAuditSink = {
+  async record(tx, event): Promise<void> {
+    await TenantContext.run({ tenantId: event.tenantId, userId: event.actorUserId }, () =>
+      recordAudit(tx, {
+        actorUserId: event.actorUserId,
+        action: event.action,
+        entityType: event.entityType,
+        entityId: event.entityId,
+        beforeJson: null,
+        afterJson: event.detail ?? null,
+        ip: event.ip,
+        // No request-correlation middleware is wired into apps/api yet
+        // (@finsoft/observability's withCorrelation exists but nothing sets
+        // it per-request today) — recorded as OBSERVED in the delivery
+        // report rather than built here, which is a separate concern.
+        requestId: null,
+      }),
+    )
   },
 }

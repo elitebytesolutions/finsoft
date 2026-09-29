@@ -191,6 +191,415 @@ describe('TenantContext is forbidden in login.ts and refresh.ts (architecture re
   })
 })
 
+describe('withTenantAsPrincipal is importable only from permission.guard.ts (M1-X, Council T1)', () => {
+  it('catches the import in an ordinary apps/api file', async () => {
+    const messages = await messagesFor(
+      'apps/api/src/thing.ts',
+      `import { withTenantAsPrincipal } from '@finsoft/database/request-scope'
+       export const use = withTenantAsPrincipal`,
+    )
+    expect(matching(messages, 'M1-X T1')).toHaveLength(1)
+  })
+
+  it('catches the import in the request-scoping interceptor too — it is not the allowed caller', async () => {
+    const messages = await messagesFor(
+      'apps/api/src/common/tenant-context.interceptor.ts',
+      `import { withTenantAsPrincipal } from '@finsoft/database/request-scope'
+       export const use = withTenantAsPrincipal`,
+    )
+    expect(matching(messages, 'M1-X T1')).toHaveLength(1)
+  })
+
+  it('catches the import in packages/auth', async () => {
+    const messages = await messagesFor(
+      'packages/auth/src/thing.ts',
+      `import { withTenantAsPrincipal } from '@finsoft/database/request-scope'
+       export const use = withTenantAsPrincipal`,
+    )
+    expect(matching(messages, 'M1-X T1')).toHaveLength(1)
+  })
+
+  it('leaves permission.guard.ts alone, the one allowed importer', async () => {
+    const messages = await messagesFor(
+      'apps/api/src/common/permission.guard.ts',
+      `import { withTenantAsPrincipal } from '@finsoft/database/request-scope'
+       export const use = withTenantAsPrincipal`,
+    )
+    expect(matching(messages, 'M1-X T1')).toEqual([])
+  })
+})
+
+describe('TenantContext is importable only by the interceptor, the outbox dispatcher, database and auth (M1-X, Council T2; worker exemption narrowed per Arch R2)', () => {
+  it('catches it in a module', async () => {
+    const messages = await messagesFor(
+      'modules/sales/application/service.ts',
+      `import { TenantContext } from '@finsoft/database'
+       export const use = TenantContext`,
+    )
+    expect(matching(messages, 'M1-X T2')).toHaveLength(1)
+  })
+
+  it('catches it in a kernel', async () => {
+    const messages = await messagesFor(
+      'packages/accounting-kernel/src/post.ts',
+      `import { TenantContext } from '@finsoft/database'
+       export const use = TenantContext`,
+    )
+    expect(matching(messages, 'M1-X T2')).toHaveLength(1)
+  })
+
+  it('catches an ordinary apps/api file', async () => {
+    const messages = await messagesFor(
+      'apps/api/src/thing.ts',
+      `import { TenantContext } from '@finsoft/database'
+       export const use = TenantContext`,
+    )
+    expect(matching(messages, 'M1-X T2')).toHaveLength(1)
+  })
+
+  it('catches PermissionGuard too — it uses withTenantAsPrincipal, never TenantContext directly', async () => {
+    const messages = await messagesFor(
+      'apps/api/src/common/permission.guard.ts',
+      `import { TenantContext } from '@finsoft/database'
+       export const use = TenantContext`,
+    )
+    expect(matching(messages, 'M1-X T2')).toHaveLength(1)
+  })
+
+  it('catches another package (permissions)', async () => {
+    const messages = await messagesFor(
+      'packages/permissions/src/thing.ts',
+      `import { TenantContext } from '@finsoft/database'
+       export const use = TenantContext`,
+    )
+    expect(matching(messages, 'M1-X T2')).toHaveLength(1)
+  })
+
+  it('catches packages/validation', async () => {
+    const messages = await messagesFor(
+      'packages/validation/src/thing.ts',
+      `import { TenantContext } from '@finsoft/database'
+       export const use = TenantContext`,
+    )
+    expect(matching(messages, 'M1-X T2')).toHaveLength(1)
+  })
+
+  it('catches an aliased import — importNames matches the imported name, not the local binding', async () => {
+    const messages = await messagesFor(
+      'apps/api/src/thing.ts',
+      `import { TenantContext as T } from '@finsoft/database'
+       export const use = T`,
+    )
+    expect(matching(messages, 'M1-X T2')).toHaveLength(1)
+  })
+
+  it("still catches it even when the code goes on to use bracket access (TenantContext['run'])", async () => {
+    const messages = await messagesFor(
+      'apps/api/src/thing.ts',
+      `import { TenantContext } from '@finsoft/database'
+       export const run = TenantContext['run']`,
+    )
+    expect(matching(messages, 'M1-X T2')).toHaveLength(1)
+  })
+
+  it('still catches it even when the code goes on to destructure (const { run } = TenantContext)', async () => {
+    const messages = await messagesFor(
+      'apps/api/src/thing.ts',
+      `import { TenantContext } from '@finsoft/database'
+       const { run } = TenantContext
+       export { run }`,
+    )
+    expect(matching(messages, 'M1-X T2')).toHaveLength(1)
+  })
+
+  it('leaves the request-scoping interceptor alone, an allowed caller', async () => {
+    const messages = await messagesFor(
+      'apps/api/src/common/tenant-context.interceptor.ts',
+      `import { TenantContext } from '@finsoft/database'
+       export const use = TenantContext`,
+    )
+    expect(matching(messages, 'M1-X T2')).toEqual([])
+  })
+
+  it('leaves the outbox dispatcher alone, the one allowed caller in apps/worker', async () => {
+    const messages = await messagesFor(
+      'apps/worker/src/outbox/dispatcher.ts',
+      `import { TenantContext } from '@finsoft/database'
+       export const use = TenantContext`,
+    )
+    expect(matching(messages, 'M1-X T2')).toEqual([])
+  })
+
+  /*
+   * Council re-review Arch R2: the earlier exemption covered apps/worker/**
+   * wholesale; it now names apps/worker/src/outbox/dispatcher.ts
+   * specifically. This proves the narrowing actually narrowed something —
+   * an ordinary job file elsewhere in apps/worker is caught exactly like
+   * any other apps/** file.
+   */
+  it('catches it in an ordinary apps/worker job file — the dispatcher is the only exemption', async () => {
+    const messages = await messagesFor(
+      'apps/worker/src/jobs/x.ts',
+      `import { TenantContext } from '@finsoft/database'
+       export const use = TenantContext`,
+    )
+    expect(matching(messages, 'M1-X T2')).toHaveLength(1)
+  })
+
+  it('leaves packages/auth alone, an allowed caller', async () => {
+    const messages = await messagesFor(
+      'packages/auth/src/thing.ts',
+      `import { TenantContext } from '@finsoft/database'
+       export const use = TenantContext`,
+    )
+    expect(matching(messages, 'M1-X T2')).toEqual([])
+  })
+
+  it('leaves packages/database alone, an allowed caller', async () => {
+    const messages = await messagesFor(
+      'packages/database/src/thing.ts',
+      `import { TenantContext } from './tenant-context.ts'
+       export const use = TenantContext`,
+    )
+    expect(matching(messages, 'M1-X T2')).toEqual([])
+  })
+})
+
+describe('@finsoft/database/testing is importable only from a test file (M1-X, Council re-review 1)', () => {
+  it('catches it in an ordinary apps/api file', async () => {
+    const messages = await messagesFor(
+      'apps/api/src/thing.ts',
+      `import { runAs } from '@finsoft/database/testing'
+       export const use = runAs`,
+    )
+    expect(matching(messages, 'Council re-review 1')).toHaveLength(1)
+  })
+
+  it('catches it in a module', async () => {
+    const messages = await messagesFor(
+      'modules/sales/application/thing.ts',
+      `import { runAs } from '@finsoft/database/testing'
+       export const use = runAs`,
+    )
+    expect(matching(messages, 'Council re-review 1')).toHaveLength(1)
+  })
+
+  it('catches it in a kernel', async () => {
+    const messages = await messagesFor(
+      'packages/accounting-kernel/src/thing.ts',
+      `import { runAs } from '@finsoft/database/testing'
+       export const use = runAs`,
+    )
+    expect(matching(messages, 'Council re-review 1')).toHaveLength(1)
+  })
+
+  it('catches it in another package (permissions)', async () => {
+    const messages = await messagesFor(
+      'packages/permissions/src/thing.ts',
+      `import { runAs } from '@finsoft/database/testing'
+       export const use = runAs`,
+    )
+    expect(matching(messages, 'Council re-review 1')).toHaveLength(1)
+  })
+
+  it('catches it in packages/auth, which is otherwise allowed to import TenantContext directly', async () => {
+    const messages = await messagesFor(
+      'packages/auth/src/thing.ts',
+      `import { runAs } from '@finsoft/database/testing'
+       export const use = runAs`,
+    )
+    expect(matching(messages, 'Council re-review 1')).toHaveLength(1)
+  })
+
+  it('catches it in a tools/ script that is not tools/seed/**', async () => {
+    const messages = await messagesFor(
+      'tools/db/thing.mjs',
+      `import { runAs } from '@finsoft/database/testing'
+       export const use = runAs`,
+    )
+    expect(matching(messages, 'Council re-review 1')).toHaveLength(1)
+  })
+
+  it('catches it even in tools/seed/**, which is allowed to import provisioning but not testing', async () => {
+    const messages = await messagesFor(
+      'tools/seed/thing.mjs',
+      `import { runAs } from '@finsoft/database/testing'
+       export const use = runAs`,
+    )
+    expect(matching(messages, 'Council re-review 1')).toHaveLength(1)
+  })
+
+  it('leaves a test file alone', async () => {
+    const messages = await messagesFor(
+      'tests/integration/thing.spec.ts',
+      `import { runAs } from '@finsoft/database/testing'
+       export const use = runAs`,
+    )
+    expect(matching(messages, 'Council re-review 1')).toEqual([])
+  })
+
+  /*
+   * Security seat, final check on a7576ac (medium): the request-scoping
+   * interceptor and the outbox dispatcher are excluded (`ignores`) from the
+   * general apps/** TenantContext-ban block so their own legitimate
+   * TenantContext import is not caught — but with no block of their own,
+   * that exclusion let them escape every OTHER ban that block carries too,
+   * including this one. A dedicated block now covers them.
+   */
+  it('catches it in the request-scoping interceptor, which is otherwise allowed to import TenantContext directly', async () => {
+    const messages = await messagesFor(
+      'apps/api/src/common/tenant-context.interceptor.ts',
+      `import { runAs } from '@finsoft/database/testing'
+       export const use = runAs`,
+    )
+    expect(matching(messages, 'Council re-review 1')).toHaveLength(1)
+  })
+
+  it('catches it in the outbox dispatcher, which is otherwise allowed to import TenantContext directly', async () => {
+    const messages = await messagesFor(
+      'apps/worker/src/outbox/dispatcher.ts',
+      `import { runAs } from '@finsoft/database/testing'
+       export const use = runAs`,
+    )
+    expect(matching(messages, 'Council re-review 1')).toHaveLength(1)
+  })
+})
+
+describe('@finsoft/database/provisioning is importable only from tools/seed/** or a test file (M1-X, Council re-review 1)', () => {
+  it('catches it in an ordinary apps/api file', async () => {
+    const messages = await messagesFor(
+      'apps/api/src/thing.ts',
+      `import { createTenant } from '@finsoft/database/provisioning'
+       export const use = createTenant`,
+    )
+    expect(matching(messages, 'Council re-review 1')).toHaveLength(1)
+  })
+
+  it('catches it in a module', async () => {
+    const messages = await messagesFor(
+      'modules/sales/application/thing.ts',
+      `import { createTenant } from '@finsoft/database/provisioning'
+       export const use = createTenant`,
+    )
+    expect(matching(messages, 'Council re-review 1')).toHaveLength(1)
+  })
+
+  it('catches it in a kernel', async () => {
+    const messages = await messagesFor(
+      'packages/accounting-kernel/src/thing.ts',
+      `import { createTenant } from '@finsoft/database/provisioning'
+       export const use = createTenant`,
+    )
+    expect(matching(messages, 'Council re-review 1')).toHaveLength(1)
+  })
+
+  it('catches it in packages/auth', async () => {
+    const messages = await messagesFor(
+      'packages/auth/src/thing.ts',
+      `import { createTenant } from '@finsoft/database/provisioning'
+       export const use = createTenant`,
+    )
+    expect(matching(messages, 'Council re-review 1')).toHaveLength(1)
+  })
+
+  it('catches it in a tools/ script that is not tools/seed/**', async () => {
+    const messages = await messagesFor(
+      'tools/db/thing.mjs',
+      `import { createTenant } from '@finsoft/database/provisioning'
+       export const use = createTenant`,
+    )
+    expect(matching(messages, 'Council re-review 1')).toHaveLength(1)
+  })
+
+  it('allows it from a tools/seed/** file', async () => {
+    const messages = await messagesFor(
+      'tools/seed/thing.mjs',
+      `import { createTenant } from '@finsoft/database/provisioning'
+       export const use = createTenant`,
+    )
+    expect(matching(messages, 'Council re-review 1')).toEqual([])
+  })
+
+  /*
+   * Security seat, final check on a7576ac (medium): same gap as testing's
+   * own describe block above — the interceptor and the dispatcher escaped
+   * this ban too, with no block of their own to catch it.
+   */
+  it('catches it in the request-scoping interceptor, which is otherwise allowed to import TenantContext directly', async () => {
+    const messages = await messagesFor(
+      'apps/api/src/common/tenant-context.interceptor.ts',
+      `import { createTenant } from '@finsoft/database/provisioning'
+       export const use = createTenant`,
+    )
+    expect(matching(messages, 'Council re-review 1')).toHaveLength(1)
+  })
+
+  it('catches it in the outbox dispatcher, which is otherwise allowed to import TenantContext directly', async () => {
+    const messages = await messagesFor(
+      'apps/worker/src/outbox/dispatcher.ts',
+      `import { createTenant } from '@finsoft/database/provisioning'
+       export const use = createTenant`,
+    )
+    expect(matching(messages, 'Council re-review 1')).toHaveLength(1)
+  })
+
+  it('leaves a test file alone', async () => {
+    const messages = await messagesFor(
+      'tests/integration/thing.spec.ts',
+      `import { createTenant } from '@finsoft/database/provisioning'
+       export const use = createTenant`,
+    )
+    expect(matching(messages, 'Council re-review 1')).toEqual([])
+  })
+})
+
+describe('tools/ scripts still carry the repo-wide decimal-library and request-scope bans (Security seat, final check on a7576ac, low regression)', () => {
+  /*
+   * The two tools/ script blocks this task added for the testing/
+   * provisioning bans (eslint.config.mjs) each set no-restricted-imports —
+   * which, for every file they match, REPLACES the repo-wide block's own
+   * setting (DECIMAL_LIB_IMPORT_PATHS + REQUEST_SCOPE_IMPORT_BAN) rather
+   * than adding to it. Without restating both lists in both blocks, every
+   * tools/ script silently lost protection it had before this task touched
+   * the file at all.
+   */
+  it('catches a decimal library imported from an ordinary tools/ script', async () => {
+    const messages = await messagesFor(
+      'tools/db/thing.mjs',
+      `import Decimal from 'decimal.js'
+       export const use = Decimal`,
+    )
+    expect(matching(messages, 'ADR-0011/ADR-0014')).toHaveLength(1)
+  })
+
+  it('catches a decimal library imported from tools/seed/**', async () => {
+    const messages = await messagesFor(
+      'tools/seed/thing.mjs',
+      `import Decimal from 'decimal.js'
+       export const use = Decimal`,
+    )
+    expect(matching(messages, 'ADR-0011/ADR-0014')).toHaveLength(1)
+  })
+
+  it('catches @finsoft/database/request-scope imported from an ordinary tools/ script', async () => {
+    const messages = await messagesFor(
+      'tools/db/thing.mjs',
+      `import { withTenantAsPrincipal } from '@finsoft/database/request-scope'
+       export const use = withTenantAsPrincipal`,
+    )
+    expect(matching(messages, 'M1-X T1')).toHaveLength(1)
+  })
+
+  it('catches @finsoft/database/request-scope imported from tools/seed/**', async () => {
+    const messages = await messagesFor(
+      'tools/seed/thing.mjs',
+      `import { withTenantAsPrincipal } from '@finsoft/database/request-scope'
+       export const use = withTenantAsPrincipal`,
+    )
+    expect(matching(messages, 'M1-X T1')).toHaveLength(1)
+  })
+})
+
 describe('auth_lookup is restricted to packages/database (Architecture seat A1)', () => {
   it('catches the identifier in a string literal outside packages/database', async () => {
     const messages = await messagesFor(

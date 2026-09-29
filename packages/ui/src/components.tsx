@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useRef, type FormEvent, type ReactNode } from 'react'
-import { Search, TrendingUp, X, type LucideIcon } from 'lucide-react'
+import { Loader2, Search, TrendingUp, X, type LucideIcon } from 'lucide-react'
 
 export function Button({
   children,
@@ -8,22 +8,29 @@ export function Button({
   kind = 'primary',
   type = 'button',
   disabled = false,
+  busy = false,
 }: {
   children: ReactNode
   onClick?: () => void
   kind?: 'primary' | 'secondary' | 'ghost' | 'danger'
   type?: 'button' | 'submit'
   disabled?: boolean
+  /** §B1: spinner replaces the leading icon, label stays, pointer-events off.
+   * Also disables the button — pairs with the idempotent-submit rule so a
+   * busy submit button cannot be clicked twice. */
+  busy?: boolean
 }) {
-  const inactive = disabled || (!onClick && type !== 'submit')
+  const inactive = disabled || busy || (!onClick && type !== 'submit')
   return (
     <button
-      title={inactive ? 'Available in the connected backend edition' : undefined}
+      title={!busy && inactive ? 'Available in the connected backend edition' : undefined}
       disabled={inactive}
+      aria-busy={busy || undefined}
       type={type}
       onClick={onClick}
-      className={`btn ${kind}`}
+      className={`btn ${kind}${busy ? ' busy' : ''}`}
     >
+      {busy && <Loader2 className="btn-spinner" size={15} aria-hidden="true" />}
       {children}
     </button>
   )
@@ -248,4 +255,131 @@ export function Table({
     </div>
   )
 }
+/** §C1 `Field`. Label → control → helper *or* error (never both).
+ *
+ * ID ownership: the CALLER owns the id — pass the same string as `htmlFor`
+ * here and as `id` on the control inside. Field does not clone or inspect
+ * `children`, so it derives the message id deterministically from `htmlFor`
+ * (`${htmlFor}-error` / `${htmlFor}-helper`) instead of generating and
+ * returning one. Wire it up on the control explicitly:
+ *
+ *   <Field label="Email" htmlFor="login-email" error={err}>
+ *     <TextInput id="login-email" aria-invalid={!!err}
+ *       aria-describedby={err ? 'login-email-error' : undefined} ... />
+ *   </Field>
+ *
+ * This stays explicit rather than magic (no `cloneElement` reaching into an
+ * arbitrary child), which keeps Field usable in front of any control, not
+ * only `TextInput`. */
+export function Field({
+  label,
+  htmlFor,
+  error,
+  helper,
+  required = false,
+  children,
+}: {
+  label: string
+  htmlFor: string
+  error?: string
+  helper?: string
+  required?: boolean
+  children: ReactNode
+}) {
+  return (
+    <div className={`field${error ? ' has-error' : ''}`}>
+      <label className="field-label" htmlFor={htmlFor}>
+        {label}
+        {required && (
+          <span className="field-required" aria-hidden="true">
+            *
+          </span>
+        )}
+      </label>
+      {children}
+      {error ? (
+        <p className="field-message error" id={`${htmlFor}-error`} role="alert">
+          {error}
+        </p>
+      ) : helper ? (
+        <p className="field-message helper" id={`${htmlFor}-helper`}>
+          {helper}
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
+/** §C2 `TextInput`. Pairs with `Field` — see its id-ownership note above.
+ * `size="dense"` is the 35px table/toolbar height; `size="form"` (default) is
+ * the 40px entry-form height. */
+export function TextInput({
+  id,
+  type = 'text',
+  value,
+  onChange,
+  autoComplete,
+  disabled = false,
+  placeholder,
+  name,
+  required,
+  size = 'form',
+  'aria-invalid': ariaInvalid,
+  'aria-describedby': ariaDescribedby,
+}: {
+  id: string
+  type?: 'text' | 'email' | 'password'
+  value: string
+  onChange: (v: string) => void
+  autoComplete?: string
+  disabled?: boolean
+  placeholder?: string
+  name?: string
+  required?: boolean
+  size?: 'form' | 'dense'
+  'aria-invalid'?: boolean
+  'aria-describedby'?: string
+}) {
+  return (
+    <input
+      id={id}
+      name={name}
+      type={type}
+      className={`text-input${size === 'dense' ? ' dense' : ''}`}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      autoComplete={autoComplete}
+      disabled={disabled}
+      placeholder={placeholder}
+      required={required}
+      aria-invalid={ariaInvalid}
+      aria-describedby={ariaDescribedby}
+    />
+  )
+}
+
+/** Persistent, non-dismissable, page/shell-level alert bar. Distinct from the
+ * per-field `InlineWarning` in §F. `role="status"` — an implicit *polite*
+ * live region, so it is announced once without interrupting, and is safe on
+ * every page load (never `role="alert"`, which is for urgent/interruptive
+ * feedback like a failed post — see 06-accessibility.md). There is
+ * deliberately no dismiss affordance; a `PeriodLockedBanner` should build on
+ * this rather than fork it. */
+export function Banner({
+  tone = 'neutral',
+  icon: Icon,
+  children,
+}: {
+  tone?: 'info' | 'warn' | 'danger' | 'neutral'
+  children: ReactNode
+  icon?: LucideIcon
+}) {
+  return (
+    <div className={`banner ${tone}`} role="status">
+      {Icon && <Icon size={16} aria-hidden="true" />}
+      <div className="banner-body">{children}</div>
+    </div>
+  )
+}
+
 export type { FormEvent }

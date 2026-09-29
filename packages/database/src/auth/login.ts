@@ -1,5 +1,5 @@
 import { sql } from 'kysely'
-import { withResolvedTenant, type TenantTx } from '../transaction.ts'
+import { withGlobal, withResolvedTenant, type TenantTx } from '../transaction.ts'
 import { tenantByCodeResolver, type ResolvedTenantRow } from './resolvers.ts'
 
 /*
@@ -93,12 +93,44 @@ export interface LoginSuccess {
   readonly tenant: ResolvedTenantRow
   readonly user: { readonly id: string; readonly email: string; readonly fullName: string }
   readonly sessionId: string
+  /**
+   * M1-X, L1. `users.version` AS RETURNED BY THIS VERY LOGIN's own `UPDATE`
+   * — i.e. AFTER the increment this write already performs, never the
+   * pre-write value read in transaction one. `users.version` is bumped both
+   * as login's own optimistic lock (migration 002) and, via migration 008's
+   * trigger, whenever this user's effective permission set changes
+   * (008_create_rbac.sql's header). Snapshotting the pre-write value here
+   * would mint a token that is immediately one behind the version its own
+   * login just produced, and packages/auth's guard would refuse it on the
+   * very first request. See packages/auth/src/guard.ts for where this is
+   * compared against the CURRENT users.version on every subsequent request.
+   */
   readonly permissionVersion: number
   /** Computed by PostgreSQL (`now() + interval '14 days'`), never by the caller. See B5. */
   readonly refreshTokenExpiresAt: Date
 }
 
 export type LoginAttemptResult = LoginSuccess | { readonly authenticated: false }
+
+/**
+ * M1-X (audit wiring). What `withLoginAttempt` tells its caller about the
+ * outcome it just reached, at the one call site inside whichever
+ * transaction determined it — never after the fact. `packages/auth`'s
+ * `login()` builds one of these into an `AuthAuditEvent` and calls its
+ * `AuthAuditSink` with it; this module has no opinion about audit actions or
+ * entity names (Architecture seat ruling: this package holds no business
+ * rules), only about WHEN a transaction exists to write inside.
+ */
+export interface LoginAuditOutcome {
+  readonly tenantId: string
+  /** null only when no candidate user existed at all (an unknown email). */
+  readonly userId: string | null
+  readonly authenticated: boolean
+  /** Set only when `authenticated` is true. */
+  readonly sessionId: string | null
+}
+
+export type LoginAuditHook = (tx: TenantTx, outcome: LoginAuditOutcome) => Promise<void>
 
 export interface LoginTestHooks {
   /**
@@ -123,12 +155,15 @@ export interface LoginTestHooks {
  * Returns `null` when the tenant code does not resolve at all: the caller
  * (`packages/auth`) must still perform its one decoy verification in that
  * case, so that exactly one argon2id call happens on every path (ADR-0023
- * §4).
+ * §4). `onOutcome`, when given, is NEVER called on this path either — "no
+ * tenant, no chain" (ADR-0023 §4 item 7): there is no tenant to attach an
+ * audit row to.
  */
 export async function withLoginAttempt(
   tenantCode: string,
   normalisedEmail: string,
   decide: (candidate: LoginCandidate) => Promise<LoginDecision>,
+  onOutcome?: LoginAuditHook,
   testHooks?: LoginTestHooks,
 ): Promise<LoginAttemptResult | null> {
   const resolved = await withResolvedTenant(
@@ -162,6 +197,22 @@ export async function withLoginAttempt(
 
   const decision = await decide(resolved)
   if (!decision.authenticate) {
+    // The tenant DID resolve — auditable, in a short transaction of its own
+    // (re-resolving the tenant, the only way one may enter this module,
+    // exactly as the write path below does). Skipped entirely when no hook
+    // is given, so a caller that does not care about auditing pays no extra
+    // round trip.
+    if (onOutcome) {
+      await withResolvedTenant(tenantByCodeResolver(tenantCode), async (tx) => {
+        await onOutcome(tx, {
+          tenantId: resolved.tenant.id,
+          userId: resolved.user?.id ?? null,
+          authenticated: false,
+          sessionId: null,
+        })
+        return null
+      })
+    }
     return { authenticated: false }
   }
 
@@ -185,18 +236,33 @@ export async function withLoginAttempt(
   const writeResult = await withResolvedTenant(
     tenantByCodeResolver(tenantCode),
     async (tx, { tenant: tenantAtWrite }, tenantIdAtWrite) => {
-      if (tenantIdAtWrite !== tenantAtRead.id) {
-        // The tenant code resolved to a DIFFERENT id than moments ago.
-        // Should be unreachable (tenant ids are immutable once assigned —
-        // there is no code path that reassigns a code to a different row),
+      if (tenantIdAtWrite !== tenantAtRead.id || tenantAtWrite.status !== 'ACTIVE') {
+        // The tenant code resolved to a DIFFERENT id than moments ago
+        // (should be unreachable — tenant ids are immutable once assigned —
         // but this function does not trust that absence of a code path is
-        // the same as a guarantee.
+        // the same as a guarantee), or the tenant is no longer ACTIVE. The
+        // tenant DID resolve at both reads, so this is still auditable,
+        // inside the transaction that just determined it.
+        if (onOutcome) {
+          await onOutcome(tx, {
+            tenantId: tenantAtRead.id,
+            userId: user.id,
+            authenticated: false,
+            sessionId: null,
+          })
+        }
         return { authenticated: false } satisfies LoginAttemptResult
       }
-      if (tenantAtWrite.status !== 'ACTIVE') {
-        return { authenticated: false } satisfies LoginAttemptResult
+      const result = await writeLoginSuccess(tx, tenantAtWrite, user, decision)
+      if (onOutcome) {
+        await onOutcome(tx, {
+          tenantId: tenantAtWrite.id,
+          userId: user.id,
+          authenticated: result.authenticated,
+          sessionId: result.authenticated ? result.sessionId : null,
+        })
       }
-      return writeLoginSuccess(tx, tenantAtWrite, user, decision)
+      return result
     },
   )
 
@@ -236,9 +302,11 @@ async function writeLoginSuccess(
     .where('id', '=', user.id)
     .where('status', '=', 'ACTIVE')
     .where('password_hash', '=', write.verifiedPasswordHash)
+    // M1-X, L1: the post-increment value, for the token's permVer claim.
+    .returning(['version'])
     .executeTakeFirst()
 
-  if (updated.numUpdatedRows === 0n) {
+  if (!updated) {
     return { authenticated: false }
   }
 
@@ -253,7 +321,7 @@ async function writeLoginSuccess(
       created_by: user.id,
       updated_by: user.id,
     })
-    .returning(['id', 'permission_version'])
+    .returning(['id'])
     .executeTakeFirstOrThrow()
 
   const family = await tx
@@ -289,7 +357,36 @@ async function writeLoginSuccess(
     tenant,
     user: { id: user.id, email: user.email, fullName: user.fullName },
     sessionId: session.id,
-    permissionVersion: session.permission_version,
+    permissionVersion: updated.version,
     refreshTokenExpiresAt: token.expires_at,
   }
+}
+
+/**
+ * M1-X, Council Sec 5. Failing an unknown tenant code does no DB work beyond
+ * the one read `withResolvedTenant` already does — but a KNOWN tenant that
+ * fails to authenticate now ALSO writes a `USER_SIGN_IN_FAILED` audit record,
+ * which is a second transaction, a per-tenant advisory lock acquisition, a
+ * chain-head read and an INSERT. That extra work is a timing signal an
+ * unauthenticated caller could use to distinguish "this tenant code exists"
+ * from "it does not" — precisely the enumeration oracle ADR-0023 §4 already
+ * closes for argon2id verification, reopened here by the audit write.
+ *
+ * This performs a comparable NUMBER of round trips against the global,
+ * pre-tenant `tenants` table — no lock, no write, no data about any specific
+ * tenant — so the unknown-tenant path is not simply "return immediately"
+ * while the known-tenant-failure path does substantially more I/O.
+ *
+ * NOT a perfect timing match: it does not replicate the advisory lock
+ * acquisition or the JCS/SHA-256 hash computation `recordAudit` performs.
+ * Recorded as a residual, bounded gap in the M1-X delivery report rather
+ * than overclaimed here — the two SELECTs below approximate the audit
+ * append's "read the chain head" and "INSERT" round trips in COUNT, not in
+ * cost.
+ */
+export async function decoyAuditRoundTrip(): Promise<void> {
+  await withGlobal(async (tx) => {
+    await tx.selectFrom('tenants').select('id').limit(1).executeTakeFirst()
+    await tx.selectFrom('tenants').select('id').limit(1).executeTakeFirst()
+  })
 }

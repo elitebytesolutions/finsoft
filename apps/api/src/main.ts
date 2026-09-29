@@ -9,6 +9,7 @@ import { FinsoftNestLogger } from './common/nest-logger'
 import { AllExceptionsFilter } from './common/all-exceptions.filter'
 import { AppModule } from './app.module'
 import { assertProductionCookieSecurity, refreshCookieName } from './auth/cookie'
+import { requestCorrelationMiddleware } from './correlation/request-correlation.middleware'
 
 /*
  * The API process.
@@ -73,6 +74,16 @@ async function bootstrap(): Promise<void> {
   await openDatabase()
 
   const app = await NestFactory.create(AppModule, { bufferLogs: true })
+
+  /*
+   * Registered before anything else Express-level (cookieParser, the global
+   * filter): M1-C, ARCHITECTURE §10. Establishes the correlation context —
+   * requestId, client ip — for the ENTIRE request pipeline, including every
+   * guard, interceptor and handler that follows, and echoes X-Request-Id on
+   * the response. Must be genuine `app.use()` middleware, not a guard or
+   * interceptor — see request-correlation.middleware.ts's header for why.
+   */
+  app.use(requestCorrelationMiddleware)
 
   /*
    * Every NestJS log line now goes through the redacting logger. Without

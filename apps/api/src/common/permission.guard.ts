@@ -6,7 +6,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common'
 import { Reflector } from '@nestjs/core'
-import { TenantContext, withTenant } from '@finsoft/database'
+import { withTenantAsPrincipal } from '@finsoft/database/request-scope'
 import { resolvePermissions, type PermissionCode, type RequestAuth } from '@finsoft/permissions'
 import { REQUIRE_PERMISSION } from './permission.decorator'
 
@@ -14,22 +14,19 @@ import { REQUIRE_PERMISSION } from './permission.decorator'
  * Enforces `@RequirePermission(...)`. Rule 18: every permission is checked
  * server-side, from the database — never trusted from the token.
  *
- * **Runs after the authentication/tenancy guard.** It reads `req.auth`,
- * which that guard is the only thing that sets, from a verified JWT — never
- * from a body, query string, path parameter or header (rule 8). Until
- * `packages/auth` lands the real `AuthContext` and its guard, `req.auth` is
- * typed here as the minimal local `RequestAuth` (`{ userId, tenantId }`)
- * declared in `packages/permissions`, per this brief's contract with the
- * auth lane — not by reaching into `packages/shared-types` or
- * `packages/auth` ahead of that lane, both FORBIDDEN paths here.
+ * **Runs after `TenantGuard`, as a second global `APP_GUARD`** (M1-X,
+ * SEC-C1/C2 — see `app.module.ts`, and `tests/integration/guard-order.spec.ts`
+ * for the assertion that the order holds). It reads `req.auth`, which that
+ * guard is the only thing that sets, from a verified JWT — never from a
+ * body, query string, path parameter or header (rule 8).
  *
  * A route with NEITHER its handler NOR its controller class carrying
  * `@RequirePermission` metadata is unaffected: this guard returns `true`
  * immediately and defers entirely to whatever ran before it. See
  * permission.decorator.ts for why that is opt-in rather than a second,
  * stacked default-deny — the startup check that every route is one of
- * `@Public`/`@RequirePermission`/`@AuthenticatedOnly` is a separate,
- * deferred piece of work (M1-X).
+ * `@Public`/`@RequirePermission`/`@AuthenticatedOnly` (`route-decoration.check.ts`)
+ * is what closes that gap instead.
  *
  * `@RequirePermission()` called with NO codes is a caller mistake, not "no
  * requirement" — SEC-C3. It throws rather than silently passing every
@@ -39,12 +36,28 @@ import { REQUIRE_PERMISSION } from './permission.decorator'
  * controller level cannot be silently dropped by a method-level decorator
  * that names a different, narrower permission.
  *
+ * **C5 ordering, and why this guard does not read an ambient `TenantContext`.**
+ * NestJS runs every GUARD before any INTERCEPTOR, with no way to interleave
+ * them. `TenantContextInterceptor` establishes `TenantContext` for the whole
+ * request — but it is an interceptor, so it has not run yet by the time THIS
+ * guard executes. Waiting for it, or checking `TenantContext.current()`
+ * against `req.auth` (the previous SEC-C6 shape), would 401 every legitimate
+ * request under the new architecture, not just unauthorized ones. Instead
+ * this guard establishes its OWN narrow, guard-scoped tenant context for
+ * exactly the one query it needs — via `withTenantAsPrincipal`, sourced
+ * `req.auth` and nothing else — which keeps `TenantContext.run`'s call sites
+ * confined to `packages/database`, `packages/auth`, provisioning and the job
+ * runner (never `apps/api` directly; see the ESLint rule in
+ * `eslint.config.mjs`). The rest of the request (the handler, and anything
+ * it calls) still runs inside the interceptor's own, separately-established
+ * context — the two scopes agree because both are minted from the same
+ * verified `req.auth`, never compared against each other, because after C5
+ * there is nothing meaningful left to compare: minting is verification here.
+ *
  * Responses:
  *   no @RequirePermission anywhere on the route         -> handler runs
  *   @RequirePermission() with no codes                  -> throws (config bug)
  *   no `req.auth`                                        -> 401
- *   `req.auth` present but TenantContext missing/mismatched -> 401 (SEC-C6,
- *     never a 500 from a context that withTenant would otherwise reject)
  *   `req.auth` present, permission missing               -> 403 {statusCode, error, message}
  *   permission present                                   -> the handler runs
  */
@@ -93,21 +106,10 @@ export class PermissionGuard implements CanActivate {
       throw new UnauthorizedException()
     }
 
-    /*
-     * SEC-C6. TenantContext is established by the authentication guard from
-     * the verified JWT (ADR-0004, ADR-0009) — the same source req.auth comes
-     * from. If it is missing, or names a different tenant or user than
-     * req.auth claims, something upstream is broken or being tampered with;
-     * either way `withTenant` below would throw a TenantContextError that
-     * propagates as an uncaught 500. Checking here turns that into the
-     * correct response for an authorization failure: 401, never a 500.
-     */
-    const principal = TenantContext.current()
-    if (!principal || principal.tenantId !== auth.tenantId || principal.userId !== auth.userId) {
-      throw new UnauthorizedException()
-    }
-
-    const granted = await withTenant((tx) => resolvePermissions(tx, auth.userId))
+    const granted = await withTenantAsPrincipal(
+      { tenantId: auth.tenantId, userId: auth.userId },
+      (tx) => resolvePermissions(tx, auth.userId),
+    )
     const missing = required.filter((code) => !granted.has(code))
 
     if (missing.length > 0) {

@@ -125,10 +125,22 @@ export const baseOptions = (config: LoggerConfig): LoggerOptions => ({
   /*
    * Correlation is injected rather than passed, so a call site that forgets
    * still produces a correlated line. See context.ts.
+   *
+   * `ip` is deliberately EXCLUDED (M1-C, Architecture seat condition). It is
+   * personal data, and ADR-0016's redaction layers are built to catch
+   * secrets and driver topology — not to decide a data-protection policy
+   * question about logging an address on every single line of output. `ip`
+   * exists on `CorrelationContext` so `packages/database`'s `recordAudit`
+   * can default an audit row's `ip` column from it; that is a narrow, one
+   * -time read for a specific append-only record, not a standing broadcast
+   * to every log line for the life of the request. requestId (and every
+   * other correlation field) still flows through unchanged.
    */
   mixin: () => {
     const correlation = getCorrelation()
-    return correlation ? { ...correlation } : {}
+    if (!correlation) return {}
+    const { ip: _ip, ...rest } = correlation
+    return rest
   },
 })
 
