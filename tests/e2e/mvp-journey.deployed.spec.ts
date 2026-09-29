@@ -1,12 +1,8 @@
 import { randomUUID } from 'node:crypto'
-import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
-import {
-  apiCall,
-  newIdempotencyKey,
-  type ApiResult,
-  type ApiSession,
-} from './helpers/api-client.ts'
+import { expect, test, type Page } from '@playwright/test'
+import { apiCall, newIdempotencyKey, type ApiSession } from './helpers/api-client.ts'
 import { rs, twoDp } from './helpers/money.ts'
+import { reverseLeftovers, type PostedDocs } from './helpers/reversal-cleanup.ts'
 
 /*
  * The MVP journey (see mvp-journey.spec.ts for the full step-by-step rationale — this file does
@@ -53,14 +49,15 @@ import { rs, twoDp } from './helpers/money.ts'
  * real money would otherwise re-run the whole journey and post a SECOND, unreversed set on a
  * shared demo tenant. Each tenant's own `test.afterAll` is the safety net for the case that
  * still matters: this run's OWN test failing partway through, after the invoice or receipt
- * posted but before step 7 reversed it. It does not trust any id captured from the screen after
- * the fact — it lists this run's customer's invoices and receipts by `customerId` (known from
- * step 2, long before either document exists) and reverses, by direct API call (not the UI — a
- * broken screen is exactly the kind of failure this needs to survive), whichever of them are
- * actually `POSTED`. It throws (reported as a SEPARATE afterAll failure, never in place of the
- * test's own recorded failure) naming anything it could not clean up, for a human to finish by
- * hand. See `PostedDocs`'s own comment for the full reasoning, added after a second security
- * review round found the first version of this net still had a gap.
+ * posted but before step 7 reversed it. The full logic lives in
+ * tests/e2e/helpers/reversal-cleanup.ts, factored out specifically so it could be unit-tested
+ * (reversal-cleanup.spec.ts) rather than trusted on the strength of one e2e run — read that
+ * file's own header for the complete reasoning, including the defence-in-depth added after a
+ * THIRD security review round: I1/R1's `customerId` filter is not implemented yet, so cleanup
+ * never reverses anything without also checking, client-side, that the document's own
+ * `customer.id` actually matches this run's customer, and refuses outright (throwing without
+ * reversing anything) if a list ever comes back longer than the two documents — one invoice, one
+ * receipt — this run could ever have created.
  */
 
 const BHATTI_TENANTS = [
@@ -102,148 +99,6 @@ async function login(page: Page, code: string, email: string, password: string):
   const body = (await response.json()) as { accessToken: string }
   await expect(page).toHaveURL(/\/dashboard/, { timeout: 20_000 })
   return body.accessToken
-}
-
-/**
- * What one tenant's run might have posted. `customerId`/`customerName` are known from the
- * moment step 2 returns 201 — long before either document exists — and are enough on their own
- * to find anything this run posted (below): each run's customer is created fresh with a name
- * unique to that run (see step 2's own comment), so nothing found under this `customerId` could
- * belong to any other run, and there is never a need to match a specific document id.
- *
- * `invoicePossiblyPosted` / `receiptPossiblyPosted` are set right before the SECOND click of
- * each confirm dialog — the one that actually calls I7/R6 — and are never unset again. That is
- * the fix for the gap the second security review round found: an id captured only AFTER a
- * heading renders is never recorded at all if the post succeeded on the server but the page then
- * failed to render it, which is exactly the case that leaves a real, unreversed document behind.
- * A flag set BEFORE the click that risks it has no such gap — the worst case is a redundant,
- * harmless list call in `afterAll` when nothing was actually posted (the click opened the dialog,
- * the confirm click never fired, or it fired and the server rejected it).
- */
-interface PostedDocs {
-  session?: ApiSession
-  customerId?: string
-  customerName?: string
-  invoicePossiblyPosted?: boolean
-  receiptPossiblyPosted?: boolean
-}
-
-const CLEANUP_REASON = 'E2E deployed check: automatic cleanup after an interrupted run'
-
-interface ListedDoc {
-  id: string
-  number: string | null
-  status: string
-}
-
-function acceptableReversalResult(result: ApiResult<{ error?: string }>): boolean {
-  // 200: reversed just now, by this cleanup. 409 ALREADY_REVERSED: the in-test step (7) already
-  // reversed it, by the UI, before the test itself failed for some unrelated reason —
-  // reversal.md §3 row 2's own error code, not guessed at.
-  return (
-    result.status === 200 || (result.status === 409 && result.body?.error === 'ALREADY_REVERSED')
-  )
-}
-
-/**
- * Lists this customer's documents of one kind (I1/R1, filtered by `customerId` — never
- * paginated further here: one run's customer has, at most, the one invoice and the one receipt
- * this journey itself could have created) and reverses whichever are actually `POSTED`. A
- * `DRAFT` is left alone — it has zero accounting effect (service-sale.md §2 /
- * customer-receipt.md §1.1) and is not a cleanup problem, only clutter. `REVERSED` and
- * `CANCELLED` need nothing either. Anything that cannot be listed or reversed is named in
- * `problems`, never thrown here — the caller decides when enough of the sweep has run to report.
- */
-async function resolveAndReverseKind(
-  request: APIRequestContext,
-  session: ApiSession,
-  kind: 'invoice' | 'receipt',
-  customerId: string,
-  who: string,
-  problems: string[],
-): Promise<void> {
-  const listPath = kind === 'invoice' ? '/api/invoices' : '/api/receipts'
-
-  let items: readonly ListedDoc[]
-  try {
-    const list = await apiCall<{ items: ListedDoc[] }>(request, session, 'GET', listPath, {
-      query: { customerId },
-    })
-    if (!list.ok) {
-      problems.push(`listing ${kind}s${who}: ${list.status} ${JSON.stringify(list.body)}`)
-      return
-    }
-    items = list.body.items
-  } catch (error) {
-    problems.push(`listing ${kind}s${who}: ${String(error)}`)
-    return
-  }
-
-  for (const item of items) {
-    if (item.status !== 'POSTED') continue
-    const label = `${kind} ${item.number ?? item.id}${who}`
-    try {
-      const result = await apiCall<{ error?: string }>(
-        request,
-        session,
-        'POST',
-        `${listPath}/${item.id}/reverse`,
-        { data: { reason: CLEANUP_REASON }, idempotencyKey: newIdempotencyKey() },
-      )
-      if (!acceptableReversalResult(result)) {
-        problems.push(`${label}: ${result.status} ${JSON.stringify(result.body)}`)
-      }
-    } catch (error) {
-      problems.push(`${label}: ${String(error)}`)
-    }
-  }
-}
-
-/**
- * The `afterAll` safety net (see the file header and `PostedDocs` above). Best-effort in the
- * sense that it tries both kinds even if one fails, and reports rather than throws mid-way — but
- * NOT best-effort in the sense of swallowing a problem: anything still unreversed at the end is
- * thrown as a named, actionable error, because leaving real money posted on a shared demo tenant
- * is exactly the outcome this exists to prevent. PO-Q1 order preserved: every receipt for this
- * customer is resolved and reversed before any invoice is — an invoice with a still-LIVE
- * allocation cannot be reversed at all (service-sale.md §8), so reversing receipts first is not
- * just tidiness, it is what makes the invoice reversal below possible.
- */
-async function reverseLeftovers(request: APIRequestContext, posted: PostedDocs): Promise<void> {
-  if (!posted.session || !posted.customerId) return // never logged in, or never got a customer — nothing could have posted
-
-  const who = posted.customerName
-    ? ` (customer ${posted.customerName})`
-    : ` (customer ${posted.customerId})`
-  const problems: string[] = []
-
-  if (posted.receiptPossiblyPosted) {
-    await resolveAndReverseKind(
-      request,
-      posted.session,
-      'receipt',
-      posted.customerId,
-      who,
-      problems,
-    )
-  }
-  if (posted.invoicePossiblyPosted) {
-    await resolveAndReverseKind(
-      request,
-      posted.session,
-      'invoice',
-      posted.customerId,
-      who,
-      problems,
-    )
-  }
-
-  if (problems.length > 0) {
-    throw new Error(
-      `Deployed MVP journey left document(s) UNREVERSED on a shared demo tenant after cleanup ` +
-        `— fix by hand: ${problems.join('; ')}`,
-    )
-  }
 }
 
 /*
