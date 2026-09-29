@@ -9,6 +9,25 @@
 | **Reference frame** | `ui-prototype/design/cashbook image .png` |
 | **Posts to the ledger** | **yes** — cash receipts and payments raise a financial event |
 
+## API note — M2-UI (restoration)
+
+The PO rejected M2-S's read-only rewrite of this screen (it dropped the prototype's Cash In /
+Cash Out quick-entry form entirely). Both are now on screen, deliberately additive rather than a
+replacement of one by the other:
+
+1. The restored **Cash In / Cash Out entry panels** (`cb-panel`), wired for real: M2-S's own
+   comment on the read-only rewrite was correct that there is no dedicated cash-in/cash-out
+   endpoint — cash entries are recorded via a Journal Voucher. So an entry here is, correctly, a
+   plain two-line balanced JV (`apps/web/src/lib/adapters/cash-book.ts`'s
+   `buildCashEntryRequest` — Dr Cash / Cr the chosen account for money in, reversed for money
+   out), posted through the same `postJournal` + idempotency-key + confirm dialog path every
+   other posting screen uses. The prototype's "Main Cash Drawer / Bank Account / Petty Cash"
+   balances (a locally-summed fake base+delta) are gone — there is no multi-drawer model in the
+   real chart, only the CASH_DEFAULT-role account this screen already resolves.
+2. **`CashBookReady`/`CashLedger`** — M2-S's read-only statement of that account — is kept
+   completely unchanged below the entry panels, so its existing tests
+   (`cashbook.test.tsx`) needed zero selector changes.
+
 ## API note — M2-S (2026-09-29, revised)
 
 **This screen is repurposed for M2, not merely re-skinned.** The coordinator's direction: `/cash-book`

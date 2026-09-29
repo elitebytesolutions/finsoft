@@ -10,6 +10,24 @@
 | **Posts to the ledger** | **yes** — directly, via `JOURNAL_VOUCHER_POSTED` (`docs/posting-rules/journal-voucher.md`) |
 | **Backed by (M2)** | `docs/posting-rules/journal-voucher.md`. No `docs/design/M2/api-contract.md` published yet — the endpoint path and exact request/response envelope are not fixed; field names below come from the posting rule's payload shape (§2 of that document), not from a confirmed wire contract |
 
+## API note — M2-UI (restoration)
+
+Restored to the prototype's chrome (voucher-type preset cards, `vn-head`/`vn-card` sections, the
+richer entries table with Code and Cost Center columns, attachments dropzone, additional-info
+panel, Save-as-template switch, Save Draft button) wrapped around M2-S's exact, tested form logic
+and JSX for the entries table itself — `computeVoucherTotals`, the idempotency-key controller,
+the confirm-before-post `PostConfirmDialog`, and the POST body construction are byte-identical,
+because `tests/voucher-new.test.tsx` pins the exact aria-labels (`Account line N`, `Debit line N`
+etc.) and the exact request shape. What is new chrome only, never wired to the request:
+
+- The six voucher-type preset cards (Journal/Cash Payment/Cash Receipt/Bank Payment/Bank
+  Receipt/More) are a label-only convenience — every submission posts the same generic Journal
+  Voucher (`JOURNAL_VOUCHER_POSTED`); there is no server-side type to select.
+- Branch, Department, Prepared By, Approved By, Cost Center, Attachments, Tags, Comments and
+  "Save as template"/"Save Draft" have no backing field in `PostJournalRequest` (single-step
+  post, no draft, journal-voucher.md §1) — every one renders `disabled`, titled "Coming soon",
+  never sent to the server.
+
 ## API note — M2-S (2026-09-29)
 
 This document has been rewritten in full for M2 rather than appended-to, because the gap between

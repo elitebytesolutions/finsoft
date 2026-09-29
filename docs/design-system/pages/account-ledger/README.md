@@ -9,6 +9,19 @@
 | **Reference frames** | `design/account ledger improved page .png`, `design/account ledger page .png` |
 | **Posts to the ledger** | no — it is the canonical **read** surface for postings |
 
+## API note — M2-UI (restoration)
+
+Restored to the prototype's `al-head`/`al-account`/`al-stats`/`al-body` (related-accounts rail +
+main transactions table) layout via `apps/web/src/lib/adapters/account-ledger.ts`, on top of
+M2-S's real `GET /api/ledgers/:accountId` (from/to required, cursor pagination). The prototype's
+`buildLedger` summed raw journal debit/credit numbers in the browser to derive a running
+balance — that arithmetic is gone: every row's running balance is the line's own server-computed
+`runningBalance`, reshaped by `formatRunningBalance`, never re-derived. The "toBy" sub-caption
+(prototype: "To Sales Revenue" / "By Cash in Hand", naming the OTHER side of the double entry) is
+also gone — a ledger line scoped to one account does not carry its counter-account without an
+extra fetch per row, so it renders empty (or "Reversed" / "Reverses an earlier entry" when true)
+rather than repeating the narration as filler.
+
 ## API note — M2-S (2026-09-29)
 
 `REPORT/account-ledger@1` ([ledger-and-trial-balance.md](../../../posting-rules/ledger-and-trial-balance.md)
