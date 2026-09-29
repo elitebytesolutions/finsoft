@@ -1,107 +1,397 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { TenantContext } from '@finsoft/database'
 import { REPO_ROOT } from '@finsoft/database/testing'
-import type { ReceivablesPort } from './receivables-port.ts'
+import { customerDirectory } from '../../modules/customers/index.ts'
+import type { DocumentPostResult, DraftResult, ReceivablesPort } from './receivables-port.ts'
 
 /*
  * Loads a REAL `ReceivablesPort` from `modules/receivables`, once M3-P
  * builds it. Returns null — never throws — when the module does not exist
  * yet (this branch, today) or when it exists but its shape does not match
- * what this file guesses (see below): staying PENDING is always the safe
- * failure, never a crash that takes the whole financial gate down with it.
+ * what this file expects: staying PENDING is always the safe failure,
+ * never a crash that takes the whole financial gate down with it.
  *
  * File-existence check, not a bare `import()`, on purpose: a dynamic
  * import of a path that does not exist is still resolved STATICALLY by
  * TypeScript under `moduleResolution: nodenext` even inside `import()`,
  * which would fail `npm run typecheck` on THIS branch, where
  * `modules/receivables` has no files at all. Building the specifier from
- * parts (`join(...)`, not a string literal) additionally keeps Vite/esbuild
- * from trying to pre-bundle it during `vitest run`'s collection phase,
- * which would fail the same way at runtime, for every spec file, not just
- * this one.
+ * parts (`pathToFileURL(...).href`, not a string literal) additionally
+ * keeps Vite/esbuild from trying to pre-bundle it during `vitest run`'s
+ * collection phase, which would fail the same way at runtime.
  *
- * THE EXACT SHAPE BELOW IS A GUESS. docs/design/M3/modules.md §4 fixes the
- * OPERATIONS (`PostInvoice`, `ReverseInvoice`, …) but not this lane's
- * export names — modules/customers/index.ts is this lane's model
- * (createCustomer, deactivateCustomer, …), extended by analogy. If M3-P's
- * real names differ, `loadReceivablesRealPort()` returns null (the guard
- * clauses below fail closed) and P04-P12 stay PENDING with a clear reason
- * until this file is updated to match — a one-line-per-function fix, not a
- * redesign, because `golden-posting-runner.ts` only depends on the
- * `ReceivablesPort` interface, never on this loader's internals.
+ * `modules/customers` (and so `customerDirectory`) already exists on this
+ * branch (M3-C, merged) — that import above is static, ordinary, and safe.
+ * Only `modules/receivables` needs the dynamic gate.
+ *
+ * ADR-0028 statement 10: "tests/accounting/: golden scenarios and
+ * Invariant 9, driven through the module's index.ts, not the kernel." This
+ * file is that path — `createReceivablesUseCases(customerDirectory)`,
+ * exactly as `apps/api/src/receivables/composition.ts` builds it, called
+ * with NO `tx` argument (receivables-port.ts's own header: every use case
+ * opens its own `withTenant`, matching `modules/customers`').
  */
 
-const MODULE_INDEX = join(REPO_ROOT, 'modules', 'receivables', 'index.ts')
-
-export interface ReceivablesModuleShape {
-  readonly createInvoiceDraft?: unknown
-  readonly postInvoice?: unknown
-  readonly reverseInvoice?: unknown
-  readonly createReceiptDraft?: unknown
-  readonly updateReceiptDraft?: unknown
-  readonly cancelReceiptDraft?: unknown
-  readonly postReceipt?: unknown
-  readonly reverseReceipt?: unknown
-  readonly getInvoice?: unknown
-  readonly getReceipt?: unknown
-}
-
-const REQUIRED_EXPORTS = [
-  'createInvoiceDraft',
-  'postInvoice',
-  'reverseInvoice',
-  'createReceiptDraft',
-  'updateReceiptDraft',
-  'cancelReceiptDraft',
-  'postReceipt',
-  'reverseReceipt',
-  'getInvoice',
-  'getReceipt',
-] as const
+const RECEIVABLES_INDEX = join(REPO_ROOT, 'modules', 'receivables', 'index.ts')
 
 export function receivablesModuleFileExists(): boolean {
-  return existsSync(MODULE_INDEX)
+  return existsSync(RECEIVABLES_INDEX)
 }
 
-/**
- * Returns the raw module namespace if `modules/receivables/index.ts`
- * exists AND exports every name `REQUIRED_EXPORTS` lists as a function —
- * or null. Never throws for "module not found" or "shape mismatch"; both
- * are ordinary, expected states before M3-P lands and immediately after,
- * while this loader's guesses are still being reconciled with the real
- * module.
- */
-export async function loadReceivablesModuleIfShapeMatches(): Promise<ReceivablesModuleShape | null> {
+/** The one function this file needs from `modules/receivables/index.ts`. */
+interface ReceivablesModule {
+  readonly createReceivablesUseCases: (
+    customerDirectory: unknown,
+  ) => Record<string, (...args: never[]) => unknown>
+}
+
+async function loadReceivablesModule(): Promise<ReceivablesModule | null> {
   if (!receivablesModuleFileExists()) return null
-  let mod: Record<string, unknown>
   try {
-    // Built from parts — see the file header. `@vite-ignore` matches this
-    // repo's other non-literal dynamic imports of not-yet-existing paths.
-    const specifier = [REPO_ROOT, 'modules', 'receivables', 'index.ts'].join('/')
-    mod = (await import(/* @vite-ignore */ specifier)) as Record<string, unknown>
+    const specifier = pathToFileURL(RECEIVABLES_INDEX).href
+    const mod = (await import(/* @vite-ignore */ specifier)) as Record<string, unknown>
+    if (typeof mod['createReceivablesUseCases'] !== 'function') return null
+    return mod as unknown as ReceivablesModule
   } catch {
     return null
   }
-  const missing = REQUIRED_EXPORTS.filter((name) => typeof mod[name] !== 'function')
-  if (missing.length > 0) return null
-  return mod as ReceivablesModuleShape
 }
 
+/** `{ userId }`, read from the AMBIENT TenantContext the caller established (receivables-port.ts's header). */
+function actor(): { readonly userId: string } {
+  const principal = TenantContext.require()
+  if (!principal.userId) {
+    throw new Error('receivables-real-port.ts: no acting user in the current TenantContext.')
+  }
+  return { userId: principal.userId }
+}
+
+type DocType = 'sales_invoice' | 'customer_receipt'
+
 /**
- * Adapts the real module to `ReceivablesPort`, IF its shape matches this
- * lane's guess (see the file header). Returns null otherwise — the caller
- * (posting-scenarios-m3.spec.ts) treats null exactly like "module absent":
- * P04-P12 stay PENDING, with a reason that names which is true.
+ * Adapts the real module to `ReceivablesPort`, if `modules/receivables`
+ * exists and matches this shape. Returns null otherwise, exactly like
+ * `loadReceivablesModule` — never throws for "not found" or "wrong shape".
  *
- * NOT IMPLEMENTED YET. Wiring `ReceivablesPort`'s step-shaped methods onto
- * the real module's CRUD use cases (draft-then-post, for a golden step
- * that submits a full payload in one `do: "post"`) needs the real
- * function SIGNATURES, which do not exist to read yet. The probe above
- * (existence + shape) is real and safe to run today; this translation
- * layer is the follow-up once M3-P's branch has commits to read.
+ * State this test adapter keeps for itself, matching
+ * `fixtures/fake-receivables-port.ts`'s own pattern: a document ref
+ * ("INV-A1") to the real row's id, because the golden files reference
+ * documents by fixture ref and the real module only knows ids.
  */
 export async function loadReceivablesRealPort(): Promise<ReceivablesPort | null> {
-  const mod = await loadReceivablesModuleIfShapeMatches()
+  const mod = await loadReceivablesModule()
   if (!mod) return null
-  return null
+
+  let useCases: ReturnType<ReceivablesModule['createReceivablesUseCases']>
+  try {
+    useCases = mod.createReceivablesUseCases(customerDirectory)
+  } catch {
+    return null
+  }
+
+  const REQUIRED = [
+    'createInvoiceDraft',
+    'updateInvoiceDraft',
+    'cancelInvoiceDraft',
+    'postInvoice',
+    'reverseInvoice',
+    'getInvoice',
+    'listInvoices',
+    'createReceiptDraft',
+    'updateReceiptDraft',
+    'cancelReceiptDraft',
+    'postReceipt',
+    'reverseReceipt',
+    'getReceipt',
+    'listReceipts',
+  ] as const
+  if (REQUIRED.some((name) => typeof useCases[name] !== 'function')) return null
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const uc = useCases as any
+
+  const refToDoc = new Map<string, { readonly id: string; readonly type: DocType }>()
+  const trackedIds = { sales_invoice: new Set<string>(), customer_receipt: new Set<string>() }
+
+  function track(ref: string, id: string, type: DocType): void {
+    refToDoc.set(ref, { id, type })
+    trackedIds[type].add(id)
+  }
+  function resolve(ref: string, expect?: DocType): { readonly id: string; readonly type: DocType } {
+    const found = refToDoc.get(ref)
+    if (!found) throw new Error(`receivables-real-port.ts: unknown document ref "${ref}".`)
+    if (expect && found.type !== expect) {
+      throw new Error(`receivables-real-port.ts: "${ref}" is not a ${expect}.`)
+    }
+    return found
+  }
+
+  /** service-sale.md §4/§6: the golden payload's lines carry `kind`/`lineNet`; the real command computes lineNet itself and knows only SERVICE. */
+  function toInvoiceLines(
+    rawLines: readonly Record<string, unknown>[],
+  ): readonly { description: string; quantity: string; unitPrice: string }[] {
+    return rawLines.map((line) => ({
+      description: line.description as string,
+      quantity: line.quantity as string,
+      unitPrice: line.unitPrice as string,
+    }))
+  }
+
+  async function ensureInvoiceDraft(
+    documentRef: string,
+    customerId: string,
+    occurredAt: string,
+    payload: Record<string, unknown>,
+  ): Promise<{ readonly id: string; readonly version: number }> {
+    const existing = refToDoc.get(documentRef)
+    if (existing) {
+      const current = await uc.getInvoice(existing.id)
+      return { id: existing.id, version: current.invoice.version }
+    }
+    const result = await uc.createInvoiceDraft({
+      customerId,
+      invoiceDate: occurredAt,
+      dueDate: null,
+      narration: null,
+      lines: toInvoiceLines((payload.lines as Record<string, unknown>[]) ?? []),
+      idempotencyKey: `${documentRef}:draft`,
+      actor: actor(),
+    })
+    track(documentRef, result.invoice.id, 'sales_invoice')
+    return { id: result.invoice.id, version: result.invoice.version }
+  }
+
+  async function ensureReceiptDraft(
+    documentRef: string,
+    customerId: string,
+    occurredAt: string,
+    payload: Record<string, unknown>,
+  ): Promise<{ readonly id: string; readonly version: number }> {
+    const existing = refToDoc.get(documentRef)
+    if (existing) {
+      const current = await uc.getReceipt(existing.id)
+      return { id: existing.id, version: current.receipt.version }
+    }
+    const rawAllocations = (payload.allocations as { invoice: string; amount: string }[]) ?? []
+    const result = await uc.createReceiptDraft({
+      customerId,
+      receiptDate: occurredAt,
+      method: (payload.method as string) ?? null,
+      amount: (payload.amount as string) ?? null,
+      reference: null,
+      narration: null,
+      allocations: rawAllocations.map((a) => ({
+        invoiceId: resolve(a.invoice, 'sales_invoice').id,
+        amount: a.amount,
+      })),
+      idempotencyKey: `${documentRef}:draft`,
+      actor: actor(),
+    })
+    track(documentRef, result.receipt.id, 'customer_receipt')
+    return { id: result.receipt.id, version: result.receipt.version }
+  }
+
+  return {
+    async postInvoice(input) {
+      const { id, version } = await ensureInvoiceDraft(
+        input.documentRef,
+        input.customerId,
+        input.occurredAt,
+        input.payload,
+      )
+      const result = await uc.postInvoice({
+        id,
+        expectedVersion: version,
+        idempotencyKey: input.idempotencyKey,
+        actor: actor(),
+      })
+      return {
+        outcome: result.replayed ? 'REPLAYED' : 'POSTED',
+        documentNumber: result.invoice.number as string,
+        entryNumber: result.journalEntryNumber,
+        entryId: result.journalEntryId,
+        documentStatus: result.invoice.status,
+      } satisfies DocumentPostResult
+    },
+
+    async postReceipt(input) {
+      const { id, version } = await ensureReceiptDraft(
+        input.documentRef,
+        input.customerId,
+        input.occurredAt,
+        input.payload,
+      )
+      const result = await uc.postReceipt({
+        id,
+        expectedVersion: version,
+        idempotencyKey: input.idempotencyKey,
+        actor: actor(),
+      })
+      return {
+        outcome: result.replayed ? 'REPLAYED' : 'POSTED',
+        documentNumber: result.receipt.number as string,
+        entryNumber: result.journalEntryNumber,
+        entryId: result.journalEntryId,
+        documentStatus: result.receipt.status,
+      } satisfies DocumentPostResult
+    },
+
+    async reverseDocument(input) {
+      const doc = resolve(input.documentRef)
+      const result =
+        doc.type === 'sales_invoice'
+          ? await uc.reverseInvoice({
+              id: doc.id,
+              reason: input.reason,
+              idempotencyKey: input.idempotencyKey,
+              actor: actor(),
+            })
+          : await uc.reverseReceipt({
+              id: doc.id,
+              reason: input.reason,
+              idempotencyKey: input.idempotencyKey,
+              actor: actor(),
+            })
+      const document = doc.type === 'sales_invoice' ? result.invoice : result.receipt
+      return {
+        outcome: result.replayed ? 'REPLAYED' : 'POSTED',
+        documentNumber: document.number as string,
+        entryNumber: result.journalEntryNumber,
+        entryId: result.journalEntryId,
+        documentStatus: document.status,
+      } satisfies DocumentPostResult
+    },
+
+    async saveDraft(input) {
+      const fields = input.fields as Record<string, unknown>
+      if (input.documentType === 'sales_invoice') {
+        const result = await uc.createInvoiceDraft({
+          customerId: input.customerId,
+          invoiceDate: (fields.invoiceDate as string) ?? null,
+          dueDate: null,
+          narration: null,
+          lines: toInvoiceLines((fields.lines as Record<string, unknown>[]) ?? []),
+          idempotencyKey: `${input.documentRef}:draft`,
+          actor: actor(),
+        })
+        track(input.documentRef, result.invoice.id, 'sales_invoice')
+        return {
+          documentStatus: result.invoice.status,
+          documentNumber: result.invoice.number,
+        } satisfies DraftResult
+      }
+      const rawAllocations = (fields.allocations as { invoice: string; amount: string }[]) ?? []
+      const result = await uc.createReceiptDraft({
+        customerId: input.customerId,
+        receiptDate: (fields.receiptDate as string) ?? null,
+        method: (fields.method as string) ?? null,
+        amount: (fields.amount as string) ?? null,
+        reference: null,
+        narration: null,
+        allocations: rawAllocations.map((a) => ({
+          invoiceId: resolve(a.invoice, 'sales_invoice').id,
+          amount: a.amount,
+        })),
+        idempotencyKey: `${input.documentRef}:draft`,
+        actor: actor(),
+      })
+      track(input.documentRef, result.receipt.id, 'customer_receipt')
+      return {
+        documentStatus: result.receipt.status,
+        documentNumber: result.receipt.number,
+        allocations: rawAllocations.map((a) => ({
+          invoiceRef: a.invoice,
+          amount: a.amount,
+          status: 'PROPOSED',
+        })),
+      } satisfies DraftResult
+    },
+
+    async editDraft(input) {
+      const doc = resolve(input.documentRef, input.documentType)
+      const fields = input.fields as Record<string, unknown>
+      if (doc.type === 'sales_invoice') {
+        const current = await uc.getInvoice(doc.id)
+        const updated = await uc.updateInvoiceDraft({
+          id: doc.id,
+          customerId: current.invoice.customerId,
+          invoiceDate: (fields.invoiceDate as string) ?? current.invoice.invoiceDate,
+          dueDate: current.invoice.dueDate,
+          narration: current.invoice.narration,
+          lines: toInvoiceLines(current.lines),
+          expectedVersion: current.invoice.version,
+          actor: actor(),
+        })
+        return {
+          documentStatus: updated.status,
+          documentNumber: updated.number,
+        } satisfies DraftResult
+      }
+      const current = await uc.getReceipt(doc.id)
+      const updated = await uc.updateReceiptDraft({
+        id: doc.id,
+        receiptDate: (fields.receiptDate as string) ?? current.receipt.receiptDate,
+        expectedVersion: current.receipt.version,
+        actor: actor(),
+      })
+      return {
+        documentStatus: updated.status,
+        documentNumber: updated.number,
+      } satisfies DraftResult
+    },
+
+    async cancelDraft(input) {
+      const doc = resolve(input.documentRef, input.documentType)
+      if (doc.type === 'sales_invoice') {
+        const current = await uc.getInvoice(doc.id)
+        const updated = await uc.cancelInvoiceDraft({
+          id: doc.id,
+          expectedVersion: current.invoice.version,
+          actor: actor(),
+        })
+        return {
+          documentStatus: updated.status,
+          documentNumber: updated.number,
+        } satisfies DraftResult
+      }
+      const current = await uc.getReceipt(doc.id)
+      const updated = await uc.cancelReceiptDraft({
+        id: doc.id,
+        expectedVersion: current.receipt.version,
+        actor: actor(),
+      })
+      return {
+        documentStatus: updated.status,
+        documentNumber: updated.number,
+      } satisfies DraftResult
+    },
+
+    async invoiceOutstanding(documentRef) {
+      const doc = resolve(documentRef, 'sales_invoice')
+      const current = await uc.getInvoice(doc.id)
+      return current.outstanding as string
+    },
+
+    async documentStatus(documentType, documentRef) {
+      const doc = resolve(documentRef, documentType)
+      if (doc.type === 'sales_invoice')
+        return (await uc.getInvoice(doc.id)).invoice.status as string
+      return (await uc.getReceipt(doc.id)).receipt.status as string
+    },
+
+    async documentNumbersIssued(series) {
+      const type: DocType = series === 'INV' ? 'sales_invoice' : 'customer_receipt'
+      const numbers: string[] = []
+      for (const id of trackedIds[type]) {
+        const number: string | null =
+          type === 'sales_invoice'
+            ? (await uc.getInvoice(id)).invoice.number
+            : (await uc.getReceipt(id)).receipt.number
+        if (number !== null) numbers.push(number)
+      }
+      return numbers.sort()
+    },
+  }
 }

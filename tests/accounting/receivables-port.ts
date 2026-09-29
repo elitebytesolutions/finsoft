@@ -1,45 +1,38 @@
-import type { TenantTx } from '@finsoft/database'
-
 /*
  * ReceivablesPort — what `golden-posting-runner.ts` needs from
- * `modules/receivables` to execute P05, P06, P08 (invoice steps), P09, P11
- * and P12. `modules/receivables` does not exist on this branch (M3-P has
- * not started — see the M3-Q report), so this interface is this lane's
- * BEST-EFFORT reading of docs/design/M3/modules.md §4 ("How posting is
- * invoked"), §7 (table shapes) and docs/design/M3/api-contract.md, not a
- * contract M3-P has agreed to. IT MAY BE WRONG. `loadReceivablesPort()`
- * (golden-posting-runner.ts) is written defensively for exactly that
- * reason: it treats a shape mismatch as "unavailable", never as a crash —
- * staying PENDING is always the safe failure.
+ * `modules/receivables` to execute P04-P12.
+ *
+ * NO `tx` PARAMETER (Accounting/Architecture seat, review of M3-P
+ * @efb7e3f): ADR-0028 statement 6 — "the tenant and the actor come from
+ * the TenantContext... and never from an argument" and "a state-changing
+ * use case is ONE `withTenant(tx => …)` unit of work, opened in
+ * `application/`". `modules/receivables`' real use cases (`postInvoice`,
+ * `createInvoiceDraft`, …) take a plain command object and open their OWN
+ * transaction internally — exactly like `modules/customers`' `getCustomer`/
+ * `deactivateCustomer`, which the `customer` verb already calls this way
+ * (golden-posting-runner.ts's `asActingOwner`). A `tx` parameter here would
+ * either go unused by the real adapter or force it to nest a SECOND
+ * `withTenant` inside the runner's own — which deadlocks this harness's
+ * pinned connection pool from inside an already-open transaction (the same
+ * bug the fake port's `doPostInvoice` hit calling `getCustomer` naively;
+ * see fixtures/fake-receivables-port.ts's own history). Every method here
+ * is therefore called under an AMBIENT `TenantContext` (`runAs`), which the
+ * caller establishes once, not per method.
  *
  * Deliberately step-shaped rather than CRUD-shaped (one method per golden
  * verb, not one per module use case): this is a TEST ADAPTER translating
  * `posting-scenario/v1` steps into module calls, not a second copy of the
- * module's own API. `docs/design/M3/README.md` §3 puts the exact
- * `modules/receivables` surface in M3-P's hands; this file does not
- * presume to fix it.
- *
- * P04 and P10 need NONE of this — they have no receipts, so `SALE_POSTED`
- * alone (already built in the kernel, gated only by IMPLEMENTED_EVENTS)
- * could in principle post them. They still cannot execute on this branch:
- * their own `assert` steps need `invoiceOutstanding` and the invoice's own
- * `INV-…` `documentNumber`, both of which are `modules/receivables` facts
- * with no kernel equivalent (README §4: "Documents carry their own numbers
- * from the same facility"; the kernel entry's own number is the `JE-…`
- * series only). So this port covers every M3 scenario, not only the ones
- * that also need allocation validation.
+ * module's own API.
  */
 
 export type PostOutcome = 'POSTED' | 'REPLAYED'
 
 /**
- * A rejection is a THROWN `PostingError` (`@finsoft/accounting-kernel`), not
- * a data value — the same contract `postingEngine.post` and
- * `reversalEngine.reverse` already use, and the one `checkRejection`
- * (golden-posting-runner.ts) already knows how to check. A module rejection
- * carries a domain code from api-contract.md §3 (`ALLOCATION_EXCEEDS_
- * OUTSTANDING`, `CUSTOMER_INACTIVE`, …), which is exactly what
- * `PostingError.code` already means.
+ * A rejection is a THROWN domain error (`PostingError` or
+ * `ReceivablesError`/`CustomerDirectoryError` — all duck-typed on
+ * `.code`/`.details`, `golden-posting-runner.ts`'s `isDomainError`), not a
+ * data value — the same contract `postingEngine.post` and
+ * `reversalEngine.reverseForSource` already use.
  */
 export interface DocumentPostResult {
   readonly outcome: PostOutcome
@@ -69,80 +62,61 @@ export interface DraftResult {
  */
 export interface ReceivablesPort {
   /** `do: "post"`, `event: "SALE_POSTED"`. */
-  postInvoice(
-    tx: TenantTx,
-    input: {
-      readonly documentRef: string
-      readonly customerId: string
-      readonly idempotencyKey: string
-      readonly occurredAt: string
-      readonly payload: Record<string, unknown>
-    },
-  ): Promise<DocumentPostResult>
+  postInvoice(input: {
+    readonly documentRef: string
+    readonly customerId: string
+    readonly idempotencyKey: string
+    readonly occurredAt: string
+    readonly payload: Record<string, unknown>
+  }): Promise<DocumentPostResult>
 
   /** `do: "post"`, `event: "CUSTOMER_PAYMENT_RECEIVED"`. `allocations[].invoice` refs are passed through unresolved — the port owns its own document refs. */
-  postReceipt(
-    tx: TenantTx,
-    input: {
-      readonly documentRef: string
-      readonly customerId: string
-      readonly idempotencyKey: string
-      readonly occurredAt: string
-      readonly payload: Record<string, unknown>
-    },
-  ): Promise<DocumentPostResult>
+  postReceipt(input: {
+    readonly documentRef: string
+    readonly customerId: string
+    readonly idempotencyKey: string
+    readonly occurredAt: string
+    readonly payload: Record<string, unknown>
+  }): Promise<DocumentPostResult>
 
   /** `do: "reverseDocument"`. */
-  reverseDocument(
-    tx: TenantTx,
-    input: {
-      readonly documentRef: string
-      readonly reason: string
-      readonly idempotencyKey: string
-    },
-  ): Promise<DocumentPostResult>
+  reverseDocument(input: {
+    readonly documentRef: string
+    readonly reason: string
+    readonly idempotencyKey: string
+  }): Promise<DocumentPostResult>
 
   /** `do: "saveDraft"`. */
-  saveDraft(
-    tx: TenantTx,
-    input: {
-      readonly documentType: 'sales_invoice' | 'customer_receipt'
-      readonly documentRef: string
-      readonly customerId: string
-      readonly fields: Record<string, unknown>
-    },
-  ): Promise<DraftResult>
+  saveDraft(input: {
+    readonly documentType: 'sales_invoice' | 'customer_receipt'
+    readonly documentRef: string
+    readonly customerId: string
+    readonly fields: Record<string, unknown>
+  }): Promise<DraftResult>
 
   /** `do: "editDraft"`. */
-  editDraft(
-    tx: TenantTx,
-    input: {
-      readonly documentType: 'sales_invoice' | 'customer_receipt'
-      readonly documentRef: string
-      readonly fields: Record<string, unknown>
-    },
-  ): Promise<DraftResult>
+  editDraft(input: {
+    readonly documentType: 'sales_invoice' | 'customer_receipt'
+    readonly documentRef: string
+    readonly fields: Record<string, unknown>
+  }): Promise<DraftResult>
 
   /** `do: "cancelDraft"`. */
-  cancelDraft(
-    tx: TenantTx,
-    input: {
-      readonly documentType: 'sales_invoice' | 'customer_receipt'
-      readonly documentRef: string
-      readonly reason: string | undefined
-    },
-  ): Promise<DraftResult>
+  cancelDraft(input: {
+    readonly documentType: 'sales_invoice' | 'customer_receipt'
+    readonly documentRef: string
+    readonly reason: string | undefined
+  }): Promise<DraftResult>
 
   /** `assert.invoiceOutstanding` / `expect.invoiceOutstanding`. */
-  invoiceOutstanding(tx: TenantTx, documentRef: string): Promise<string>
+  invoiceOutstanding(documentRef: string): Promise<string>
 
   /** `assert.documentStatuses` / `expect.documentStatus`. */
   documentStatus(
-    tx: TenantTx,
     documentType: 'sales_invoice' | 'customer_receipt',
     documentRef: string,
   ): Promise<string>
 
   /** `assert.documentNumbersIssued`. */
-  documentNumbersIssued(tx: TenantTx, series: 'INV' | 'RCT'): Promise<readonly string[]>
+  documentNumbersIssued(series: 'INV' | 'RCT'): Promise<readonly string[]>
 }

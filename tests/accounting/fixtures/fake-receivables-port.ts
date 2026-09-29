@@ -8,6 +8,7 @@ import {
   computeRequestFingerprint,
   findEntryById,
   findLinesByEntryId,
+  withTenant,
   type JournalLineRow,
   type NewJournalLine,
   type TenantTx,
@@ -238,8 +239,14 @@ export function createFakeReceivablesPort(clockIso: string): ReceivablesPort {
   }
 
   async function doPostInvoice(
+    input: Parameters<ReceivablesPort['postInvoice']>[0],
+  ): Promise<DocumentPostResult> {
+    return withTenant((tx) => doPostInvoiceOn(tx, input))
+  }
+
+  async function doPostInvoiceOn(
     tx: TenantTx,
-    input: Parameters<ReceivablesPort['postInvoice']>[1],
+    input: Parameters<ReceivablesPort['postInvoice']>[0],
   ): Promise<DocumentPostResult> {
     let doc = docs.get(input.documentRef)
     if (doc && doc.status !== 'DRAFT') {
@@ -319,8 +326,14 @@ export function createFakeReceivablesPort(clockIso: string): ReceivablesPort {
   }
 
   async function doPostReceipt(
+    input: Parameters<ReceivablesPort['postReceipt']>[0],
+  ): Promise<DocumentPostResult> {
+    return withTenant((tx) => doPostReceiptOn(tx, input))
+  }
+
+  async function doPostReceiptOn(
     tx: TenantTx,
-    input: Parameters<ReceivablesPort['postReceipt']>[1],
+    input: Parameters<ReceivablesPort['postReceipt']>[0],
   ): Promise<DocumentPostResult> {
     let doc = docs.get(input.documentRef)
     const payload = input.payload
@@ -443,7 +456,7 @@ export function createFakeReceivablesPort(clockIso: string): ReceivablesPort {
     postInvoice: doPostInvoice,
     postReceipt: doPostReceipt,
 
-    async reverseDocument(tx, input) {
+    async reverseDocument(input) {
       const doc = requireDoc(input.documentRef)
       if (doc.type === 'sales_invoice') {
         const liveReceipts = doc.allocations.filter((a) => a.status === 'LIVE')
@@ -455,12 +468,8 @@ export function createFakeReceivablesPort(clockIso: string): ReceivablesPort {
       }
       if (doc.status !== 'POSTED')
         throw detail('ALREADY_REVERSED', `document is ${doc.status}, not POSTED.`)
-      const result = await fakeReverseForSource(
-        tx,
-        clock,
-        doc.entryId!,
-        input.reason,
-        input.idempotencyKey,
+      const result = await withTenant((tx) =>
+        fakeReverseForSource(tx, clock, doc.entryId!, input.reason, input.idempotencyKey),
       )
       if (result.outcome === 'POSTED') {
         doc.status = 'REVERSED'
@@ -484,7 +493,7 @@ export function createFakeReceivablesPort(clockIso: string): ReceivablesPort {
       }
     },
 
-    async saveDraft(_tx, input): Promise<DraftResult> {
+    async saveDraft(input): Promise<DraftResult> {
       const fields = input.fields as Record<string, unknown>
       const allocationsIn =
         (fields.allocations as { invoice: string; amount: string }[] | undefined) ?? []
@@ -517,7 +526,7 @@ export function createFakeReceivablesPort(clockIso: string): ReceivablesPort {
       }
     },
 
-    async editDraft(_tx, input): Promise<DraftResult> {
+    async editDraft(input): Promise<DraftResult> {
       const doc = requireDoc(input.documentRef)
       if (doc.status !== 'DRAFT')
         throw detail('RECEIPT_NOT_DRAFT', `document is ${doc.status}.`, { status: doc.status })
@@ -527,7 +536,7 @@ export function createFakeReceivablesPort(clockIso: string): ReceivablesPort {
       return { documentStatus: 'DRAFT', documentNumber: null }
     },
 
-    async cancelDraft(_tx, input): Promise<DraftResult> {
+    async cancelDraft(input): Promise<DraftResult> {
       const doc = requireDoc(input.documentRef)
       if (doc.status !== 'DRAFT')
         throw detail('RECEIPT_NOT_DRAFT', `document is ${doc.status}.`, { status: doc.status })
@@ -543,15 +552,15 @@ export function createFakeReceivablesPort(clockIso: string): ReceivablesPort {
       }
     },
 
-    async invoiceOutstanding(_tx, ref) {
+    async invoiceOutstanding(ref) {
       return Money.serialize(outstandingOf(ref), 4)
     },
 
-    async documentStatus(_tx, _type, ref) {
+    async documentStatus(_type, ref) {
       return requireDoc(ref).status
     },
 
-    async documentNumbersIssued(_tx, series) {
+    async documentNumbersIssued(series) {
       return [...docs.values()]
         .filter((d) =>
           series === 'INV' ? d.type === 'sales_invoice' : d.type === 'customer_receipt',

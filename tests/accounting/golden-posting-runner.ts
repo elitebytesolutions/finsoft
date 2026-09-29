@@ -235,6 +235,13 @@ export async function runPostingScenario(
       withTenant(fn),
     )
   const act = <T>(fn: (tx: TenantTx) => Promise<T>): Promise<T> => inTenant(acting, fn)
+  /**
+   * The ambient-TenantContext form `act` cannot provide: for calls into a
+   * `ReceivablesPort` (real or fake), which open their OWN transaction —
+   * see receivables-port.ts's own header on why there is no `tx` parameter.
+   */
+  const asActing = <T>(fn: () => Promise<T>): Promise<T> =>
+    runAs({ tenantId: acting.fixture.tenantId, userId: acting.fixture.ownerId }, fn)
 
   /*
    * P04–P12's `fixture.customers`: `{ ref, tenant, status }`. Registered
@@ -553,8 +560,8 @@ export async function runPostingScenario(
       try {
         const docResult =
           step.event === 'SALE_POSTED'
-            ? await act((tx) =>
-                port.postInvoice(tx, {
+            ? await asActing(() =>
+                port.postInvoice({
                   documentRef,
                   customerId: customerId(rawPayload.customer as string),
                   idempotencyKey: step.idempotencyKey as string,
@@ -562,8 +569,8 @@ export async function runPostingScenario(
                   payload: rawPayload,
                 }),
               )
-            : await act((tx) =>
-                port.postReceipt(tx, {
+            : await asActing(() =>
+                port.postReceipt({
                   documentRef,
                   customerId: customerId(rawPayload.customer as string),
                   idempotencyKey: step.idempotencyKey as string,
@@ -615,8 +622,8 @@ export async function runPostingScenario(
       const documentRef = step.document as string
 
       try {
-        const docResult = await act((tx) =>
-          port.reverseDocument(tx, {
+        const docResult = await asActing(() =>
+          port.reverseDocument({
             documentRef,
             reason: step.reason as string,
             idempotencyKey: step.idempotencyKey as string,
@@ -657,10 +664,10 @@ export async function runPostingScenario(
       const entriesBefore = await act((tx) => countJournalEntries(tx, tenantId))
 
       try {
-        const draft = await act((tx) => {
+        const draft = await asActing(() => {
           if (verb === 'saveDraft') {
             const fields = step.fields as Record<string, unknown>
-            return port.saveDraft(tx, {
+            return port.saveDraft({
               documentType,
               documentRef,
               customerId: customerId(fields.customer as string),
@@ -668,13 +675,13 @@ export async function runPostingScenario(
             })
           }
           if (verb === 'editDraft') {
-            return port.editDraft(tx, {
+            return port.editDraft({
               documentType,
               documentRef,
               fields: step.fields as Record<string, unknown>,
             })
           }
-          return port.cancelDraft(tx, {
+          return port.cancelDraft({
             documentType,
             documentRef,
             reason: step.reason as string | undefined,
@@ -723,13 +730,11 @@ export async function runPostingScenario(
        */
       const entriesBefore = await act((tx) => countJournalEntries(tx, tenantId))
       const id = customerId(step.customer as string)
-      const asActingOwner = <T>(fn: () => Promise<T>): Promise<T> =>
-        runAs({ tenantId: acting.fixture.tenantId, userId: acting.fixture.ownerId }, fn)
 
-      const before = await asActingOwner(() => getCustomer(id))
+      const before = await asActing(() => getCustomer(id))
       try {
         if (step.action === 'deactivate') {
-          await asActingOwner(() =>
+          await asActing(() =>
             deactivateCustomer({
               id,
               expectedVersion: before.customer.version,
@@ -737,7 +742,7 @@ export async function runPostingScenario(
             }),
           )
         } else {
-          await asActingOwner(() =>
+          await asActing(() =>
             reactivateCustomer({
               id,
               expectedVersion: before.customer.version,
@@ -754,7 +759,7 @@ export async function runPostingScenario(
         // this step's own target, unlike the `assert` verb's
         // `customerStatus`, a { ref: status } map over possibly several
         // customers (P12 step 6).
-        const after = await asActingOwner(() => getCustomer(id))
+        const after = await asActing(() => getCustomer(id))
         expect(after.customer.status, `${where}: customerStatus`).toBe(exp.customerStatus)
       }
       if (typeof exp.journalEntriesWritten === 'number') {
@@ -999,7 +1004,7 @@ export async function runPostingScenario(
         for (const [ref, expected] of Object.entries(
           step.invoiceOutstanding as Record<string, string>,
         )) {
-          const actual = await act((tx) => port.invoiceOutstanding(tx, ref))
+          const actual = await asActing(() => port.invoiceOutstanding(ref))
           expect(actual, `${where}: invoiceOutstanding.${ref}`).toBe(expected)
         }
       }
@@ -1044,7 +1049,7 @@ export async function runPostingScenario(
           step.documentStatuses as Record<string, string>,
         )) {
           const documentType = ref.startsWith('INV') ? 'sales_invoice' : 'customer_receipt'
-          const actual = await act((tx) => port.documentStatus(tx, documentType, ref))
+          const actual = await asActing(() => port.documentStatus(documentType, ref))
           expect(actual, `${where}: documentStatuses.${ref}`).toBe(expected)
         }
       }
@@ -1053,9 +1058,8 @@ export async function runPostingScenario(
         for (const [series, expected] of Object.entries(spec)) {
           const actual =
             series === 'INV' || series === 'RCT'
-              ? await act((tx) =>
+              ? await asActing(() =>
                   requireReceivables(`${where}.documentNumbersIssued`).documentNumbersIssued(
-                    tx,
                     series,
                   ),
                 )
