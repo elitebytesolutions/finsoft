@@ -1,5 +1,5 @@
 import { sql } from 'kysely'
-import { assertIssuedTenantTx, type TenantTx } from '@finsoft/database'
+import { assertIssuedTenantTx, resolveAccountsByRole, type TenantTx } from '@finsoft/database'
 import { Money } from '@finsoft/validation'
 
 /*
@@ -53,8 +53,29 @@ export interface Invariant9Result {
   readonly rows: readonly Invariant9Row[]
   /** Rows where gl !== sub, exactly. Empty = the invariant holds. */
   readonly breaks: readonly Invariant9Row[]
-  /** Σ GL(C, D) over every customer, for the structural check against AR_CONTROL. */
+  /**
+   * Σ GL(C, D) — the sum of the SAME per-customer `gl` figures already in
+   * `rows`. NOT an independent number: re-summing a partition of a set
+   * always equals the sum of that set, whatever the set contains. Useful
+   * only as an internal-consistency cross-check against `accountBalance`
+   * below (a mismatch between the two means some line reached the
+   * AR_CONTROL account without a `party_type = 'CUSTOMER'` line — see that
+   * field's own comment). NEVER pass this to
+   * `reconcileSubledgerToGeneralLedger` as the GL side — Accounting seat
+   * review, 2026-09-29: doing so compares a number with itself and can
+   * never fail. Use `accountBalance` for that.
+   */
   readonly totalGl: string
+  /**
+   * The AR_CONTROL account's balance, read DIRECTLY — one query against
+   * `journal_lines` by `account_id`, no `party_type`/`party_id` filter of
+   * any kind. This is the figure `Σ over C of GL(C, D) = AR_CONTROL
+   * balance at D` (customer-receipt.md §8, structural half) is actually
+   * checking: an INDEPENDENT read of the account, not a re-derivation of
+   * `totalGl`. THIS is what `reconcileSubledgerToGeneralLedger` must
+   * receive as the GL side.
+   */
+  readonly accountBalance: string
 }
 
 const REQUIRED_TABLES = ['sales_invoices', 'customer_receipts'] as const
@@ -187,21 +208,55 @@ async function subByCustomer(
 }
 
 /**
- * Invariant 9, AR half, for one tenant as of `asOf`. Caller must have
- * checked `invariant9Available` first — this throws (a real Postgres
- * "relation does not exist" error) rather than guessing, if it has not.
+ * The AR_CONTROL account's balance, read directly — `resolveAccountsByRole`
+ * to find the one account (K5's own role-resolution, TD-011 accepted), then
+ * a single sum over `journal_lines` by `account_id`, WITH NO PARTY FILTER
+ * OF ANY KIND. This is deliberately NOT `glByCustomer`'s query (which
+ * filters `party_type = 'CUSTOMER'`, a filter that is redundant only
+ * because migration 012's CHECK constraint already ties `account_control =
+ * 'AR'` to `party_type = 'CUSTOMER'` — redundant today, but this function
+ * exists so the check does not rely on that constraint holding forever, and
+ * so it is a genuinely independent read of the account rather than a
+ * second way of computing the same party-grouped sum).
  */
-export async function checkInvariant9(
+export async function arControlAccountBalance(
   tx: TenantTx,
   tenantId: string,
   asOf: string,
-): Promise<Invariant9Result> {
+): Promise<string> {
   assertIssuedTenantTx(tx)
-  const [gl, sub] = await Promise.all([
-    glByCustomer(tx, tenantId, asOf),
-    subByCustomer(tx, tenantId, asOf),
-  ])
+  const accounts = await resolveAccountsByRole(tx, tenantId, ['AR_CONTROL'])
+  const account = accounts.get('AR_CONTROL')
+  if (!account)
+    throw new Error(`arControlAccountBalance: no AR_CONTROL account for tenant ${tenantId}.`)
 
+  const result = await sql<{ debit: string; credit: string }>`
+    SELECT coalesce(sum(jl.debit), 0)::text  AS debit,
+           coalesce(sum(jl.credit), 0)::text AS credit
+      FROM journal_lines jl
+      JOIN journal_entries je ON je.tenant_id = jl.tenant_id AND je.id = jl.entry_id
+     WHERE jl.tenant_id = ${tenantId}
+       AND jl.account_id = ${account.id}
+       AND je.occurred_at <= ${asOf}::date
+  `.execute(tx)
+  const row = result.rows[0] ?? { debit: '0', credit: '0' }
+  return Money.serialize(Money.subtract(Money.from(row.debit), Money.from(row.credit)), 4)
+}
+
+/**
+ * The pure comparison, extracted so it is unit-testable with synthetic
+ * `gl`/`sub` maps and no database at all — see
+ * `ar-invariant-9-rows.spec.ts`'s "wrong party" case, which this function
+ * makes provable without a live `sales_invoices`/`customer_receipts` table
+ * (neither exists on this branch) and without violating migration 012's
+ * CHECK constraint (which makes a genuine "AR line with no party" row
+ * impossible to construct even as the migration role — see that spec
+ * file's own header for why the two negative tests take different forms).
+ */
+export function computeInvariant9Rows(
+  gl: ReadonlyMap<string, { readonly debit: string; readonly credit: string }>,
+  sub: ReadonlyMap<string, string>,
+): { readonly rows: readonly Invariant9Row[]; readonly totalGl: string } {
   const customerIds = new Set([...gl.keys(), ...sub.keys()])
   const rows: Invariant9Row[] = []
   let totalGl = Money.zero()
@@ -222,11 +277,33 @@ export async function checkInvariant9(
   }
 
   rows.sort((a, b) => a.customerId.localeCompare(b.customerId))
+  return { rows, totalGl: Money.serialize(totalGl, 4) }
+}
+
+/**
+ * Invariant 9, AR half, for one tenant as of `asOf`. Caller must have
+ * checked `invariant9Available` first — this throws (a real Postgres
+ * "relation does not exist" error) rather than guessing, if it has not.
+ */
+export async function checkInvariant9(
+  tx: TenantTx,
+  tenantId: string,
+  asOf: string,
+): Promise<Invariant9Result> {
+  assertIssuedTenantTx(tx)
+  const [gl, sub, accountBalance] = await Promise.all([
+    glByCustomer(tx, tenantId, asOf),
+    subByCustomer(tx, tenantId, asOf),
+    arControlAccountBalance(tx, tenantId, asOf),
+  ])
+
+  const { rows, totalGl } = computeInvariant9Rows(gl, sub)
 
   return {
     asOf,
     rows,
     breaks: rows.filter((row) => row.gl !== row.sub),
-    totalGl: Money.serialize(totalGl, 4),
+    totalGl,
+    accountBalance,
   }
 }

@@ -262,6 +262,36 @@ export function createFakeReceivablesPort(clockIso: string): ReceivablesPort {
       docs.set(input.documentRef, doc)
     }
 
+    if (doc.status === 'DRAFT') {
+      /*
+       * service-sale.md §4 row 7 / customer-receipt.md ruling R-2: an
+       * inactive customer cannot be INVOICED (this check), but CAN still
+       * be PAID (doPostReceipt below has no such check, deliberately).
+       * Re-checked only on the FIRST post attempt, matching the kernel's
+       * idempotency-first rule (a replay never re-runs business
+       * validation).
+       *
+       * Reads `customers.status` on the SAME `tx` this post is running
+       * on, not through the real `getCustomer` use case: that use case
+       * opens its OWN `withTenant` (its own pooled connection), and this
+       * harness pins the test pool to ONE connection
+       * (financial-invariant-suite.spec.ts's own doc comment) — calling it
+       * from inside an already-open transaction on that pool deadlocks.
+       * Reading the row directly is still real data, on the SAME
+       * transaction snapshot this post is about to write into.
+       */
+      const row = await tx
+        .selectFrom('customers')
+        .select('status')
+        .where('id', '=', input.customerId)
+        .executeTakeFirst()
+      if (row && row.status !== 'ACTIVE') {
+        throw detail('CUSTOMER_INACTIVE', `customer ${input.customerId} is not active.`, {
+          customerId: input.customerId,
+        })
+      }
+    }
+
     const result = await engine.post(
       {
         event: 'SALE_POSTED',

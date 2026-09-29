@@ -54,7 +54,7 @@ const M3_SCENARIOS: readonly { readonly file: string; readonly title: string }[]
 ]
 
 describe('M3-P readiness gate for P04-P12', () => {
-  it('reports exactly what is missing, and never guesses', async () => {
+  it('stays green ONLY while truly nothing is ready; fails loudly the moment either half arrives without the other', async () => {
     const moduleExists = receivablesModuleFileExists()
     const eventsEnabled =
       IMPLEMENTED_EVENTS.has('SALE_POSTED') && IMPLEMENTED_EVENTS.has('CUSTOMER_PAYMENT_RECEIVED')
@@ -71,11 +71,37 @@ describe('M3-P readiness gate for P04-P12', () => {
           : ''),
     )
 
+    /*
+     * Accounting seat review, 2026-09-29 (43be499): the first version of
+     * this gate only ever warned and returned when `port === null` — which
+     * silently treated "the module exists but this lane's guessed shape
+     * does not match it" the SAME as "nothing exists yet". Those are not
+     * the same state: the first means someone needs to look at
+     * receivables-real-port.ts NOW, the second means there is genuinely
+     * nothing to do yet. Passing green in the first case would have hidden
+     * exactly the moment this file becomes useful.
+     */
+    if (moduleExists && port === null) {
+      expect.fail(
+        'modules/receivables/index.ts exists, but loadReceivablesRealPort() could not match ' +
+          "it to this lane's guessed shape (receivables-real-port.ts's REQUIRED_EXPORTS). " +
+          'Update that file to the real export names — this is not a state to stay green in.',
+      )
+    }
+    if (eventsEnabled && port === null) {
+      expect.fail(
+        'SALE_POSTED / CUSTOMER_PAYMENT_RECEIVED are IMPLEMENTED_EVENTS, but no receivables ' +
+          'port loaded. The kernel is ready and nothing is exercising it through this gate — ' +
+          'update receivables-real-port.ts (or MODULE_PATH) to find the real module.',
+      )
+    }
+
     if (port === null) {
-      // The honest, expected state on this branch today (see the file
-      // header). Asserted — not skipped — so a change that makes this
-      // stop checking anything shows up as a diff.
-      expect(port).toBeNull()
+      // The honest, expected state on this branch today: NEITHER
+      // precondition has fired. Asserted, not skipped, so a change that
+      // makes this stop checking anything shows up as a diff.
+      expect(moduleExists).toBe(false)
+      expect(eventsEnabled).toBe(false)
       return
     }
 

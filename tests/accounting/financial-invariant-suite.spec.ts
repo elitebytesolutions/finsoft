@@ -223,7 +223,26 @@ describe('Invariant 9, AR half (M3-Q) — gated on M3-P', () => {
       const result = await runAs({ tenantId, userId: null }, () =>
         withTenant((tx) => checkInvariant9(tx, tenantId, asOf)),
       )
+      // Per-customer: GL(C, D) = SUB(C, D) exactly, for every customer.
       expect(result.breaks, `tenant ${tenantId}: Invariant 9 AR-half breaks`).toEqual([])
+      /*
+       * Structural: Σ over C of GL(C, D) = AR_CONTROL balance at D
+       * (README §4.1). `result.accountBalance` is read DIRECTLY from the
+       * AR_CONTROL account, with no party filter — independent of the
+       * per-customer `rows` above. `result.totalGl` is the sum of THOSE
+       * SAME rows, so comparing it to itself would prove nothing
+       * (Accounting seat review, 2026-09-29, 43be499); comparing it to the
+       * independently-read `accountBalance` is the actual structural
+       * check, and it is what would catch a line that reached AR_CONTROL
+       * without `party_type = 'CUSTOMER'` — structurally forbidden by
+       * migration 012's CHECK, so this is a belt-and-braces proof that the
+       * check would fire if that constraint were ever weakened, not an
+       * expectation that it ever fires today.
+       */
+      expect(
+        result.totalGl,
+        `tenant ${tenantId}: Σ GL(C, D) disagrees with the AR_CONTROL account's own balance`,
+      ).toBe(result.accountBalance)
       tenantsChecked += 1
     }
     expect(tenantsChecked).toBeGreaterThan(0)

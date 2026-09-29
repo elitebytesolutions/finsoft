@@ -1,7 +1,7 @@
 import { closeDatabase } from '@finsoft/database'
 import { migrateTestDatabase, prepareTestDatabase } from '@finsoft/database/testing'
-import { afterAll, beforeAll, describe, it } from 'vitest'
-import { runPostingScenario, type PostingScenario } from './golden-posting-runner.ts'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { loadScenario, runPostingScenario, type PostingScenario } from './golden-posting-runner.ts'
 import { createFakeReceivablesPort } from './fixtures/fake-receivables-port.ts'
 
 /*
@@ -13,33 +13,31 @@ import { createFakeReceivablesPort } from './fixtures/fake-receivables-port.ts'
  * against a FAKE `ReceivablesPort` (fixtures/fake-receivables-port.ts) —
  * NOT against `modules/receivables`, which does not exist on this branch.
  *
- * NOT THE REAL GOLDEN FILES. Running P04-P12 verbatim against the fake hit
- * three things outside this lane's boundary to fix, reported in the M3-Q
- * report rather than worked around here (NON_NEGOTIABLES §4):
+ * NOT THE REAL GOLDEN FILES for the hand-built (`R*`) scenarios below.
+ * Running the REAL P04-P12 verbatim against the fake originally hit three
+ * things outside this lane's boundary, reported rather than worked around
+ * (NON_NEGOTIABLES §4). Two are now resolved, by the Accounting seat's
+ * review of 43be499:
  *
- *   1. `SALE_AMOUNT_MISMATCH`'s `details.line` is a STRING in the kernel
- *      (packages/accounting-kernel/src/rules/service-sale.ts:121,
- *      `line: String(index + 1)`) but a NUMBER in every golden file that
- *      names it (P04, P10). Both are already merged (M2-A); neither is
- *      this lane's to change.
- *   2. P12 posts a 10,000.0000 invoice to CUST-A (step 1) and then expects
- *      deactivating CUST-A to SUCCEED (step 2) — but `modules/customers`'
- *      OWN, documented rule (api-contract.md §3 `CUSTOMER_HAS_BALANCE`,
- *      `modules/customers/domain/customer.ts` `assertDeactivatable`,
- *      already merged, M3-C) refuses deactivation while ANY balance is
- *      owed. The golden scenario and the merged module contradict each
- *      other.
- *   3. `invariant9Available()` is correctly, permanently false against
- *      this fake — it probes for the REAL `sales_invoices` /
- *      `customer_receipts` Postgres tables, which no fake can provide.
- *      Every golden file's `invariant9`/`customerLedger` checkpoints are
- *      therefore untestable here BY DESIGN, not by a gap in the runner.
+ *   1. RESOLVED (ruling 1). `SALE_AMOUNT_MISMATCH`'s `details.line` is a
+ *      STRING in the kernel (service-sale.ts:121, `String(index + 1)`);
+ *      golden P04/P10 now say `"line": "2"` / `"line": "1"` to match.
+ *   2. RESOLVED (ruling 2). P12 is rewritten: a customer with a balance
+ *      cannot be deactivated (`CUSTOMER_HAS_BALANCE`, matching
+ *      `modules/customers`' own merged rule), settles first, then can be.
+ *      Proved against the fake below (`'P12 (real file)'`).
+ *   3. STILL TRUE, by design, not a gap: `invariant9Available()` is
+ *      correctly, permanently false against this fake — it probes for the
+ *      REAL `sales_invoices` / `customer_receipts` Postgres tables, which
+ *      no fake can provide. Every golden file's `invariant9`/
+ *      `customerLedger` checkpoints are therefore untestable here.
  *
  * So this file exercises the SAME verbs and expectation shapes with small,
- * hand-built scenarios that avoid those three externalities, to prove the
- * runner code itself — not to claim P04-P12 pass. That claim can only be
- * made by `posting-scenarios-m3.spec.ts`, gated on the real module and the
- * real migrations.
+ * hand-built (`R*`) scenarios that avoid externality 3, to prove the
+ * runner code itself — plus the REAL P12 file, run up to (but not
+ * including) its one `invariant9` checkpoint. Neither claims P04-P11 pass
+ * in full; that claim can only be made by `posting-scenarios-m3.spec.ts`,
+ * gated on the real module and the real migrations.
  */
 
 beforeAll(async () => {
@@ -390,5 +388,31 @@ describe('customer verb: deactivate/reactivate a zero-balance customer through t
     ])
     // No receivables port passed — proves the `customer` verb needs none.
     await runPostingScenario(s)
+  }, 30_000)
+})
+
+describe('P12 (real file, rewritten per Accounting seat ruling 2) against the fake port', () => {
+  it('runs every step through the real file, up to (not including) its one invariant9 checkpoint', async () => {
+    const scenario = loadScenario('posting-p12-inactive-customer.json')
+    const receivables = createFakeReceivablesPort(`${scenario.fixture.today}T12:00:00.000Z`)
+
+    /*
+     * Step 13 (the file's final assert) names `invariant9`, which this
+     * fake cannot satisfy — see the file header, externality 3. Steps
+     * 1-12 are the whole of ruling 2's rewrite (the balance-blocked
+     * deactivation, the settlement, the successful deactivation, the
+     * CUSTOMER_INACTIVE invoice rejection, the reversal of a receipt from
+     * an inactive customer, the receipt an inactive customer can still
+     * make, reactivation, and the real invoice post) — every one of them
+     * runs for real here. A failure with a DIFFERENT message than the
+     * expected invariant9-unavailable one means an EARLIER step broke,
+     * and this test fails loudly on that, not silently on step 13.
+     */
+    const error = await runPostingScenario(scenario, { receivables }).then(
+      () => null,
+      (e: unknown) => e,
+    )
+    expect(error, 'expected the scenario to fail exactly at step 13 (invariant9)').not.toBeNull()
+    expect(String(error)).toMatch(/P12 step 13.*invariant9 asserted but sales_invoices/)
   }, 30_000)
 })

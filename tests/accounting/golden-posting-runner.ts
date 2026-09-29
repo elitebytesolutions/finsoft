@@ -23,7 +23,7 @@ import {
   type TenantTx,
 } from '@finsoft/database'
 import { createFiscalYear, seedChartOfAccounts } from '@finsoft/database/provisioning'
-import { periodEngine, PostingError, type FinancialEventName } from '@finsoft/accounting-kernel'
+import { periodEngine, type FinancialEventName } from '@finsoft/accounting-kernel'
 // Clock injection is test-only: these are deliberately not on the package's public surface.
 import { fixedClock } from '../../packages/accounting-kernel/src/clock.ts'
 import {
@@ -388,8 +388,20 @@ export async function runPostingScenario(
     }
   }
 
+  /** A `PostingError`, or a duck-typed equivalent (`CustomerError` — modules/customers/domain/errors.ts — carries the same `.code`/`.details` shape but is a different class). */
+  function isDomainError(
+    error: unknown,
+  ): error is { code: string; message: string; details: Record<string, unknown> } {
+    return (
+      error instanceof Error &&
+      typeof (error as { code?: unknown }).code === 'string' &&
+      typeof (error as { details?: unknown }).details === 'object' &&
+      (error as { details?: unknown }).details !== null
+    )
+  }
+
   function checkRejection(where: string, error: unknown, exp: Expect): void {
-    if (!(error instanceof PostingError)) throw error
+    if (!isDomainError(error)) throw error
     expect(exp.outcome, `${where}: the kernel rejected (${error.code}: ${error.message})`).toBe(
       'REJECTED',
     )
@@ -695,13 +707,19 @@ export async function runPostingScenario(
         'customerStatus',
         'journalEntriesWritten',
         'entriesAfter',
+        'error',
+        'errorDetail',
       ])
       assertOnlyKnownKeys(where, step, [...STEP_INPUT_KEYS, 'customer'])
       /*
        * modules/customers ALREADY EXISTS (M3-C, merged) — this verb needs no
        * receivables port. deactivateCustomer/reactivateCustomer are the
        * real, shipped use cases, called exactly as the API controller calls
-       * them (apps/api/src/customers/customers.controller.ts).
+       * them (apps/api/src/customers/customers.controller.ts), including
+       * their own business rules (CUSTOMER_HAS_BALANCE — P12 step 2, per
+       * Accounting seat ruling 2, 2026-09-29) — a rejection here is
+       * `CustomerError`, not `PostingError`; `checkRejection` handles both
+       * (isDomainError, duck-typed on `.code`/`.details`).
        */
       const entriesBefore = await act((tx) => countJournalEntries(tx, tenantId))
       const id = customerId(step.customer as string)
@@ -709,22 +727,27 @@ export async function runPostingScenario(
         runAs({ tenantId: acting.fixture.tenantId, userId: acting.fixture.ownerId }, fn)
 
       const before = await asActingOwner(() => getCustomer(id))
-      if (step.action === 'deactivate') {
-        await asActingOwner(() =>
-          deactivateCustomer({
-            id,
-            expectedVersion: before.customer.version,
-            actor: { userId: acting.fixture.ownerId },
-          }),
-        )
-      } else {
-        await asActingOwner(() =>
-          reactivateCustomer({
-            id,
-            expectedVersion: before.customer.version,
-            actor: { userId: acting.fixture.ownerId },
-          }),
-        )
+      try {
+        if (step.action === 'deactivate') {
+          await asActingOwner(() =>
+            deactivateCustomer({
+              id,
+              expectedVersion: before.customer.version,
+              actor: { userId: acting.fixture.ownerId },
+            }),
+          )
+        } else {
+          await asActingOwner(() =>
+            reactivateCustomer({
+              id,
+              expectedVersion: before.customer.version,
+              actor: { userId: acting.fixture.ownerId },
+            }),
+          )
+        }
+        expect(exp.outcome, `${where}: outcome`).toBe('TRANSITIONED')
+      } catch (error) {
+        checkRejection(where, error, exp)
       }
       if (exp.customerStatus !== undefined) {
         // The `customer` verb's own expect.customerStatus is a bare string —

@@ -66,7 +66,7 @@
       "expect": {
         "outcome": "REJECTED",
         "error": "SALE_AMOUNT_MISMATCH",
-        "errorDetail": { "line": 2, "submitted": "2499.9999", "expected": "2500.0000" },
+        "errorDetail": { "line": "2", "submitted": "2499.9999", "expected": "2500.0000" },
         "entriesAfter": 0
       }
     },
