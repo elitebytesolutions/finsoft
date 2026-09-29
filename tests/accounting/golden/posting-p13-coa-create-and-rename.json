@@ -2,7 +2,12 @@
   "id": "P13",
   "format": "posting-scenario/v1",
   "name": "A user-created account: create, post to it, trial balance, rename without altering history, frozen code and parent",
-  "rules": ["COA/maintenance@1", "JOURNAL_VOUCHER_POSTED@1", "REPORT/trial-balance@1", "REPORT/account-ledger@1"],
+  "rules": [
+    "COA/maintenance@1",
+    "JOURNAL_VOUCHER_POSTED@1",
+    "REPORT/trial-balance@1",
+    "REPORT/account-ledger@1"
+  ],
   "source": "docs/posting-rules/coa-standard.md",
   "governedBy": [
     "Product Owner scope decision, 2026-09-29 (users may add accounts in the MVP)",
@@ -63,7 +68,16 @@
     "today": "2026-09-27",
     "periods": { "fiscalYear": 2027, "status": "all OPEN" },
     "tenants": ["GOLDEN_A"],
-    "actor": { "tenant": "GOLDEN_A", "permissions": ["account.view", "account.manage", "voucher.post", "voucher.view", "report.financial"] }
+    "actor": {
+      "tenant": "GOLDEN_A",
+      "permissions": [
+        "account.view",
+        "account.manage",
+        "voucher.post",
+        "voucher.view",
+        "report.financial"
+      ]
+    }
   },
   "steps": [
     {
@@ -97,42 +111,77 @@
       "do": "account",
       "action": "create",
       "payload": { "code": "6600", "name": "Guard Services", "parent": "6000" },
-      "expect": { "outcome": "REJECTED", "error": "ACCOUNT_CODE_TAKEN", "accountsAfter": 26, "auditRecordsWritten": 0 }
+      "expect": {
+        "outcome": "REJECTED",
+        "error": "ACCOUNT_CODE_TAKEN",
+        "accountsAfter": 26,
+        "auditRecordsWritten": 0
+      }
     },
     {
       "step": 3,
       "do": "account",
       "action": "create",
       "payload": { "code": "6610", "name": "rent", "parent": "6000" },
-      "expect": { "outcome": "REJECTED", "error": "ACCOUNT_NAME_TAKEN", "accountsAfter": 26, "auditRecordsWritten": 0 }
+      "expect": {
+        "outcome": "REJECTED",
+        "error": "ACCOUNT_NAME_TAKEN",
+        "accountsAfter": 26,
+        "auditRecordsWritten": 0
+      }
     },
     {
       "step": 4,
       "do": "account",
       "action": "create",
       "payload": { "code": "1400", "name": "Petty Cash", "parent": "6000" },
-      "expect": { "outcome": "REJECTED", "error": "ACCOUNT_CODE_OUT_OF_RANGE", "accountsAfter": 26, "auditRecordsWritten": 0 }
+      "expect": {
+        "outcome": "REJECTED",
+        "error": "ACCOUNT_CODE_OUT_OF_RANGE",
+        "accountsAfter": 26,
+        "auditRecordsWritten": 0
+      }
     },
     {
       "step": 5,
       "do": "account",
       "action": "create",
       "payload": { "code": "6150", "name": "Overtime", "parent": "6100" },
-      "expect": { "outcome": "REJECTED", "error": "ACCOUNT_PARENT_NOT_HEADER", "accountsAfter": 26, "auditRecordsWritten": 0 }
+      "expect": {
+        "outcome": "REJECTED",
+        "error": "ACCOUNT_PARENT_NOT_HEADER",
+        "accountsAfter": 26,
+        "auditRecordsWritten": 0
+      }
     },
     {
       "step": 6,
       "do": "account",
       "action": "create",
-      "payload": { "code": "1210", "name": "Accounts Receivable — Other", "parent": "1000", "controlKind": "AR" },
-      "expect": { "outcome": "REJECTED", "error": "PAYLOAD_INVALID", "accountsAfter": 26, "auditRecordsWritten": 0 }
+      "payload": {
+        "code": "1210",
+        "name": "Accounts Receivable — Other",
+        "parent": "1000",
+        "controlKind": "AR"
+      },
+      "expect": {
+        "outcome": "REJECTED",
+        "error": "PAYLOAD_INVALID",
+        "accountsAfter": 26,
+        "auditRecordsWritten": 0
+      }
     },
     {
       "step": 7,
       "do": "account",
       "action": "create",
       "payload": { "code": "66A0", "name": "Security Deposits Expense", "parent": "6000" },
-      "expect": { "outcome": "REJECTED", "error": "ACCOUNT_CODE_FORMAT", "accountsAfter": 26, "auditRecordsWritten": 0 }
+      "expect": {
+        "outcome": "REJECTED",
+        "error": "ACCOUNT_CODE_FORMAT",
+        "accountsAfter": 26,
+        "auditRecordsWritten": 0
+      }
     },
     {
       "step": 8,
@@ -192,7 +241,12 @@
         "rows": [
           { "account": "1110", "debit": "75000.0000", "credit": "0.0000" },
           { "account": "3100", "debit": "0.0000", "credit": "100000.0000" },
-          { "account": "6600", "name": "Security Services", "debit": "25000.0000", "credit": "0.0000" }
+          {
+            "account": "6600",
+            "name": "Security Services",
+            "debit": "25000.0000",
+            "credit": "0.0000"
+          }
         ],
         "totals": { "debit": "100000.0000", "credit": "100000.0000" }
       },
@@ -202,7 +256,13 @@
         "to": "2026-09-27",
         "opening": "0.0000",
         "lines": [
-          { "entryNumber": "JV-2027-000002", "date": "2026-09-10", "debit": "25000.0000", "credit": "0.0000", "running": "25000.0000" }
+          {
+            "entryNumber": "JV-2027-000002",
+            "date": "2026-09-10",
+            "debit": "25000.0000",
+            "credit": "0.0000",
+            "running": "25000.0000"
+          }
         ],
         "closing": "25000.0000"
       },
@@ -217,11 +277,20 @@
       "changes": { "name": "Security and Guard Services" },
       "expect": {
         "outcome": "UPDATED",
-        "account": { "code": "6600", "name": "Security and Guard Services", "parent": "6000", "type": "EXPENSE", "version": 1 },
+        "account": {
+          "code": "6600",
+          "name": "Security and Guard Services",
+          "parent": "6000",
+          "type": "EXPENSE",
+          "version": 1
+        },
         "journalEntriesWritten": 0,
         "auditRecordsWritten": 1,
         "auditAction": "ACCOUNT_UPDATED",
-        "auditChanges": { "name": { "before": "Security Services", "after": "Security and Guard Services" }, "version": { "before": 0, "after": 1 } }
+        "auditChanges": {
+          "name": { "before": "Security Services", "after": "Security and Guard Services" },
+          "version": { "before": 0, "after": 1 }
+        }
       }
     },
     {
@@ -231,7 +300,12 @@
       "journalEntry": {
         "entryNumber": "JV-2027-000002",
         "lines": [
-          { "account": "6600", "accountIdIsStep1Id": true, "debit": "25000.0000", "credit": "0.0000" },
+          {
+            "account": "6600",
+            "accountIdIsStep1Id": true,
+            "debit": "25000.0000",
+            "credit": "0.0000"
+          },
           { "account": "1110", "debit": "0.0000", "credit": "25000.0000" }
         ],
         "status": "POSTED"
@@ -241,7 +315,12 @@
         "rows": [
           { "account": "1110", "debit": "75000.0000", "credit": "0.0000" },
           { "account": "3100", "debit": "0.0000", "credit": "100000.0000" },
-          { "account": "6600", "name": "Security and Guard Services", "debit": "25000.0000", "credit": "0.0000" }
+          {
+            "account": "6600",
+            "name": "Security and Guard Services",
+            "debit": "25000.0000",
+            "credit": "0.0000"
+          }
         ],
         "totals": { "debit": "100000.0000", "credit": "100000.0000" }
       },
@@ -251,7 +330,13 @@
         "to": "2026-09-27",
         "opening": "0.0000",
         "lines": [
-          { "entryNumber": "JV-2027-000002", "date": "2026-09-10", "debit": "25000.0000", "credit": "0.0000", "running": "25000.0000" }
+          {
+            "entryNumber": "JV-2027-000002",
+            "date": "2026-09-10",
+            "debit": "25000.0000",
+            "credit": "0.0000",
+            "running": "25000.0000"
+          }
         ],
         "closing": "25000.0000"
       },
@@ -264,7 +349,12 @@
       "account": "6600",
       "expectedVersion": 1,
       "changes": { "code": "6650" },
-      "expect": { "outcome": "REJECTED", "error": "ACCOUNT_HAS_POSTINGS", "accountAfter": { "code": "6600", "version": 1 }, "auditRecordsWritten": 0 }
+      "expect": {
+        "outcome": "REJECTED",
+        "error": "ACCOUNT_HAS_POSTINGS",
+        "accountAfter": { "code": "6600", "version": 1 },
+        "auditRecordsWritten": 0
+      }
     },
     {
       "step": 14,
@@ -273,7 +363,12 @@
       "account": "6600",
       "expectedVersion": 1,
       "changes": { "parent": "5000", "code": "5600" },
-      "expect": { "outcome": "REJECTED", "error": "ACCOUNT_HAS_POSTINGS", "accountAfter": { "code": "6600", "parent": "6000", "version": 1 }, "auditRecordsWritten": 0 }
+      "expect": {
+        "outcome": "REJECTED",
+        "error": "ACCOUNT_HAS_POSTINGS",
+        "accountAfter": { "code": "6600", "parent": "6000", "version": 1 },
+        "auditRecordsWritten": 0
+      }
     },
     {
       "step": 15,
@@ -282,7 +377,12 @@
       "account": "6600",
       "expectedVersion": 0,
       "changes": { "name": "Guarding" },
-      "expect": { "outcome": "REJECTED", "error": "ACCOUNT_VERSION_CONFLICT", "accountAfter": { "name": "Security and Guard Services", "version": 1 }, "auditRecordsWritten": 0 }
+      "expect": {
+        "outcome": "REJECTED",
+        "error": "ACCOUNT_VERSION_CONFLICT",
+        "accountAfter": { "name": "Security and Guard Services", "version": 1 },
+        "auditRecordsWritten": 0
+      }
     },
     {
       "step": 16,
@@ -309,7 +409,14 @@
       "payload": { "code": "6700", "name": "Miscellaneous Expense", "parent": "6000" },
       "expect": {
         "outcome": "CREATED",
-        "account": { "code": "6700", "type": "EXPENSE", "normalBalance": "DEBIT", "controlKind": "NONE", "role": null, "version": 0 },
+        "account": {
+          "code": "6700",
+          "type": "EXPENSE",
+          "normalBalance": "DEBIT",
+          "controlKind": "NONE",
+          "role": null,
+          "version": 0
+        },
         "auditRecordsWritten": 1,
         "accountsAfter": 27
       }
@@ -321,7 +428,11 @@
       "account": "6700",
       "expectedVersion": 0,
       "changes": { "code": "6710" },
-      "expect": { "outcome": "UPDATED", "account": { "code": "6710", "parent": "6000", "version": 1 }, "auditRecordsWritten": 1 }
+      "expect": {
+        "outcome": "UPDATED",
+        "account": { "code": "6710", "parent": "6000", "version": 1 },
+        "auditRecordsWritten": 1
+      }
     },
     {
       "step": 20,
@@ -345,7 +456,12 @@
         "rows": [
           { "account": "1110", "debit": "75000.0000", "credit": "0.0000" },
           { "account": "3100", "debit": "0.0000", "credit": "100000.0000" },
-          { "account": "6600", "name": "Security and Guard Services", "debit": "25000.0000", "credit": "0.0000" }
+          {
+            "account": "6600",
+            "name": "Security and Guard Services",
+            "debit": "25000.0000",
+            "credit": "0.0000"
+          }
         ],
         "totals": { "debit": "100000.0000", "credit": "100000.0000" }
       },
