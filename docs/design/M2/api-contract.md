@@ -562,3 +562,9 @@ Architecture: rejected, narrowly) reviewed the branch at `3daed22` and returned 
 
 Nothing is open here as of this document's current revision. Any future change to this contract lands
 as a separate, clearly named commit, per this document's own opening instruction.
+
+**Deferred to M3-P (Accounting seat, 2026-09-29).** The HTTP test for
+`REVERSAL_VIA_SOURCE_REQUIRED` (409) is a **named M3-P acceptance item**. M2
+cannot create a document-sourced entry without the lint-fenced raw insert;
+M3-P's invoices create real ones. The refusal itself is already covered by
+golden scenario P06 and the invariant suite, and the 409 mapping is in place.
