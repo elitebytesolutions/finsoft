@@ -21,16 +21,13 @@ import { useApiQuery } from '@/lib/api/use-api-query'
 import { useIdempotencyKey } from '@/lib/api/idempotency-key'
 import { postableJournalAccounts } from '@/lib/accounting/account-tree'
 import { computeVoucherTotals } from '@/lib/accounting/voucher-totals'
+import { todayIso } from '@/lib/date/local-date'
 import { ApiError } from '@/lib/api/types'
 import type {
   AccountDto,
   JournalEntryDetail,
   PostJournalLineInput,
 } from '@/lib/api/accounting-types'
-
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10)
-}
 
 /* ------------------------------------------------------------------ *
  * Voucher detail — /vouchers/:id
@@ -173,8 +170,12 @@ function VoucherDetailReady({
               <td>{line.lineNumber}</td>
               <td>{nameOf(line.accountId)}</td>
               <td>{line.memo ?? '—'}</td>
-              <td className="num">{moneyFromString(line.debit, { zeroAsDash: true })}</td>
-              <td className="num">{moneyFromString(line.credit, { zeroAsDash: true })}</td>
+              <td className="num money-debit">
+                {moneyFromString(line.debit, { zeroAsDash: true })}
+              </td>
+              <td className="num money-credit">
+                {moneyFromString(line.credit, { zeroAsDash: true })}
+              </td>
             </tr>
           ))}
         </tbody>

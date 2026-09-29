@@ -3107,7 +3107,7 @@ output.sav-num{display:inline-flex;align-items:center;justify-content:center;bac
 .al-notice{margin:0 0 12px;font-size:12px;color:var(--a-green);background:var(--a-mint);padding:8px 12px;border-radius:8px}
 .al-table{border:1px solid var(--a-line);border-radius:12px}.al-table th{background:#F7F9FB;font-size:11.5px;font-weight:700;color:#5B6B80;padding:12px 14px;white-space:nowrap;text-transform:uppercase;letter-spacing:.3px}.al-table th svg{width:12px;height:12px;vertical-align:-2px;margin-left:3px}.al-table td{padding:12px 14px;font-size:13px;vertical-align:middle}.al-table tbody tr:hover td{background:#FAFCFB}
 .al-table .num{text-align:right}.al-table .ctr{text-align:center}.al-table td b{display:block;font-size:13px;font-weight:600}.al-table td small{display:block;font-size:11.5px;color:var(--a-mute);margin-top:2px}
-.al-table td.ref{color:var(--a-green);font-weight:600}.al-table td.mute{color:var(--a-mute)}.al-table td.dr{color:var(--a-green);font-weight:700}.al-table td.cr{color:var(--a-red);font-weight:700}.al-table td.bal{font-weight:800}.al-table tr.bf td{background:#F7FBF8}
+.al-table td.ref{color:var(--a-green);font-weight:600}.al-table td.mute{color:var(--a-mute)}.al-table td.dr{color:var(--money-debit);font-weight:700}.al-table td.cr{color:var(--money-credit);font-weight:700}.al-table td.bal{font-weight:800}.al-table tr.bf td{background:#F7FBF8}
 .al-table input[type=checkbox]{width:15px;height:15px;accent-color:var(--a-green)}
 .al-posted{background:var(--a-mint);color:var(--a-green-dk);font-size:11.5px;font-weight:700;padding:4px 10px;border-radius:6px}
 .al-dots{width:30px;height:28px;border:0;background:transparent;border-radius:6px;color:#3D5166;display:inline-grid;place-items:center}.al-dots svg{width:16px;height:16px}.al-dots:hover{background:#F0F4F7}
@@ -3132,7 +3132,7 @@ output.sav-num{display:inline-flex;align-items:center;justify-content:center;bac
 .al-type{display:inline-block;margin-top:4px;font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:999px;background:#EEF2F5;color:#5B6B80}.al-type.sales{background:#E6F4EC;color:#0B5E33}.al-type.receipt{background:#E8F1FD;color:#1B5FB4}.al-type.payment{background:#FFF1E4;color:#B4560E}
 .al-table td.part b{display:block;font-size:13px;font-weight:600;color:var(--a-ink)}.al-table td.part small{display:block;font-size:11.5px;color:var(--a-mute);margin-top:2px}
 .al-table td.num{font-variant-numeric:tabular-nums;white-space:nowrap;width:130px}.al-table td.num i{font-style:normal;color:#C4CFDA}
-.al-table td.dr{color:var(--a-green);font-weight:600}.al-table td.cr{color:var(--a-red);font-weight:600}
+.al-table td.dr{color:var(--money-debit);font-weight:600}.al-table td.cr{color:var(--money-credit);font-weight:600}
 .al-table td.bal{font-weight:800;color:var(--a-ink)}.al-table td.bal small{display:inline;font-size:10.5px;color:var(--a-mute);font-weight:600;margin-left:5px}
 .al-table tr.bf td{background:#F7FBF8}.al-table tr.bf .al-ref{color:var(--a-mute);font-weight:600}
 .al-table tbody tr:hover td{background:#FAFCFB}.al-table tr.bf:hover td{background:#F2F8F4}
@@ -4022,3 +4022,10 @@ output.sav-num{display:inline-flex;align-items:center;justify-content:center;bac
 .btn.busy{pointer-events:none}
 .btn-spinner{animation:btn-spin var(--m-spin) linear infinite}
 @keyframes btn-spin{to{transform:rotate(360deg)}}
+
+/* Debit/credit tone utilities — 01-foundations.md §1.3: fixed meaning, never decorative, never
+ * reused for success/failure. General-purpose (not scoped to one screen's own table class, e.g.
+ * `.al-table td.dr`/`.cr` above) for any raw `<table>` a screen renders directly, pending the
+ * design-system seat's own `LedgerTable`/`DebitCreditCell` component. */
+.money-debit{color:var(--money-debit)}
+.money-credit{color:var(--money-credit)}

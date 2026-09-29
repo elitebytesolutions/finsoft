@@ -286,7 +286,17 @@ function ReopenDialog({
       await reopenPeriod(period.id, { reason: reason.trim() })
       onDone()
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not reopen this period.')
+      // `period.reopen` is Owner-only (contract §6's permission ruling) — the only way this
+      // call 403s is the caller not holding it, so a plain `forbidden` is mapped to a clear,
+      // specific message rather than apiFetch's generic "You do not have permission to do
+      // that." No real per-user permission list reaches the client to hide the Reopen button
+      // proactively for a non-Owner (see the M2-S page docs' shared note); this is the second
+      // line of defence, and the server's rejection is still the real gate either way.
+      if (err instanceof ApiError && err.code === 'forbidden') {
+        setError('Only the Owner can reopen a period.')
+      } else {
+        setError(err instanceof ApiError ? err.message : 'Could not reopen this period.')
+      }
       setSubmitting(false)
     }
   }

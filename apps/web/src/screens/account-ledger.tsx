@@ -12,14 +12,8 @@ import { listAccounts, getLedger } from '@/lib/api/accounting-client'
 import { useApiQuery } from '@/lib/api/use-api-query'
 import { postableAccounts, accountByCode } from '@/lib/accounting/account-tree'
 import { formatRunningBalance } from '@/lib/money/running-balance'
+import { startOfMonthIso, todayIso } from '@/lib/date/local-date'
 import type { AccountDto, LedgerResponse } from '@/lib/api/accounting-types'
-
-function startOfMonthIso(d = new Date()): string {
-  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10)
-}
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10)
-}
 
 export function AccountLedger() {
   const navigate = useNavigate()

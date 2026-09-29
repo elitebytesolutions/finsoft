@@ -14,17 +14,11 @@ import { listAccounts, getLedger } from '@/lib/api/accounting-client'
 import { useApiQuery } from '@/lib/api/use-api-query'
 import { accountByRole, accountByCode } from '@/lib/accounting/account-tree'
 import { formatRunningBalance } from '@/lib/money/running-balance'
+import { startOfMonthIso, todayIso } from '@/lib/date/local-date'
 import type { AccountDto, LedgerResponse } from '@/lib/api/accounting-types'
 
 const CASH_ROLE = 'CASH_DEFAULT'
 const CASH_CODE_INTERIM = '1110'
-
-function startOfMonthIso(d = new Date()): string {
-  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10)
-}
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10)
-}
 
 export function CashBook() {
   const navigate = useNavigate()
@@ -216,8 +210,12 @@ function CashLedger({
                     <td>{line.occurredAt}</td>
                     <td>{line.entryNumber}</td>
                     <td>{line.narration}</td>
-                    <td className="num">{moneyFromString(line.debit, { zeroAsDash: true })}</td>
-                    <td className="num">{moneyFromString(line.credit, { zeroAsDash: true })}</td>
+                    <td className="num money-debit">
+                      {moneyFromString(line.debit, { zeroAsDash: true })}
+                    </td>
+                    <td className="num money-credit">
+                      {moneyFromString(line.credit, { zeroAsDash: true })}
+                    </td>
                     <td className="num">
                       {running.amount} <small>{running.side}</small>
                     </td>

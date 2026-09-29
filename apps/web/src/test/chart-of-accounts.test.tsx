@@ -97,7 +97,41 @@ describe('ChartOfAccounts', () => {
 
     await waitFor(() => expect(screen.getByText('Cash in Hand')).toBeInTheDocument())
     expect(screen.getByText('Assets')).toBeInTheDocument()
-    expect(screen.getByText('Rs 5,000.00')).toBeInTheDocument()
+    // The side is shown alongside the amount — Cash in Hand's normal side is Dr, and the trial
+    // balance mock below has it in the debit column, so this is its normal (not abnormal) case.
+    expect(screen.getByText('Rs 5,000.00 Dr')).toBeInTheDocument()
+  })
+
+  it('shows Cr, not Dr, for an abnormal balance — a credit on an asset must read as abnormal', async () => {
+    const fetchMock = fetch as ReturnType<typeof vi.fn>
+    fetchMock.mockImplementation((url: string) => {
+      if (url.startsWith('/api/accounts')) return Promise.resolve(jsonResponse(200, ACCOUNTS))
+      if (url.startsWith('/api/reports/trial-balance'))
+        return Promise.resolve(
+          jsonResponse(200, {
+            asOf: '2026-09-29',
+            // Cash in Hand overdrawn: net is a CREDIT, even though its normal side is debit.
+            lines: [
+              {
+                accountId: 'a1110',
+                code: '1110',
+                name: 'Cash in Hand',
+                type: 'ASSET',
+                debit: '0.0000',
+                credit: '1500.0000',
+              },
+            ],
+            totalDebit: '0.0000',
+            totalCredit: '1500.0000',
+          }),
+        )
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+
+    renderScreen()
+    await waitFor(() => expect(screen.getByText('Cash in Hand')).toBeInTheDocument())
+    expect(screen.getByText('Rs 1,500.00 Cr')).toBeInTheDocument()
+    expect(screen.queryByText('Rs 1,500.00 Dr')).not.toBeInTheDocument()
   })
 
   it('shows an em dash for an account with no activity in the trial balance', async () => {

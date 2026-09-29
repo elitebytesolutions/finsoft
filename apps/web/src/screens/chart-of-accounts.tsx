@@ -10,15 +10,13 @@
 import { useMemo } from 'react'
 import { RotateCw, ShieldAlert } from 'lucide-react'
 import { Badge, Banner, Button, PageHead, Table, moneyFromString } from '@finsoft/ui'
+import { Money } from '@finsoft/validation'
 import { useNavigate } from '@/lib/router'
 import { listAccounts, getTrialBalance } from '@/lib/api/accounting-client'
 import { useApiQuery } from '@/lib/api/use-api-query'
 import { buildAccountTree, flattenAccountTree } from '@/lib/accounting/account-tree'
+import { todayIso } from '@/lib/date/local-date'
 import type { AccountDto, TrialBalanceLine } from '@/lib/api/accounting-types'
-
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10)
-}
 
 interface ChartData {
   accounts: AccountDto[]
@@ -120,13 +118,21 @@ function ChartReady({ data }: { data: ChartData }) {
   )
 }
 
-function netBalance(line: TrialBalanceLine | undefined): string | null {
+/**
+ * The trial balance's own column-follows-sign-of-balance rule
+ * (ledger-and-trial-balance.md §3) collapsed into one "Balance" column with an explicit Dr/Cr
+ * side — an abnormal balance (a credit on an asset, say) must read as abnormal, never silently
+ * as if it were on the account's normal side. Decimal-string equality via `Money.isZero`, never
+ * `=== '0.0000'` (ADR-0011: a server-sent scale/representation change must not silently break
+ * this check).
+ */
+function netBalance(
+  line: TrialBalanceLine | undefined,
+): { amount: string; side: 'Dr' | 'Cr' } | null {
   if (!line) return null
-  // Same column-follows-sign-of-balance rule as the trial balance itself
-  // (ledger-and-trial-balance.md §3) — whichever of debit/credit is non-zero is the figure.
-  if (line.debit !== '0.0000') return line.debit
-  if (line.credit !== '0.0000') return line.credit
-  return '0.0000'
+  if (!Money.isZero(Money.from(line.debit))) return { amount: line.debit, side: 'Dr' }
+  if (!Money.isZero(Money.from(line.credit))) return { amount: line.credit, side: 'Cr' }
+  return null // exact zero — no side to show; rendered as an em dash, same as any nil money cell
 }
 
 function accountRow(
@@ -145,7 +151,7 @@ function accountRow(
       {account.kind === 'HEADER' ? 'Header' : 'Postable'}
     </Badge>,
     account.normalBalance === 'DEBIT' ? 'Dr' : 'Cr',
-    net === null ? '—' : moneyFromString(net, { zeroAsDash: true }),
+    net === null ? '—' : `${moneyFromString(net.amount)} ${net.side}`,
     <Badge tone={account.isActive ? 'good' : 'neutral'}>
       {account.isActive ? 'Active' : 'Inactive'}
     </Badge>,

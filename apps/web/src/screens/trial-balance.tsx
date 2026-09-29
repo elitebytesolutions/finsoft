@@ -8,7 +8,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { CalendarDays, RotateCw, Scale, ShieldAlert } from 'lucide-react'
 import { Banner, Button, PageHead, Kpi } from '@finsoft/ui'
 import { moneyFromString } from '@finsoft/ui'
+import { Money } from '@finsoft/validation'
 import { getTrialBalance } from '@/lib/api/accounting-client'
+import { todayIso } from '@/lib/date/local-date'
 import type { TrialBalanceResponse } from '@/lib/api/accounting-types'
 import { ApiError } from '@/lib/api/types'
 
@@ -17,12 +19,6 @@ type LoadState =
   | { status: 'error'; message: string }
   | { status: 'forbidden' }
   | { status: 'ready'; data: TrialBalanceResponse }
-
-function todayIso(): string {
-  // Display default only — the server is the actual authority on "today"
-  // (docs/posting-rules/periods.md §5: "the client's clock is never used").
-  return new Date().toISOString().slice(0, 10)
-}
 
 export function TrialBalance() {
   const [asOf, setAsOf] = useState(todayIso)
@@ -112,7 +108,10 @@ function TrialBalanceReady({ data }: { data: TrialBalanceResponse }) {
   // The server already asserts totalDebit === totalCredit before responding
   // (contract §4, Invariant 2) — this is a display check on what it sent
   // back, never a recomputation, and it never "corrects" a mismatch.
-  const balanced = data.totalDebit === data.totalCredit
+  // Money.equals, not `===` on the raw strings — two decimal strings can be numerically
+  // equal without being byte-identical (ADR-0011), and a byte comparison is the wrong
+  // question to ask of a money value even when the API happens to always emit one scale.
+  const balanced = Money.equals(Money.from(data.totalDebit), Money.from(data.totalCredit))
 
   if (data.lines.length === 0) {
     return (

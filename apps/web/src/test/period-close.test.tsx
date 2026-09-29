@@ -164,6 +164,34 @@ describe('PeriodClose', () => {
     await waitFor(() => expect(reopenBody).toEqual({ reason: 'Correcting an error' }))
   })
 
+  it('shows a clear, specific message when a non-Owner reopen attempt gets the server 403', async () => {
+    const fetchMock = fetch as ReturnType<typeof vi.fn>
+    fetchMock.mockImplementation((url: string) => {
+      if (url.endsWith('/reopen')) {
+        return Promise.resolve(
+          jsonResponse(403, {
+            statusCode: 403,
+            error: 'forbidden',
+            message: 'You do not have permission to do that.',
+          }),
+        )
+      }
+      return Promise.resolve(jsonResponse(200, PERIODS))
+    })
+
+    renderScreen()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Reopen' })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Reopen' }))
+    fireEvent.change(screen.getByLabelText(/^reason/i), { target: { value: 'Trying anyway' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Reopen period' }))
+
+    // Not the generic ApiError message — a clear, action-specific one naming who actually can.
+    await waitFor(() =>
+      expect(screen.getByText('Only the Owner can reopen a period.')).toBeInTheDocument(),
+    )
+    expect(screen.queryByText(/you do not have permission to do that/i)).not.toBeInTheDocument()
+  })
+
   it('shows the empty state when no periods exist', async () => {
     const fetchMock = fetch as ReturnType<typeof vi.fn>
     fetchMock.mockResolvedValueOnce(jsonResponse(200, { periods: [] }))
