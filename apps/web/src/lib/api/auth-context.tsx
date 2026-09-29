@@ -20,6 +20,7 @@ import { RotateCw, ShieldAlert } from 'lucide-react'
 import { Button } from '@finsoft/ui'
 import { usePathname, useNavigate } from '@/lib/router'
 import { logout as apiLogout, me } from './client'
+import { rawSearchParam, safeNextPath } from './safe-next-path'
 import { onForbidden } from './session'
 import { ApiError, type SessionTenant, type SessionUser } from './types'
 
@@ -155,11 +156,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // wrapped in a Suspense boundary (apps/web/src/lib/router.tsx), and AuthProvider sits
   // ABOVE app-frame.tsx's boundary, wrapping the entire application. This effect only
   // runs client-side already, so `window` is safe to read here.
+  //
+  // `next` is attacker-controlled (whoever sends the `/login?next=...` link), and this
+  // is the ONE place it is ever handed to the router — `safeNextPath` is what stands
+  // between a crafted `?next=https://evil.example` (or `//evil.example`, or a
+  // percent-encoded variant of either) and a real off-site navigation the instant this
+  // effect runs, on sign-in or on nothing more than a silent refresh finding a session
+  // still valid. See apps/web/src/lib/api/safe-next-path.ts.
   useEffect(() => {
     if (state.status !== 'authenticated' || pathname !== '/login') return
-    const next =
-      typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('next') : null
-    navigate(next || '/dashboard', { replace: true })
+    const rawNext =
+      typeof window !== 'undefined' ? rawSearchParam(window.location.search, 'next') : null
+    navigate(safeNextPath(rawNext), { replace: true })
   }, [state.status, pathname, navigate])
 
   const signOut = useCallback(async () => {
