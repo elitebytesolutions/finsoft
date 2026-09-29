@@ -112,3 +112,5 @@ The signed body is not edited; this note overrides it where the two differ.
    content bans still apply to it unchanged. Migration 014 is owned by `packages/permissions`.
    The M3-C checker implements this rule, with a passing fixture for a `packages/<name>` owner
    and a failing fixture for a directory that does not exist.
+
+Database/Security seat — 2026-09-29 — accepts point 2 (S4 owner widening).
