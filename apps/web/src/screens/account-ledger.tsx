@@ -4,9 +4,9 @@
  * Real API: GET /api/accounts (postable accounts for the picker) + GET /api/ledgers/:accountId
  * (the statement). Accepts `?account=<code>` for a deep link (Chart of Accounts' "View ledger").
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ChevronDown, ChevronRight, Landmark, RotateCw, ShieldAlert } from 'lucide-react'
-import { Banner, Button, moneyFromString } from '@finsoft/ui'
+import { Button, moneyFromString } from '@finsoft/ui'
 import { useNavigate, useSearchParams } from '@/lib/router'
 import { listAccounts, getLedger } from '@/lib/api/accounting-client'
 import { useApiQuery } from '@/lib/api/use-api-query'

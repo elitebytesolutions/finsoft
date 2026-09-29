@@ -5,7 +5,7 @@
  * REPORT/trial-balance@1 (docs/posting-rules/ledger-and-trial-balance.md §3).
  */
 import { useCallback, useEffect, useState } from 'react'
-import { CalendarDays, Download, RotateCw, Scale, ShieldAlert } from 'lucide-react'
+import { CalendarDays, RotateCw, Scale, ShieldAlert } from 'lucide-react'
 import { Banner, Button, PageHead, Kpi } from '@finsoft/ui'
 import { moneyFromString } from '@finsoft/ui'
 import { getTrialBalance } from '@/lib/api/accounting-client'

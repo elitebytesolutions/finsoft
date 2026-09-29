@@ -13,7 +13,7 @@ import { Banner, Button, PageHead, moneyFromString } from '@finsoft/ui'
 import { useNavigate } from '@/lib/router'
 import { listAccounts, getTrialBalance } from '@/lib/api/accounting-client'
 import { useApiQuery } from '@/lib/api/use-api-query'
-import { buildAccountTree, flattenAccountTree, type AccountTreeNode } from '@/lib/accounting/account-tree'
+import { buildAccountTree, flattenAccountTree } from '@/lib/accounting/account-tree'
 import type { AccountDto, TrialBalanceLine } from '@/lib/api/accounting-types'
 
 function todayIso(): string {
