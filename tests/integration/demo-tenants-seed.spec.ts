@@ -111,25 +111,85 @@ describe('tools/seed/demo-tenants.mjs', () => {
     expect(result.stdout).not.toContain(pinned)
   })
 
-  it('refuses NODE_ENV=production without --allow-staging', async () => {
-    await expect(runSeed({ NODE_ENV: 'production' })).rejects.toMatchObject({
-      code: 1,
-      stderr: expect.stringContaining('--allow-staging'),
+  describe('M1-X, Council S1: the production guard', () => {
+    it('refuses NODE_ENV=production without FINSOFT_ENVIRONMENT=staging', async () => {
+      await expect(
+        runSeed({ NODE_ENV: 'production', FINSOFT_ENVIRONMENT: undefined }),
+      ).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining('FINSOFT_ENVIRONMENT=staging'),
+      })
+    })
+
+    it('refuses an unset NODE_ENV the same way — it is not "development" or "test" either', async () => {
+      await expect(
+        runSeed({ NODE_ENV: undefined, FINSOFT_ENVIRONMENT: undefined }),
+      ).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining('FINSOFT_ENVIRONMENT=staging'),
+      })
+    })
+
+    it('refuses NODE_ENV=production + FINSOFT_ENVIRONMENT=staging when the database has non-demo tenants', async () => {
+      // TEST_DATABASE_URL is the shared integration-suite database, which
+      // certainly has tenants outside {BHATTI1, BHATTI2} by this point in
+      // the suite — exactly the case the database-level check exists to
+      // catch, and neither NODE_ENV nor FINSOFT_ENVIRONMENT alone (nor
+      // together) is enough to bypass it.
+      await expect(
+        runSeed({ NODE_ENV: 'production', FINSOFT_ENVIRONMENT: 'staging' }),
+      ).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining('outside the demo set'),
+      })
     })
   })
 
-  it('refuses a production-shaped database name even with --allow-staging', async () => {
-    const url = new URL(process.env['TEST_DATABASE_URL'] as string)
-    url.pathname = '/finsoft_production'
-
-    await expect(
-      execFileAsync(process.execPath, [SCRIPT, '--allow-staging'], {
-        env: { ...process.env, DATABASE_URL: url.toString(), NODE_ENV: 'production' },
-        cwd: REPO_ROOT,
-      }),
-    ).rejects.toMatchObject({
-      code: 1,
-      stderr: expect.stringContaining('looks like a production database name'),
+  describe('M1-X, Council S2: passwords are never printed', () => {
+    it('refuses --credentials-out pointing inside the repository', async () => {
+      // The path check runs before any database connection is opened, so
+      // this is meaningful regardless of the shared TEST database's state.
+      await expect(
+        execFileAsync(
+          process.execPath,
+          [SCRIPT, '--credentials-out', resolve(REPO_ROOT, 'docs/should-not-write-here.txt')],
+          {
+            env: { ...process.env, DATABASE_URL: process.env['TEST_DATABASE_URL'] },
+            cwd: REPO_ROOT,
+          },
+        ),
+      ).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining('resolves inside this repository'),
+      })
     })
+
+    /*
+     * DECISION, recorded rather than silently skipped: a "passwords are
+     * generated and written to a file, never stdout" case is NOT exercised
+     * here end-to-end. Both demo tenants already exist in the shared TEST
+     * database (this file's own idempotency test, and every prior run of
+     * it), so a fresh run generates no passwords to write — and this
+     * repository's own rule-4 discipline (no hard delete of an operational
+     * record, including in a test fixture) means this test cannot
+     * manufacture that state by deleting the existing users first.
+     *
+     * Verified instead, by manual execution against a genuinely empty local
+     * database during this fix's own development: both tenants created,
+     * credentials written to an out-of-repo file, nothing printed to stdout
+     * but the file path. The pinned-password test above covers the one path
+     * this database's current state CAN still exercise fresh: a supplied
+     * password is never printed.
+     *
+     * OBSERVED, not fixed here: the file's exact 0600 mode was NOT verified
+     * on this development host. It is Windows, and Node's chmodSync/the
+     * writeFileSync `mode` option do not produce real POSIX permission bits
+     * there (measured: a file written with `{ mode: 0o600 }` and then
+     * `chmodSync(path, 0o600)` reports back `666`) — a Windows-only
+     * limitation of the host, not of the code, since the actual deployment
+     * target (the staging host, inside the API image) is Linux. A CI job
+     * that actually runs this script on Linux is where that mode should be
+     * asserted; this suite runs on whatever host the agent is given.
+     */
   })
 })

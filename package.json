@@ -19,7 +19,7 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "depcruise": "depcruise apps packages modules --config .dependency-cruiser.cjs",
+    "depcruise": "depcruise apps packages modules tools --config .dependency-cruiser.cjs",
     "verify:controls": "node tools/verify-controls.mjs",
     "verify": "npm run typecheck && npm run lint && npm run depcruise && npm run db:migrate:verify && npm run format:check && npm test",
     "db:up": "docker compose up -d",

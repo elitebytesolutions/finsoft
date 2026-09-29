@@ -203,8 +203,12 @@ module.exports = {
       severity: 'error',
       comment:
         'ADR-0013: connection ownership — Pool construction and the pg driver live in ' +
-        'packages/database and nowhere else.',
-      from: { pathNot: '^packages/database/' },
+        'packages/database and nowhere else. tools/db/outbox-plan.mjs is the one named ' +
+        'exception (M1-X, Council S3 widened depcruise to tools/): a standalone benchmarking ' +
+        'script, reviewed and already documented in its own header as writing to the ' +
+        'disposable TEST database only, run manually via npm run db:outbox-plan — never part ' +
+        'of the running application or a package another module imports.',
+      from: { pathNot: ['^packages/database/', '^tools/db/outbox-plan\\.mjs$'] },
       to: { path: '^node_modules/(pg|pg-types|pg-pool)/' },
     },
     {
