@@ -92,3 +92,17 @@ Two alternatives were rejected. **Controllers in the module, built by SWC**: thi
 |---|---|
 | **Architecture seat** | ✅ **APPROVED, 2026-09-29.** Author. Checked against ADR-0001, 0005, 0013, 0023 (A1, A4), 0026 and 0027, ARCHITECTURE §2 and §5, `.dependency-cruiser.cjs`, `eslint.config.mjs`, `risk-tiers.json`, `Dockerfile.api` and `apps/api/src/app.module.ts` on `develop` 6f728c8. C1–C12 bind M3-C's first PR. The M3-P lane repeats C6's adapter ban for `apps/api/src/receivables/**` and adds C8's receivables block. |
 | **Database/Security seat** | ✅ **APPROVED WITH CONDITIONS S1–S5, 2026-09-29.** Reviewed statements 6, 8 and 9, and C8 and C10, against `eslint.config.mjs`, `.dependency-cruiser.cjs` (`kysely-is-allowlisted`), `packages/database` exports, `rls.spec.ts` and `schema.spec.ts` on 69f065c. The statements hold: RLS stays forced, `TenantTx` is the only path in, and there is no `withGlobal` and no pool. As drafted, the mechanisms would have reopened the M1-X import bans (S1) and allowed a cross-tenant foreign-key write (S3). S1–S5 close both. |
+
+---
+
+**Amendment, 2026-09-29** (Council review of M2-B; Architecture + Database/Security seats — the
+Architecture seat's countersignature is pending, see docs/BOARD.md): statement 9's migration
+numbers are corrected. Migration **014** was taken by the M2-B Council ruling's permission backfill
+(`database/migrations/014_add_account_and_period_permissions.sql`, `-- Owner: packages/permissions`
+— not a `modules/<name>` migration, so it did not wait for M3-C). M3's three reserved migrations
+move up by one: **015** `customers` (M3-C), **016** and **017** (M3-P). Every other reference to
+014/015/016 in this document's signed body (statement 9, C10) describes the RULE — "the module
+migration after the kernel's own chain, module migrations numbered in sequence" — not the specific
+numbers, and needs no further change. The numbers themselves are corrected wherever they appear in
+[docs/design/M3/README.md](../design/M3/README.md) §2, [docs/design/M3/open-questions.md](../design/M3/open-questions.md)
+and [docs/IMPLEMENTATION.md](../IMPLEMENTATION.md).

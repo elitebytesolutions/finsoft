@@ -389,7 +389,7 @@ Working on **staging, for two tenants**. No sales tax, no stock, MFA deferred ([
 |---|---|
 | **M1 — Minimum platform** | Auth including tenant-code login and refresh rotation · real `TenantGuard` · RBAC migration 008 with the MVP permissions · `audit_log` migration 009 + chain verifier per ADR-0020 · web login page + API client · staging HTTPS on `31-220-74-159.sslip.io` · the W1-006 exit suite |
 | **M2 — Accounting core** | Posting-rules spec including the standard COA · migrations 010 `accounts`, 011 `fiscal_periods`, 012 `journal_entries`/`journal_lines`, 013 `document_sequences` · `postingEngine` · account ledger + trial balance · invariants 1, 2, 4, 5, 6, 8 enforced |
-| **M3 — Customers, service invoice, receipts** | Migrations 014–016 · AR subledger · invariant 9, AR half |
+| **M3 — Customers, service invoice, receipts** | Migrations 015–017 (renumbered 2026-09-29; 014 taken by the M2-B permission backfill — [M3 README](design/M3/README.md) §2) · AR subledger · invariant 9, AR half |
 | **M4 — The journey, on real screens** | API-backed screens replacing the mocks for the journey · a Playwright journey passing for both tenants on staging · **Product Owner acceptance demo** |
 
 - **Each increment must be demoable.** The Product Owner accepts workflows, not database details.

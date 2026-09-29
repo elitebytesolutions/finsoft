@@ -1,5 +1,19 @@
 -- 014_add_account_and_period_permissions.sql
 --
+-- Owner: packages/permissions
+--
+-- ADR-0028 §9's header convention ("A module migration names its owner in a
+-- header, `-- Owner: modules/<name>`") extended to this migration's actual
+-- owner: this is not a modules/<name> migration — role_permissions is
+-- platform/RBAC master data (migration 008), and packages/permissions is
+-- where ARCHITECTURE §8 already names the catalogue's single source of
+-- truth ("A permission that is not in the catalogue does not exist"). The
+-- Owner line exists for the same reason ADR-0028 wants it on a module
+-- migration: so a reader (and, once ADR-0028's C10 test exists, a checker)
+-- can tell which seat's review this SQL belongs to without reading the
+-- prose. See docs/adr/ADR-0028-module-packaging-and-runtime.md §9's
+-- 2026-09-29 amendment note.
+--
 -- Council ruling on M2-B (Accounting + Security + Architecture seats,
 -- 2026-09-29, docs/design/M2/api-contract.md §6/§9): adds four permission
 -- codes to the catalogue (packages/permissions/src/catalog.ts) —
@@ -20,12 +34,14 @@
 -- writes it directly, the same way 008 itself does, and the same way
 -- seedSystemRoles()/insertSeededRoles() do at ordinary tenant provisioning.
 --
--- NO audit_log row is written here. audit_log's hash chain (ADR-0020) is
--- built by the application layer from a real actor, request id and previous-
--- hash read under RLS; a migration running as finsoft_migration (BYPASSRLS,
--- no acting user, no request) cannot supply any of that without inventing a
--- synthetic actor, which would misrepresent who made the change. The grants
--- below are themselves the auditable record: any operator can read
+-- NO audit_log row is written here — Security seat ruling, M2-B Council
+-- review, 2026-09-29: "write no audit_log rows from SQL, because that would
+-- break the hash chain." audit_log's hash chain (ADR-0020) is built by the
+-- application layer from a real actor, request id and previous-hash read
+-- under RLS; a migration running as finsoft_migration (BYPASSRLS, no acting
+-- user, no request) cannot supply any of that without inventing a synthetic
+-- actor, which would misrepresent who made the change. The grants below are
+-- themselves the auditable record: any operator can read
 -- role_permissions.created_at/created_by and see exactly when and, by
 -- authorship, in whose provisioning lineage each grant was added.
 --

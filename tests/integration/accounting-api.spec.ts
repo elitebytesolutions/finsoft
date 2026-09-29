@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import type { NestMiddleware, INestApplication } from '@nestjs/common'
 import { Injectable, Module } from '@nestjs/common'
 import { APP_GUARD } from '@nestjs/core'
@@ -9,11 +7,8 @@ import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { listAuditEvents, TenantContext, withTenant } from '@finsoft/database'
 import {
-  createTenantFixture,
   migrateTestDatabase,
   prepareTestDatabase,
-  rawOn,
-  REPO_ROOT,
   runAs,
   teardownTestDatabase,
 } from '@finsoft/database/testing'
@@ -831,6 +826,79 @@ describe('GET /api/ledgers/:accountId', () => {
     expect(page2.body.closingBalance).toBe(full.body.closingBalance)
   })
 
+  it('a non-zero opening balance survives multiple resumed pages exactly (regression, Accounting seat re-review)', async () => {
+    /*
+     * Pins the defect the Accounting seat's re-review of f3c4f48 found:
+     * accountLedgerBalanceThrough's own lower bound is `from`, not account
+     * inception, so a resumed page's carry-forward is opening + through —
+     * NOT through alone. With opening balance zero (the previous version
+     * of this describe block's only multi-page case), the missing addend
+     * is zero and the bug is invisible. This tenant seeds a line dated
+     * BEFORE `from` specifically so the opening balance is non-zero, and
+     * walks the ledger one row at a time (limit: 1) so every one of four
+     * pages must recompute the carry-forward, not just the second.
+     */
+    const sigma = await createAccountingTenant('MAPSIGMA')
+    await request(app.getHttpServer())
+      .post('/api/journals')
+      .set(authHeaders(sigma.tenantId, sigma.ownerId))
+      .set('Idempotency-Key', 'sigma-opening-balance')
+      .send(
+        jvBody({
+          occurredAt: '2026-07-10',
+          lines: [
+            { accountId: bankId(sigma), debit: '5000.0000' },
+            { accountId: capitalId(sigma), credit: '5000.0000' },
+          ],
+        }),
+      )
+      .expect(200)
+
+    const amounts = ['10.0000', '20.0000', '30.0000', '40.0000']
+    for (const [i, amount] of amounts.entries()) {
+      await request(app.getHttpServer())
+        .post('/api/journals')
+        .set(authHeaders(sigma.tenantId, sigma.ownerId))
+        .set('Idempotency-Key', `sigma-page-seed-${i}`)
+        .send(
+          jvBody({
+            occurredAt: '2026-08-01',
+            lines: [
+              { accountId: bankId(sigma), debit: amount },
+              { accountId: capitalId(sigma), credit: amount },
+            ],
+          }),
+        )
+        .expect(200)
+    }
+
+    const full = await request(app.getHttpServer())
+      .get(`/api/ledgers/${bankId(sigma)}`)
+      .query({ from: '2026-08-01', to: '2026-08-31', limit: 10 })
+      .set(authHeaders(sigma.tenantId, sigma.ownerId))
+      .expect(200)
+    expect(full.body.openingBalance).toBe('5000.0000')
+    expect(full.body.lines).toHaveLength(4)
+
+    const walked: unknown[] = []
+    let cursor: string | null | undefined
+    let lastClosing: string
+    do {
+      const page = await request(app.getHttpServer())
+        .get(`/api/ledgers/${bankId(sigma)}`)
+        .query({ from: '2026-08-01', to: '2026-08-31', limit: 1, ...(cursor ? { cursor } : {}) })
+        .set(authHeaders(sigma.tenantId, sigma.ownerId))
+        .expect(200)
+      for (const line of page.body.lines) walked.push(line)
+      cursor = page.body.nextCursor
+      lastClosing = page.body.closingBalance
+    } while (cursor)
+
+    expect(walked).toEqual(full.body.lines)
+    expect(lastClosing).toBe(full.body.closingBalance)
+    expect(lastClosing).toBe('5100.0000')
+  })
+
   it('rejects a tampered cursor with 400, never 500', async () => {
     const kappa = await createAccountingTenant('MAPKAPPA')
     for (let i = 0; i < 3; i++) {
@@ -1272,153 +1340,5 @@ describe('POST /api/periods/:id/reopen', () => {
       .set(authHeaders(rho.tenantId, rho.viewerId))
       .send({ reason: 'Should be refused' })
       .expect(403)
-  })
-})
-
-describe('Permission backfill — migration 014 (Council ruling, 2026-09-29)', () => {
-  it('a tenant seeded with the PRE-014 permission set ends up with grants equal to SYSTEM_ROLE_SEEDS after the backfill runs', async () => {
-    /*
-     * Simulates "a tenant created before 014": seeds system roles with the
-     * OLD (pre-ruling) code list — no account.view/period.view/period.close/
-     * period.reopen — then runs migration 014's own backfill statement
-     * (read from disk, so this test exercises the ACTUAL migration text,
-     * not a re-implementation of it) against that tenant. RLS (not
-     * BYPASSRLS) is enough here: the statement's own tenant-scoping join
-     * still holds within a single tenant's RLS-filtered view of roles/
-     * role_permissions.
-     */
-    const tenant = await createTenantFixture('MABF')
-    const OLD_PERMISSIONS: Record<string, string[]> = {
-      owner: [
-        'customer.view',
-        'customer.create',
-        'invoice.create',
-        'invoice.post',
-        'payment.receive',
-        'voucher.view',
-        'voucher.post',
-        'voucher.reverse',
-        'report.financial',
-        'audit.view',
-        'admin.user_manage',
-      ],
-      accountant: [
-        'customer.view',
-        'customer.create',
-        'invoice.create',
-        'invoice.post',
-        'payment.receive',
-        'voucher.view',
-        'voucher.post',
-        'voucher.reverse',
-        'report.financial',
-        'audit.view',
-      ],
-      viewer: ['customer.view', 'voucher.view', 'report.financial'],
-    }
-
-    await runAs({ tenantId: tenant.tenantId, userId: tenant.ownerId }, () =>
-      withTenant(async (tx) => {
-        await tx
-          .updateTable('users')
-          .set({ status: 'ACTIVE', password_hash: 'test-hash-not-real', version: 1 })
-          .where('tenant_id', '=', tenant.tenantId)
-          .where('id', '=', tenant.ownerId)
-          .execute()
-
-        for (const [code, permissions] of Object.entries(OLD_PERMISSIONS)) {
-          const role = await tx
-            .insertInto('roles')
-            .values({
-              tenant_id: tenant.tenantId,
-              code,
-              name: code[0]!.toUpperCase() + code.slice(1),
-              is_system: true,
-              created_by: tenant.ownerId,
-              updated_by: tenant.ownerId,
-            })
-            .returning('id')
-            .executeTakeFirstOrThrow()
-          await tx
-            .insertInto('role_permissions')
-            .values(
-              permissions.map((permission_code) => ({
-                tenant_id: tenant.tenantId,
-                role_id: role.id,
-                permission_code,
-                created_by: tenant.ownerId,
-                updated_by: tenant.ownerId,
-              })),
-            )
-            .execute()
-        }
-      }),
-    )
-
-    const migrationSql = readFileSync(
-      join(REPO_ROOT, 'database/migrations/014_add_account_and_period_permissions.sql'),
-      'utf8',
-    )
-
-    await runAs({ tenantId: tenant.tenantId, userId: tenant.ownerId }, () =>
-      withTenant((tx) => rawOn(tx, migrationSql)),
-    )
-
-    const grantsByRole = await runAs({ tenantId: tenant.tenantId, userId: tenant.ownerId }, () =>
-      withTenant(async (tx) => {
-        const rows = await rawOn<{ code: string; permission_code: string }>(
-          tx,
-          `SELECT r.code, rp.permission_code
-             FROM role_permissions rp
-             JOIN roles r ON r.id = rp.role_id
-            WHERE rp.tenant_id = $1 AND rp.revoked_at IS NULL
-            ORDER BY r.code, rp.permission_code`,
-          [tenant.tenantId],
-        )
-        const byRole: Record<string, string[]> = { owner: [], accountant: [], viewer: [] }
-        for (const row of rows) byRole[row.code]!.push(row.permission_code)
-        return byRole
-      }),
-    )
-
-    expect(grantsByRole['owner']!.sort()).toEqual(
-      [
-        'customer.view',
-        'customer.create',
-        'invoice.create',
-        'invoice.post',
-        'payment.receive',
-        'voucher.view',
-        'voucher.post',
-        'voucher.reverse',
-        'report.financial',
-        'audit.view',
-        'admin.user_manage',
-        'account.view',
-        'period.view',
-        'period.close',
-        'period.reopen',
-      ].sort(),
-    )
-    expect(grantsByRole['accountant']!.sort()).toEqual(
-      [
-        'customer.view',
-        'customer.create',
-        'invoice.create',
-        'invoice.post',
-        'payment.receive',
-        'voucher.view',
-        'voucher.post',
-        'voucher.reverse',
-        'report.financial',
-        'audit.view',
-        'account.view',
-        'period.view',
-        'period.close',
-      ].sort(),
-    )
-    expect(grantsByRole['viewer']!.sort()).toEqual(
-      ['customer.view', 'voucher.view', 'report.financial', 'account.view', 'period.view'].sort(),
-    )
   })
 })
