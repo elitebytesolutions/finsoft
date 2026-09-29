@@ -1,8 +1,8 @@
 import { IMPLEMENTED_EVENTS } from '@finsoft/accounting-kernel'
 import { closeDatabase } from '@finsoft/database'
 import { migrateTestDatabase, prepareTestDatabase } from '@finsoft/database/testing'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { loadScenario, runPostingScenario } from './golden-posting-runner.ts'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { loadScenario, runPostingScenario, type PostingScenario } from './golden-posting-runner.ts'
 import { loadReceivablesRealPort, receivablesModuleFileExists } from './receivables-real-port.ts'
 
 /*
@@ -37,6 +37,54 @@ beforeAll(async () => {
 afterAll(async () => {
   await closeDatabase()
 })
+
+/**
+ * `modules/receivables`' real use cases import the PRODUCTION kernel
+ * singletons (`postingEngine`, `reversalEngine`, ADR-0028 statement 7) —
+ * unlike `golden-posting-runner.ts`'s own JV path and the fake port, which
+ * build a `createPostingEngine(fixedClock(...))` explicitly. Those
+ * singletons use `systemClock` (`new Date()`), with NO caller-side way to
+ * inject a test clock (found running P11 against the real module, M3-P
+ * @efb7e3f: `currentOpenPeriod` resolved null because the kernel computed
+ * "today" as the ACTUAL wall-clock date, not the scenario's fixed
+ * `fixture.today` — the fixture's closed periods did not match the real
+ * calendar's open one). Faking `Date` ALONE (not `setTimeout`/timers,
+ * which real async I/O — the database driver included — depends on) for
+ * exactly the scenario's own `fixture.today` is the fix: it is real
+ * standard `Date`, reachable this way, with nothing kernel- or
+ * module-side to change.
+ */
+async function runAtScenarioClock(
+  scenario: PostingScenario,
+  fn: () => Promise<void>,
+): Promise<void> {
+  /*
+   * `createTenantFixture`'s own uniqueness (packages/database/src/testing/
+   * harness.ts's `unique()`) is `Date.now().toString(36) + Math.random()...`,
+   * truncated hard by the tenant code's 16-character limit for a label as
+   * long as "GOLDEN_A"/"GOLDEN_B" — found running this file repeatedly
+   * against the real module (M3-P @efb7e3f): with `Date` faked to the
+   * SAME fixed instant for every scenario sharing a `fixture.today`, most
+   * of `unique()`'s entropy collapses to whatever survives of
+   * `Math.random()`'s slice, and `tenants_code_key` started colliding
+   * across repeated runs. A little REAL-clock jitter, added to the fixed
+   * instant, keeps `Date.now()` distinct per run without moving the
+   * scenario off its own calendar day (well inside Asia/Karachi's UTC+5,
+   * nowhere near midnight at T12:00). Not a fix to harness.ts (outside
+   * this lane's ALLOWED paths) — reported as a real finding in the M3-Q
+   * report; this is this file's own affordance for it.
+   */
+  const jitterMs = Date.now() % 60_000
+  vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true })
+  vi.setSystemTime(
+    new Date(new Date(`${scenario.fixture.today}T12:00:00.000Z`).getTime() + jitterMs),
+  )
+  try {
+    await fn()
+  } finally {
+    vi.useRealTimers()
+  }
+}
 
 const M3_SCENARIOS: readonly { readonly file: string; readonly title: string }[] = [
   { file: 'posting-p04-service-invoice.json', title: 'P04 — service invoice' },
@@ -105,8 +153,23 @@ describe('M3-P readiness gate for P04-P12', () => {
       return
     }
 
+    /*
+     * A FRESH port per scenario, not the one shared `port` above (found
+     * running the real module, M3-P @efb7e3f): `loadReceivablesRealPort()`
+     * builds a port with its OWN document-ref -> id map
+     * (receivables-real-port.ts), and every M3 golden file reuses the same
+     * refs ("INV-A1", "RCT-A1", ...) — a shared port across scenarios
+     * resolves a later scenario's "INV-A1" to an EARLIER scenario's
+     * (different-tenant) invoice id. The availability probe above still
+     * runs once; only the port each scenario actually posts through is
+     * scenario-scoped.
+     */
     for (const { file } of M3_SCENARIOS) {
-      await runPostingScenario(loadScenario(file), { receivables: port })
+      const scenario = loadScenario(file)
+      const scenarioPort = await loadReceivablesRealPort()
+      await runAtScenarioClock(scenario, () =>
+        runPostingScenario(scenario, { receivables: scenarioPort! }),
+      )
     }
   }, 180_000)
 })

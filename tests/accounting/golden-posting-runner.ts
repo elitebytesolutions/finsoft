@@ -126,6 +126,7 @@ const STEP_INPUT_KEYS = new Set([
   'step',
   'do',
   '$comment',
+  'tenant',
   'event',
   'idempotencyKey',
   'occurredAt',
@@ -213,8 +214,20 @@ export async function runPostingScenario(
   options: RunPostingScenarioOptions = {},
 ): Promise<void> {
   const byAlias = await setUpTenants(scenario)
-  const acting = byAlias.get(scenario.fixture.actingTenant ?? scenario.fixture.tenants[0]!)!
-  const tenantId = acting.fixture.tenantId
+  /*
+   * `let`, not `const` (P09 finding, running against the real
+   * modules/receivables, M3-P @efb7e3f): P09 is the one golden file with a
+   * per-step `tenant` field (GOLDEN_A / GOLDEN_B), proving tenant
+   * isolation inside ONE scenario run. Every function below that reads
+   * `acting`/`tenantId` — `act`, `asActing`, `checkTrialBalance`,
+   * `checkAfterCounts`, the whole step loop — is defined ONCE, outside the
+   * loop, but reads these by CLOSURE: a `let` reassigned at the top of
+   * each iteration (below, "a step may name its own tenant") is visible to
+   * all of them at CALL time, which is what makes this a small change
+   * rather than threading a tenant parameter through every function here.
+   */
+  let acting = byAlias.get(scenario.fixture.actingTenant ?? scenario.fixture.tenants[0]!)!
+  let tenantId = acting.fixture.tenantId
 
   // The fixture's `today`, at noon UTC — 17:00 in Asia/Karachi, the same calendar day.
   const clock = fixedClock(`${scenario.fixture.today}T12:00:00.000Z`)
@@ -396,15 +409,22 @@ export async function runPostingScenario(
   }
 
   /** A `PostingError`, or a duck-typed equivalent (`CustomerError` — modules/customers/domain/errors.ts — carries the same `.code`/`.details` shape but is a different class). */
+  /**
+   * `PostingError`/`CustomerError`/`ReceivablesError` all carry `.details`
+   * (defaulted to `{}`); `CustomerDirectoryError`
+   * (modules/customers/application/published.ts) carries ONLY `.code` —
+   * found running P12 against the real modules/receivables (M3-P
+   * @efb7e3f): a bare rethrow here for that class was an uncaught crash,
+   * not a REJECTED outcome. `.details` is therefore OPTIONAL on the duck
+   * type, defaulted to `{}` by `checkRejection` below, not required by it.
+   */
   function isDomainError(
     error: unknown,
-  ): error is { code: string; message: string; details: Record<string, unknown> } {
-    return (
-      error instanceof Error &&
-      typeof (error as { code?: unknown }).code === 'string' &&
-      typeof (error as { details?: unknown }).details === 'object' &&
-      (error as { details?: unknown }).details !== null
-    )
+  ): error is { code: string; message: string; details?: Record<string, unknown> } {
+    if (!(error instanceof Error)) return false
+    if (typeof (error as { code?: unknown }).code !== 'string') return false
+    const details = (error as { details?: unknown }).details
+    return details === undefined || (typeof details === 'object' && details !== null)
   }
 
   function checkRejection(where: string, error: unknown, exp: Expect): void {
@@ -414,9 +434,10 @@ export async function runPostingScenario(
     )
     expect(error.code, `${where}: error code`).toBe(exp.error)
     if (exp.errorDetail) {
+      const details = error.details ?? {}
       for (const [key, value] of Object.entries(exp.errorDetail as Record<string, unknown>)) {
-        expect(key in error.details, `${where}: error carries detail "${key}"`).toBe(true)
-        expect(error.details[key], `${where}: errorDetail.${key}`).toEqual(value)
+        expect(key in details, `${where}: error carries detail "${key}"`).toBe(true)
+        expect(details[key], `${where}: errorDetail.${key}`).toEqual(value)
       }
     }
   }
@@ -533,6 +554,16 @@ export async function runPostingScenario(
     const where = `${scenario.id} step ${String(step.step)}`
     const verb = step.do as string
     const isDocumentPost = verb === 'post' && DOCUMENT_EVENTS.has(step.event as string)
+
+    // P09: a step may name its own tenant (`"tenant": "GOLDEN_B"`),
+    // proving isolation inside one scenario run. See the `let acting`
+    // comment above for why reassigning here is enough.
+    if (step.tenant !== undefined) {
+      const handle = byAlias.get(step.tenant as string)
+      if (!handle) throw new Error(`${where}: unknown tenant "${String(step.tenant)}".`)
+      acting = handle
+      tenantId = handle.fixture.tenantId
+    }
 
     if (isDocumentPost) {
       const exp = step.expect as Expect
@@ -914,6 +945,7 @@ export async function runPostingScenario(
         'step',
         'do',
         '$comment',
+        'tenant',
         'trialBalance',
         'trialBalanceAfter',
         'trialBalanceMidRange',
