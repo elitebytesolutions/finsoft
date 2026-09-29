@@ -21,11 +21,6 @@ import {
  * `DATABASE_URL`-pointed pool (not TEST_DATABASE_URL) because playwright.config.ts spawns the
  * API as its own OS process reading the same `.env` — a fixture written into an isolated
  * `_test` cluster from this process would be invisible to it.
- *
- * `Post a voucher` currently has NO confirm-before-post step in the shipped screen (unlike
- * Reverse, which does) — a simplification under this lane's time constraints, reported as
- * BLOCKED/DECISIONS in the M2-S delivery report. This spec does not assert a confirm dialog on
- * post for that reason; it does assert one on reverse, which the screen actually has.
  */
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -95,6 +90,12 @@ test.describe('M2 accounting journey (real API, real tenant)', () => {
     await expect(postButton).toBeEnabled()
     await postButton.click()
 
+    // Confirm-before-post dialog (voucher-new.md): names the date, totals and line count, and
+    // requires an explicit second click — opening it must not itself have posted anything.
+    const confirmDialog = page.getByRole('dialog', { name: /post voucher/i })
+    await expect(confirmDialog.getByText('Rs 75,000.00').first()).toBeVisible()
+    await confirmDialog.getByRole('button', { name: /post voucher/i }).click()
+
     await expect(page).toHaveURL(/\/vouchers\/.+/, { timeout: 15_000 })
     // Next's client-side transition can land the URL a beat before the new route's own tree
     // replaces the previous page's — wait for the heading to actually be the entry number
@@ -146,6 +147,10 @@ test.describe('M2 accounting journey (real API, real tenant)', () => {
     await viewerPage.getByLabel('Account line 2').selectOption({ label: "Owner's Capital (3100)" })
     await viewerPage.getByLabel('Credit line 2').fill('1')
     await viewerPage.getByRole('button', { name: /post voucher/i }).click()
+    await viewerPage
+      .getByRole('dialog', { name: /post voucher/i })
+      .getByRole('button', { name: /post voucher/i })
+      .click()
     // No real per-user permission list reaches the client yet (M2-S page docs' shared note) —
     // the server's 403 is the real gate, and apps/web/src/lib/api/client.ts's FIXED, product-
     // wide contract for a 403 from any apiFetch call is a redirect to /unauthorized (not an

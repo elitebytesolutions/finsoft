@@ -329,10 +329,20 @@ function VoucherFormReady({ accounts }: { accounts: AccountDto[] }) {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [formError, setFormError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  // One key per form INSTANCE (useIdempotencyKey's own contract), not per attempt: opening the
+  // confirm dialog and cancelling it, then clicking Post again, is still the same logical
+  // submission — `reset()` below is called only after a successful post, never on cancel, so a
+  // cancel-then-post reuses this exact key and the server's replay/idempotency guarantee
+  // (journal-voucher.md §7) still covers a double-post from this one form.
   const { key, reset } = useIdempotencyKey()
 
   const totals = useMemo(
     () => computeVoucherTotals(lines.map((l) => ({ debit: l.debit, credit: l.credit }))),
+    [lines],
+  )
+  const lineCount = useMemo(
+    () => lines.filter((l) => l.accountId && (l.debit || l.credit)).length,
     [lines],
   )
 
@@ -343,9 +353,14 @@ function VoucherFormReady({ accounts }: { accounts: AccountDto[] }) {
 
   const canSubmit = totals.balanced && narration.trim().length > 0 && !submitting
 
-  const submit = async (e: FormEvent) => {
+  // Opens the confirm dialog — posting itself happens only from there, in doPost below.
+  const requestSubmit = (e: FormEvent) => {
     e.preventDefault()
     if (!canSubmit) return
+    setConfirmOpen(true)
+  }
+
+  const doPost = async () => {
     setSubmitting(true)
     setFormError(null)
     setFieldErrors({})
@@ -368,6 +383,7 @@ function VoucherFormReady({ accounts }: { accounts: AccountDto[] }) {
       reset()
       navigate(`/vouchers/${result.id}`)
     } catch (err) {
+      setConfirmOpen(false)
       if (err instanceof ApiError) {
         const code = err.serverCode
         if (code === 'jv_unbalanced') {
@@ -395,150 +411,214 @@ function VoucherFormReady({ accounts }: { accounts: AccountDto[] }) {
   }
 
   return (
-    <form className="vn-page" onSubmit={submit} noValidate>
-      <PageHead
-        eyebrow="Accounting / Vouchers"
-        title="New Journal Voucher"
-        description="Post a balanced journal entry."
-      />
+    <>
+      <form className="vn-page" onSubmit={requestSubmit} noValidate>
+        <PageHead
+          eyebrow="Accounting / Vouchers"
+          title="New Journal Voucher"
+          description="Post a balanced journal entry."
+        />
 
-      {formError && <Banner tone="danger">{formError}</Banner>}
+        {formError && <Banner tone="danger">{formError}</Banner>}
 
-      <section className="vn-card">
-        <div className="vn-grid4">
-          <Field label="Voucher date" htmlFor="jv-date" required error={fieldErrors.date}>
-            <input
-              id="jv-date"
-              type="date"
-              value={date}
-              max={todayIso()}
-              onChange={(e) => setDate(e.target.value)}
-            />
+        <section className="vn-card">
+          <div className="vn-grid4">
+            <Field label="Voucher date" htmlFor="jv-date" required error={fieldErrors.date}>
+              <input
+                id="jv-date"
+                type="date"
+                value={date}
+                max={todayIso()}
+                onChange={(e) => setDate(e.target.value)}
+              />
+            </Field>
+            <Field label="Reference" htmlFor="jv-reference" helper="Optional, up to 100 characters">
+              <TextInput id="jv-reference" value={reference} onChange={setReference} />
+            </Field>
+          </div>
+          <Field label="Narration" htmlFor="jv-narration" required error={fieldErrors.narration}>
+            <TextInput id="jv-narration" value={narration} onChange={setNarration} required />
           </Field>
-          <Field label="Reference" htmlFor="jv-reference" helper="Optional, up to 100 characters">
-            <TextInput id="jv-reference" value={reference} onChange={setReference} />
-          </Field>
-        </div>
-        <Field label="Narration" htmlFor="jv-narration" required error={fieldErrors.narration}>
-          <TextInput id="jv-narration" value={narration} onChange={setNarration} required />
-        </Field>
-      </section>
+        </section>
 
-      <section className="vn-card">
-        <div className="vn-card-head">
-          <h2>Voucher Entries</h2>
-          <button type="button" className="vn-btn solid" onClick={addLine}>
-            <Plus /> Add line
-          </button>
-        </div>
-        <div className="vn-table-wrap">
-          <table className="vn-table">
-            <thead>
-              <tr>
-                <th className="n">#</th>
-                <th>Account</th>
-                <th>Memo</th>
-                <th className="num">Debit (PKR)</th>
-                <th className="num">Credit (PKR)</th>
-                <th className="act">Remove</th>
-              </tr>
-            </thead>
-            <tbody>
-              {lines.map((line, i) => (
-                <tr key={i}>
-                  <td className="n">{i + 1}</td>
-                  <td>
-                    <select
-                      aria-label={`Account line ${i + 1}`}
-                      value={line.accountId}
-                      onChange={(e) => setLine(i, { accountId: e.target.value })}
-                    >
-                      <option value="">Select an account</option>
-                      {accounts.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.name} ({a.code})
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-                  <td>
-                    <input
-                      aria-label={`Memo line ${i + 1}`}
-                      value={line.memo}
-                      onChange={(e) => setLine(i, { memo: e.target.value })}
-                    />
-                  </td>
-                  <td>
-                    <input
-                      aria-label={`Debit line ${i + 1}`}
-                      inputMode="decimal"
-                      value={line.debit}
-                      onChange={(e) =>
-                        setLine(i, {
-                          debit: e.target.value,
-                          credit: e.target.value ? '' : line.credit,
-                        })
-                      }
-                    />
-                  </td>
-                  <td>
-                    <input
-                      aria-label={`Credit line ${i + 1}`}
-                      inputMode="decimal"
-                      value={line.credit}
-                      onChange={(e) =>
-                        setLine(i, {
-                          credit: e.target.value,
-                          debit: e.target.value ? '' : line.debit,
-                        })
-                      }
-                    />
-                  </td>
-                  <td className="act">
-                    <button
-                      type="button"
-                      aria-label={`Remove line ${i + 1}`}
-                      disabled={lines.length <= 2}
-                      onClick={() => removeLine(i)}
-                    >
-                      <Trash2 />
-                    </button>
-                  </td>
+        <section className="vn-card">
+          <div className="vn-card-head">
+            <h2>Voucher Entries</h2>
+            <button type="button" className="vn-btn solid" onClick={addLine}>
+              <Plus /> Add line
+            </button>
+          </div>
+          <div className="vn-table-wrap">
+            <table className="vn-table">
+              <thead>
+                <tr>
+                  <th className="n">#</th>
+                  <th>Account</th>
+                  <th>Memo</th>
+                  <th className="num">Debit (PKR)</th>
+                  <th className="num">Credit (PKR)</th>
+                  <th className="act">Remove</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div className="vn-totals">
-          <div>
-            <small>Total Debit</small>
-            <b>{moneyFromString(totals.totalDebit)}</b>
+              </thead>
+              <tbody>
+                {lines.map((line, i) => (
+                  <tr key={i}>
+                    <td className="n">{i + 1}</td>
+                    <td>
+                      <select
+                        aria-label={`Account line ${i + 1}`}
+                        value={line.accountId}
+                        onChange={(e) => setLine(i, { accountId: e.target.value })}
+                      >
+                        <option value="">Select an account</option>
+                        {accounts.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.name} ({a.code})
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td>
+                      <input
+                        aria-label={`Memo line ${i + 1}`}
+                        value={line.memo}
+                        onChange={(e) => setLine(i, { memo: e.target.value })}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        aria-label={`Debit line ${i + 1}`}
+                        inputMode="decimal"
+                        value={line.debit}
+                        onChange={(e) =>
+                          setLine(i, {
+                            debit: e.target.value,
+                            credit: e.target.value ? '' : line.credit,
+                          })
+                        }
+                      />
+                    </td>
+                    <td>
+                      <input
+                        aria-label={`Credit line ${i + 1}`}
+                        inputMode="decimal"
+                        value={line.credit}
+                        onChange={(e) =>
+                          setLine(i, {
+                            credit: e.target.value,
+                            debit: e.target.value ? '' : line.debit,
+                          })
+                        }
+                      />
+                    </td>
+                    <td className="act">
+                      <button
+                        type="button"
+                        aria-label={`Remove line ${i + 1}`}
+                        disabled={lines.length <= 2}
+                        onClick={() => removeLine(i)}
+                      >
+                        <Trash2 />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-          <div>
-            <small>Total Credit</small>
-            <b>{moneyFromString(totals.totalCredit)}</b>
+          <div className="vn-totals">
+            <div>
+              <small>Total Debit</small>
+              <b>{moneyFromString(totals.totalDebit)}</b>
+            </div>
+            <div>
+              <small>Total Credit</small>
+              <b>{moneyFromString(totals.totalCredit)}</b>
+            </div>
+            <div className={`vn-bal ${totals.balanced ? 'ok' : 'pending'}`}>
+              <b>{totals.balanced ? 'Balanced' : 'Unbalanced'}</b>
+              <small>
+                {totals.balanced
+                  ? 'Difference is zero'
+                  : `Difference ${moneyFromString(totals.difference)}`}
+              </small>
+            </div>
           </div>
-          <div className={`vn-bal ${totals.balanced ? 'ok' : 'pending'}`}>
-            <b>{totals.balanced ? 'Balanced' : 'Unbalanced'}</b>
-            <small>
-              {totals.balanced
-                ? 'Difference is zero'
-                : `Difference ${moneyFromString(totals.difference)}`}
-            </small>
-          </div>
-        </div>
-      </section>
+        </section>
 
-      <div className="vn-actionbar">
-        <div className="vn-actionbar-right">
-          <button type="button" className="vn-btn text" onClick={() => navigate('/vouchers')}>
-            Cancel
-          </button>
-          <Button type="submit" busy={submitting} disabled={!canSubmit}>
-            Post voucher
-          </Button>
+        <div className="vn-actionbar">
+          <div className="vn-actionbar-right">
+            <button type="button" className="vn-btn text" onClick={() => navigate('/vouchers')}>
+              Cancel
+            </button>
+            <Button type="submit" busy={submitting} disabled={!canSubmit}>
+              Post voucher
+            </Button>
+          </div>
+        </div>
+      </form>
+      {confirmOpen && (
+        <PostConfirmDialog
+          date={date}
+          totals={totals}
+          lineCount={lineCount}
+          submitting={submitting}
+          onCancel={() => setConfirmOpen(false)}
+          onConfirm={doPost}
+        />
+      )}
+    </>
+  )
+}
+
+function PostConfirmDialog({
+  date,
+  totals,
+  lineCount,
+  submitting,
+  onCancel,
+  onConfirm,
+}: {
+  date: string
+  totals: ReturnType<typeof computeVoucherTotals>
+  lineCount: number
+  submitting: boolean
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  return (
+    <Modal title="Post voucher" onClose={onCancel}>
+      <p>
+        Post {lineCount} line{lineCount === 1 ? '' : 's'} totalling{' '}
+        <b>{moneyFromString(totals.totalDebit)}</b> to <b>{date}</b>? Posted entries cannot be
+        edited — a mistake is corrected by reversal, never by editing.
+      </p>
+      <div className="totals-card">
+        <div>
+          <span>Voucher date</span>
+          <b>{date}</b>
+        </div>
+        <div>
+          <span>Lines</span>
+          <b>{lineCount}</b>
+        </div>
+        <div>
+          <span>Total debit</span>
+          <b>{moneyFromString(totals.totalDebit)}</b>
+        </div>
+        <div>
+          <span>Total credit</span>
+          <b>{moneyFromString(totals.totalCredit)}</b>
         </div>
       </div>
-    </form>
+      <div className="modal-foot">
+        <Button kind="secondary" type="button" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="button" busy={submitting} onClick={onConfirm}>
+          Post voucher
+        </Button>
+      </div>
+    </Modal>
   )
 }
