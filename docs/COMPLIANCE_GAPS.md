@@ -235,6 +235,46 @@ Product Owner for acceptance and the production gate. Security seat (`security-g
 
 ---
 
+## GAP-005 — The gate is self-attested while it runs off the laptop
+
+| | |
+|---|---|
+| **Rule** | On top of GAP-001 and GAP-002. Rule 20's *"Secret scanning runs on every PR and blocks merge"* and the general premise that CI results are independently produced |
+| **Status** | **Accepted, scoped, staging only** |
+| **Raised** | 2026-09-29, PO decision (OPS-003) |
+
+### The decision
+
+> Until GitHub Actions is paid for, the gate runs on the laptop and staging is deployed from the laptop at zero cost — no GitHub Actions minutes, no GHCR storage. GitHub CI must be restorable later with a one-line change.
+
+`.github/workflows/ci.yml` now triggers on `workflow_dispatch` only (see the comment block at the top of that file for the exact lines to restore, including the nightly `schedule` OPS-002 added). `npm run ship:staging` (`tools/ship/staging.mjs`) runs the equivalent of risk-tiered CI's ([docs/workflows/ci-tiers.md](workflows/ci-tiers.md)) "full" path — static analysis, secret scan, the full test suite including the FinancialInvariantSuite, the web build, the blocking `audit:gate` — against a fresh throwaway stack, then builds and deploys to Contabo staging. Full flow: [docs/workflows/ship-from-laptop.md](workflows/ship-from-laptop.md).
+
+### What is enforced
+
+Every gate step CI's "full" path would have run still runs, and a failure still stops the ship before anything is built or deployed — nothing here is skipped, weakened, or made optional. The refusal to ship an unmerged commit is unconditional, including under `--skip-gate`. It reuses the same canonical tools CI does — `npm run audit:gate` against `tools/ci/audit-allowlist.json`, not a separate copy of that policy — so GAP-002's disposition cannot drift between the two paths.
+
+### What is not enforced, and why
+
+**The result is self-attested.** The person running `ship:staging` runs the gate on their own machine and could, in principle, edit the tool or skip a step no evidence would catch — there is no independent third party (GitHub) producing the result the way CI did. This is strictly weaker than GAP-001's world, where at least the check ran somewhere the operator didn't control, even though nothing blocked merging past it.
+
+**Compensating controls:**
+
+1. `--skip-gate` requires a written `--reason`, prints an unmissable warning, and is recorded in the evidence file (`/opt/finsoft/deploys/<timestamp>-<sha>.json`) — an emergency bypass is never silent.
+2. The tool refuses to ship anything that is not an ancestor of `origin/develop` — it cannot be pointed at an unmerged branch.
+3. Evidence is written to the staging server itself (`/opt/finsoft/deploys/`), outside the operator's local control, with per-step pass/fail and durations.
+4. CodeQL cannot run locally for free and is recorded as **skipped** in the evidence, never silently dropped.
+5. This posture is **staging only**. It changes nothing about production: production was already blocked by GAP-001, GAP-003 and GAP-004, and stays blocked — no agent and no laptop tool has a path to Hostinger.
+
+### What would close it
+
+Restore the `push`/`pull_request`/`schedule` triggers in `ci.yml` (the exact lines are in that file's header comment) once GitHub Actions billing is active. That gives back an independently-run gate and this entry closes; GAP-001 through GAP-004 are unaffected by it either way.
+
+### Owner
+
+Product Owner (billing decision) / DevOps Guardian (restoring the workflow).
+
+---
+
 ## Adding an entry
 
 State the rule and quote the requirement. Say precisely what *is* enforced and what is not — a gap described vaguely reads as smaller than it is. List compensating controls without dressing them up as equivalents. Name what would close it, and who owns that. Date it.
