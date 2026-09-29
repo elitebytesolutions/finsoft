@@ -9,6 +9,47 @@
 | **Reference frames** | `design/account ledger improved page .png`, `design/account ledger page .png` |
 | **Posts to the ledger** | no — it is the canonical **read** surface for postings |
 
+## API note — M2-S (2026-09-29)
+
+`REPORT/account-ledger@1` ([ledger-and-trial-balance.md](../../../posting-rules/ledger-and-trial-balance.md)
+§2) defines this screen's real data shape: for one account, a date range, and optionally one party
+(control accounts only — not reachable in M2, since no control account has postings yet). Fields:
+
+```
+opening balance = Σ(debit − credit) of lines with occurred_at < from
+each line        = date · entry number · source document number · narration ·
+                   debit · credit · running balance · reversal marker
+closing balance  = opening + Σ(debit − credit) in range
+```
+
+Adjustments to the doc above:
+
+| Prototype affordance | M2 status | Reason |
+|---|---|---|
+| Voucher Type filter: Journal/Sales/Receipt/Payment | **Journal only is real** | M2 posts only JVs; other types are dormant filter options until their posting rules exist |
+| Status filter including Draft | **Posted + Reversed only** (draft removed) | No draft state exists in M2 |
+| Reversal marker | **Real** — "reversed by RV-…" / "reverses JE-… — reason" on the paired rows | ledger-and-trial-balance.md §2 |
+| Reference / Counterparty filter | **Hidden** — no party dimension reaches a non-control account in M2 | coa-standard.md §3 — a manual JV line carries no party |
+| Saved views | **Hidden** for this increment | No persistence contract for named filter sets yet; client-only `localStorage` would violate "no localStorage data" for this screen |
+| Account insights panel (avg transaction, largest debit/credit) | **Hidden** | No such report endpoint in M2's contract |
+| Export | Kept, gated on whatever the contract offers; hidden if it doesn't | — |
+
+**Order** is `occurred_at`, then `created_at`, then entry number (§2) — stated because a same-day
+reversal sorts beside its original and the running balance can pass through a figure no end-of-day
+balance shows; this is server-decided ordering, the client never re-sorts.
+
+**Sign.** The running balance is computed debit-positive server-side and rendered through
+`RunningBalance`/`DebitCreditCell` with a `Dr`/`Cr` suffix — the client never flips sign by the
+account's normal balance.
+
+**Account picker** here is restricted to `POSTABLE` accounts — matches `ledgers =
+data.masters.filter(m => m.level === 4)` in the current mock, which is correct and stays.
+
+**Permission.** `voucher.view` covers reading any ledger in M2 (the catalogue has no separate
+`ledger.view` or `account.view` code). No `Export`-specific code exists either (`report.financial`
+is the closest real code, for the financial report surfaces — Export here is presentational of the
+same ledger data, so it is gated on `voucher.view` too until the contract says otherwise).
+
 ## 1. Purpose
 
 The reference implementation of archetype D and the most-read screen in the product. An accountant

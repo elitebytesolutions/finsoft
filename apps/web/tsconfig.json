@@ -11,6 +11,14 @@
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
+    /* @finsoft/validation ships raw TS source with explicit `.ts` extensions
+     * on its relative imports (NodeNext-style, e.g. `from './decimal.ts'` in
+     * packages/validation/src/index.ts). Under `moduleResolution: "bundler"`,
+     * TypeScript rejects that unless this is set — safe here because
+     * `noEmit` is already true (this app never emits .js from these types).
+     * Nothing imported `@finsoft/validation` before M2-S; @finsoft/ui never
+     * hit this because its own source has no extensioned relative imports. */
+    "allowImportingTsExtensions": true,
     "jsx": "preserve",
     "incremental": true,
     "plugins": [{ "name": "next" }],

@@ -72,6 +72,22 @@ export class ApiError extends Error {
   readonly retryAfterSeconds?: number
   /** Per-field failures from a 400 `validation_failed` body, when the server sent any. */
   readonly details?: ApiFieldError[]
+  /**
+   * The raw machine-readable `error` string from a non-2xx JSON body that isn't one of the
+   * fixed auth shapes above — e.g. the accounting API's `PostingErrorCode`, lower-cased
+   * (`"jv_unbalanced"`, `"period_closed"`, `"entry_not_found"` — docs/design/M2/api-contract.md
+   * §7). `.code` stays the narrow, auth-only union above so every existing `switch`/`if` on it
+   * keeps exhaustiveness; this is a separate, additive field a caller that knows a wider error
+   * vocabulary (e.g. the accounting client) can read instead. `undefined` unless the server sent
+   * one.
+   */
+  readonly serverCode?: string
+  /**
+   * The `details` object from that same body, verbatim (e.g. `{totalDebit, totalCredit}` for
+   * `jv_unbalanced`) — JSON-safe by the API contract's own rule that a posting error's details
+   * are always string-keyed. `undefined` unless the server sent one.
+   */
+  readonly serverDetails?: Record<string, unknown>
 
   constructor(
     code: ApiErrorCode,
@@ -81,6 +97,8 @@ export class ApiError extends Error {
       retryAfterSeconds?: number
       details?: ApiFieldError[]
       cause?: unknown
+      serverCode?: string
+      serverDetails?: Record<string, unknown>
     },
   ) {
     super(message, options?.cause !== undefined ? { cause: options.cause } : undefined)
@@ -89,5 +107,7 @@ export class ApiError extends Error {
     this.status = options?.status
     this.retryAfterSeconds = options?.retryAfterSeconds
     this.details = options?.details
+    this.serverCode = options?.serverCode
+    this.serverDetails = options?.serverDetails
   }
 }

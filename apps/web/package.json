@@ -13,6 +13,7 @@
   "dependencies": {
     "@finsoft/ui": "*",
     "@finsoft/shared-types": "*",
+    "@finsoft/validation": "*",
     "lucide-react": "1.37.0",
     "next": "^15.1.0",
     "react": "^19.2.8",

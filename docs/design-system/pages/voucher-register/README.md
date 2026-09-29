@@ -9,6 +9,39 @@
 | **Reference frames** | `design/voucher register improved page .png`, `voucher register.png`, `voucher register 2.png` |
 | **Posts to the ledger** | **yes** — a draft can be posted from the inspector |
 
+## API note — M2-S (2026-09-29)
+
+M2 posts only Journal Vouchers ([voucher-new](../voucher-new/#api-note--m2-s-2026-09-29)), so in
+practice this register is a JV register until later waves add other document types that also post
+through the journal. Concretely:
+
+| Prototype affordance | M2 status | Reason |
+|---|---|---|
+| Type tabs: Journal / Receipts / Payments / Cash / Bank / Contra / Sales / Purchase GRN | **Only "Journal" is real**; other tabs hidden until their posting rule exists | No CRV/CPV/BRV/BPV/CV/SINV/PINV rule in M2 |
+| Status tabs: Posted / Draft / Pending approval / Reversed | **Posted / Reversed only**; Draft and Pending approval hidden | No draft state exists — a JV is posted or it does not exist |
+| Inspector `Post` action | **Hidden** | Nothing in this register is ever in a postable-but-unposted state; the only mutation from here is `Reverse` on an already-posted row |
+| Inspector `Reverse` action | **Real** — opens the same reason + confirm flow as [voucher-detail](../voucher-detail/#api-note--m2-s-2026-09-29) | — |
+| `Cancel draft` | **Hidden** | No drafts |
+| Approvals tab in the inspector | **Hidden** | No approval step |
+| `New Voucher` split menu (type pre-select) | Menu collapses to a single **"New Journal Voucher"** action → `/vouchers/new` | Only one type to pre-select |
+
+**Pagination and filtering are server-side** once wired — this register currently paginates and
+filters `data.vouchers` in the browser (mock); the M2-B contract must expose a paged, filterable list
+endpoint (date range at minimum) before this can be honestly called "connected to the ledger," per
+this brief's performance rule ("no browser-side filtering, sorting or pagination of server data").
+
+**KPI row.** "Total vouchers", "Total debit", "Total credit" are period totals of **posted**
+vouchers, server-computed — never a client sum of the loaded page, per
+[ledger-and-trial-balance.md](../../../posting-rules/ledger-and-trial-balance.md) §1's "every
+journal entry, POSTED and REVERSED" inclusion rule. "Pending approvals" KPI is **hidden** (no
+approval step).
+
+**Permission.** `voucher.view` to open this register at all, `voucher.reverse` for the inspector's
+Reverse action (real catalogue codes — the doc's earlier `voucher:create` / `voucher:reverse`
+colon-spelling was the prototype's placeholder). Same client-side hiding gap noted on
+[voucher-new](../voucher-new/#api-note--m2-s-2026-09-29): no permission list reaches the client yet,
+so actions render and the server's 403 is the real gate.
+
 ## 1. Purpose
 
 One place to find, review and post any voucher of any type. The register is the accountant's

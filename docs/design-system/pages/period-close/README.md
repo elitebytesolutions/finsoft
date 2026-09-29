@@ -9,6 +9,56 @@
 | **Reference frame** | `ui-prototype/design/closing period page .png` |
 | **Posts to the ledger** | no — but it **stops** everything else from posting |
 
+## API note — M2-S (2026-09-29)
+
+**§6 below ("Reopening is not an in-app action for any role") is superseded.**
+[`periods.md`](../../../posting-rules/periods.md) §4, §7 and §8 — approved by the Accounting
+Guardian the same day as this doc — specify **three** kernel transitions, all implemented in M2:
+`close` (`OPEN → CLOSED`), `reopen` (`CLOSED → OPEN`, reason required), and `lock`
+(`CLOSED → LOCKED`, terminal). This task's brief lists "Period close/reopen" as an M2 outcome, which
+matches `periods.md`, not this page's current §6. The `§6` text stays below, struck through in
+spirit rather than deleted, because it documents a real earlier decision that a later, more
+authoritative doc reversed — worth keeping visible so nobody re-derives it. Treat this API note as
+current; §6 as superseded.
+
+| Transition | Allowed only when | Error | Real in M2? |
+|---|---|---|---|
+| Close period P | every earlier period is `CLOSED`/`LOCKED` | `PERIOD_CLOSE_OUT_OF_ORDER` | yes |
+| Reopen period P | P is `CLOSED` and no **later** period is `CLOSED`/`LOCKED` | `PERIOD_REOPEN_OUT_OF_ORDER`; `PERIOD_LOCKED` if P is locked | **yes** |
+| Lock period P | P is `CLOSED` and every earlier period is `LOCKED` | `PERIOD_LOCK_OUT_OF_ORDER`, `PERIOD_NOT_CLOSED` | yes, but no UI trigger is specified anywhere yet — locking is not part of this brief's scope; flagged as an open question (§11) rather than built |
+
+**Reopen**, once wired: available only on the **latest `CLOSED`** period (periods.md §4.1 — reopening
+any earlier one is out of order because a later period may already assume its closing balance is
+final). The action asks for a **reason** (required — `PERIOD_REOPEN_REASON_REQUIRED`) and a typed
+confirmation naming the period, mirroring the close dialog's severity. A `LOCKED` period's row shows
+no reopen affordance at all — it is terminal for every role, not merely disabled.
+
+**Permission catalogue gap — flagged, not worked around.** `periods.md` names `period.close` and
+`period.reopen` as the permission codes throughout, but
+`packages/permissions/src/catalog.ts`'s `PERMISSION_CODES` — frozen and exactly asserted in
+`catalog.spec.ts` — **contains neither code**. This is a real contradiction between two documents
+this lane cannot resolve (`packages/permissions` is outside `apps/web`'s `ALLOWED` paths, and the
+catalogue is a Level-1 kernel-adjacent artifact). Reported to the delivery coordinator as BLOCKED.
+Until it resolves, this page cannot hide Close/Reopen by role client-side with any real signal
+either — same gap as every other M2-S screen's permission note.
+
+**MFA.** `ADR-0012` requires MFA step-up for both transitions; MFA enrolment does not exist yet
+(GAP-003), accepted on staging with demo data only, blocked in production. Not enforced or
+simulated client-side.
+
+**Pre-close checklist.** No M2 endpoint produces this checklist's line items (draft vouchers,
+suspense postings, stock variances, etc. — most of those modules do not exist yet in M2: stock,
+purchasing, cheques). The checklist section is **hidden** in M2, not fabricated from partial data —
+`Close period` and `Reopen period` are gated only on the order rule and the typed confirmation, per
+`periods.md` §7's actual MVP scope ("Close checklist... [is] Deferred"). The anatomy's
+"What happens at close" plain-language panel stays, using the real consequence text from `periods.md`
+and the dialog copy already in §5 below.
+
+**KPI row** (period revenue, cost of sales, net surplus, open drafts): **hidden** in M2 — none of
+those figures has a real source yet (no P&L endpoint, no drafts). Replaced with the real, always-true
+fact this page needs: the tenant's **fiscal period list** (name, status, opened, closed-by) from
+`GET`-ing the periods resource, which is real in M2 and is this screen's actual anchor.
+
 ## 1. Purpose
 
 Lock a fiscal month so its figures cannot change. This is the highest-consequence action in the
