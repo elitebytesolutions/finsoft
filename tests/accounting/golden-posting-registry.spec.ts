@@ -16,8 +16,8 @@ const files = readdirSync(join(REPO_ROOT, 'tests', 'accounting', 'golden'))
   .sort()
 
 describe('posting golden scenarios: executed or pending, never neither', () => {
-  it('finds the twelve posting scenarios README §6 lists', () => {
-    expect(files).toHaveLength(12)
+  it('finds the thirteen posting scenarios README §6 lists', () => {
+    expect(files).toHaveLength(13)
   })
 
   it.each(files)('%s is executed in M2 or pending with a reason', (file) => {

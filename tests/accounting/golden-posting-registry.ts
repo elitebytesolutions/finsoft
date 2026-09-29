@@ -57,4 +57,10 @@ export const PENDING: readonly PendingScenario[] = [
   { file: 'posting-p10-service-line-rounding.json', steps: 'all', reason: M3_TABLES },
   { file: 'posting-p11-receipt-draft-lifecycle.json', steps: 'all', reason: M3_TABLES },
   { file: 'posting-p12-inactive-customer.json', steps: 'all', reason: M3_TABLES },
+  {
+    file: 'posting-p13-coa-create-and-rename.json',
+    steps: 'all',
+    reason:
+      'requires migration 018 (accounts UPDATE grant, protected-row and code/parent immutability triggers) and the kernel account create/edit functions (M2-C, coa-standard.md §8)',
+  },
 ]

@@ -375,3 +375,5 @@ onboarding that seeds a second AR-control account (a second AR bank fee
 account, for instance) — at which point `controlAccountLedger` should sum
 every AR-control account for the party, matching `customerSubledgerBalance`'s
 own query shape, rather than resolving a single role.
+
+**Update, 2026-09-29 (Accounting seat, M2-C).** The Product Owner brought chart create/edit into the MVP. It does **not** force this item: [coa-standard.md](posting-rules/coa-standard.md) §8.1 forbids users from creating control accounts, and §8.7 asks migration 018 for R2 (the create path cannot write `control_kind`) and R7 (at most one `AR` and one `AP` control account per tenant, structurally). Once R7 lands, the divergent configuration cannot be stored, and this item can close on the Database seat's evidence.

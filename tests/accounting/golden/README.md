@@ -43,8 +43,9 @@ belongs in the commit.
 | [P10](posting-p10-service-line-rounding.json) | A true half-way tie at the service-line boundary: half-up only | Specified — executable from M3 |
 | [P11](posting-p11-receipt-draft-lifecycle.json) | Receipt drafts: no GL, allocation or numbering effect; a draft in a since-closed period rejected, re-dated, posted; a stale proposal rejected at post; draft → cancel | Specified — executable from M3 |
 | [P12](posting-p12-inactive-customer.json) | An inactive customer cannot be invoiced but is paid in full | Specified — executable from M3 |
+| [P13](posting-p13-coa-create-and-rename.json) | A user-created account: create, six create rejections, post, TB and ledger, rename alters no history, code/parent frozen after posting, protected accounts, pre-posting re-code and re-parent ([coa-standard.md](../../../docs/posting-rules/coa-standard.md) §8) | **PENDING** — specified 2026-09-29 (M2-C); executable once migration 018 and the kernel's account create/edit exist |
 
-Thirteen of the promised 50–100. The rest arrive with the waves that make them
+Fourteen of the promised 50–100. The rest arrive with the waves that make them
 expressible — there is no value in writing a scenario for a posting engine
 that does not exist, and considerable harm in stubbing one green.
 
