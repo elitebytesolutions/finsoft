@@ -375,3 +375,91 @@ onboarding that seeds a second AR-control account (a second AR bank fee
 account, for instance) — at which point `controlAccountLedger` should sum
 every AR-control account for the party, matching `customerSubledgerBalance`'s
 own query shape, rather than resolving a single role.
+
+---
+
+## TD-012 · Superseded draft revisions are kept and never read
+
+**What.** `sales_invoice_lines` and `customer_receipt_draft_allocations` are
+insert-only and revisioned (`modules/receivables`, migrations 016-017): every
+draft save inserts a whole new revision and bumps
+`sales_invoices.lines_revision` / `customer_receipts.proposals_revision`.
+Every revision before the current one stays in the table forever, with no
+`DELETE` grant and nothing that ever reads it again.
+
+**Why it is accepted.** Named in
+[docs/design/M3/README.md](design/M3/README.md) §10 as the cost of keeping
+both tables insert-only with no money in `jsonb` (rule 6) and no `DELETE`
+grant (rule 4) — a repository that could delete or overwrite a line revision
+would be the one financial-record code path in the system that can, which is
+a bigger risk than a few stale rows.
+
+**Owner.** Architecture seat.
+
+**What would force it.** Draft storage becoming measurable at real tenant
+volumes — a tenant whose users repeatedly edit large draft invoices or
+receipts before posting or cancelling. At that point a periodic archival job
+(never a delete, per rule 4) for superseded revisions is the fix, not a
+change to the insert-only shape.
+
+---
+
+## TD-013 · Receipt drafts and receipt posting share `payment.receive`
+
+**What.** `POST /api/receipts` (draft), `PATCH /api/receipts/:id`,
+`POST /api/receipts/:id/post` and `POST /api/receipts/:id/cancel`
+(`modules/receivables`, `apps/api/src/receivables/receipts.controller.ts`)
+all require only `payment.receive`. Invoices already split `invoice.create`
+from `invoice.post`; the matching split for receipts (a `payment.post`
+code) does not exist in the MVP catalogue
+(`packages/permissions/src/catalog.ts`).
+
+**Why it is accepted.** Named in
+[docs/design/M3/README.md](design/M3/README.md) §10 and
+[api-contract.md](design/M3/api-contract.md) §2: adding a catalogue code
+needs seeding existing tenants' system roles, a catalogue-wide task, not a
+single lane's addition. Per this lane's own task contract: "If a needed code
+is missing, STOP and report; do not invent one."
+
+**Owner.** Architecture seat / Security seat (catalogue changes are joint).
+
+**What would force it.** The first tenant that wants a clerk to prepare
+receipts that someone else posts (maker-checker), matching PO-Q2's precedent
+from M2 for journal vouchers (`voucher.post` / `voucher.reverse` already
+split that way) — at which point `payment.post` is added to the catalogue,
+seeded into the Accountant role, and `POST /api/receipts/:id/post` switches
+to requiring it instead of `payment.receive`.
+
+---
+
+## TD-014 · `journalEntry` is `null` on a plain GET of an already-posted invoice or receipt
+
+**What.** `GET /api/invoices/:id` and `GET /api/receipts/:id`
+(`modules/receivables/application/get-invoice.ts`,
+`get-receipt.ts`) always return `journalEntry: null`, even for a `POSTED` or
+`REVERSED` document. The field is populated correctly on the **response of
+the mutation itself** — `POST /api/invoices/:id/post`,
+`POST /api/invoices/:id/reverse` and the receipt equivalents pass the entry
+straight through from `postingEngine.post` / `reversalEngine.reverseForSource`'s
+own result (`apps/api/src/receivables/invoices.controller.ts` /
+`receipts.controller.ts`) — but a later plain read has nothing to resolve it
+from.
+
+**Why it is accepted.** `modules.md` §7 is explicit that the journal entry's
+id is deliberately **not** stored a second time on the document ("a second
+pointer would be a copy that can disagree"), and it is found only through
+the kernel's `UNIQUE (tenant_id, source_type, source_id)` — a lookup no K1-K7
+capability exposes to a module for reading (as opposed to posting/reversing).
+Building one (most plausibly by filtering `@finsoft/reporting`'s
+`controlAccountLedger` for the matching `sourceId`, which already returns
+`entryId`/`entryNumber` per line) is a kernel/reporting-surface change, T3
+review, outside this lane's `packages/accounting-kernel/src/**` (K2-K4 and
+the two rules only) boundary.
+
+**Owner.** Accounting seat / Architecture seat.
+
+**What would force it.** M4's invoice/receipt detail screen, which needs
+`journalEntry` linked from a page load, not only from the post/reverse
+response it happened to be on. The fix is a K-numbered kernel or
+`@finsoft/reporting` export ("find the entry for this source"), reviewed the
+same way K5 was, not a second pointer column on the document.
