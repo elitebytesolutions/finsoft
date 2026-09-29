@@ -237,3 +237,111 @@ typecheck/lint/depcruise/`db:migrate:verify` all exit 0;
 7. M3 needs a kernel entry point for reversing a document-sourced entry
    (`REVERSAL_VIA_SOURCE_REQUIRED`'s counterpart) — not built in M2, out of
    scope here, noted for whoever picks up M3.
+
+## Council T3 review — APPROVED WITH CONDITIONS, all conditions fixed
+
+The full T3 Council (Accounting, Database, Architecture) reviewed the
+branch above and returned APPROVED WITH CONDITIONS. Every condition is
+fixed, verified twice against the real `finsoft-m2a` stack, and pushed.
+Item by item:
+
+- **PERIOD GATE** (Accounting F1/R1, Database F1/R1): the 012 open-period
+  trigger now also requires `occurred_at` to fall within the *referenced*
+  period's own `[period_start, period_end]`, raising 23514 — a
+  period_id/occurred_at pair naming two different periods no longer passes
+  just because the named period is OPEN. DB test: close 2026-07, post with
+  period 2026-08 + date 2026-07-10 → 23514 (and 2026-09-01 → 23514; 2026-08-01
+  and 2026-08-31 accepted). FinancialInvariantSuite scan added
+  (`entriesOutsideTheirPeriod`): every posted entry's date is confirmed
+  inside its own period, tenant-wide.
+- **MIGRATION-ROLE BYPASS** (Accounting R2, Database R6): new tests prove
+  `finsoft_migration` (BYPASSRLS) cannot insert into a CLOSED or LOCKED
+  period, or post a mismatched period/date, and that a posting racing a
+  period close is serialised correctly in both orderings (real two-connection
+  tests, not simulated). "OPEN GAP" removed from the Invariant 5 note,
+  replaced with the actual DB-level evidence it now cites.
+- **KERNEL-ONLY FENCES** (Architecture 1/2/5, Accounting F3/R3):
+  `closePeriod`/`reopenPeriod`/`lockPeriod` moved out of `packages/database`
+  entirely into `packages/accounting-kernel/src/queries/periods.ts`, exposed
+  through `periodEngine.close/reopen/lock` (the `registerParty` pattern). A
+  transition now re-reads the period under its own calendar lock rather than
+  trusting a caller-supplied version — two racing closes now produce a typed
+  `PERIOD_CLOSED` for the loser. `assignDocumentNumber`,
+  `assignTenantDocumentNumber` and `lockEntryForReversal` stay in
+  `packages/database` but are lint-fenced to the kernel, `provisioning.ts`
+  and tests only. A new lint rule confines any write to `fiscal_periods` to
+  the kernel's queries and migrations, with fixtures firing in
+  `packages/database`, a synthetic `modules/*/infrastructure`, `apps/api`,
+  `packages/reporting` and `tools`. `packages/database/src/index.ts`'s
+  comment now states the real rule instead of implying a general license.
+- **ADR-0027 K1**: an ESLint rule rejects every transaction-control
+  statement anywhere in `packages/accounting-kernel` except the three
+  statements in `queries/journal-writes.ts` naming the savepoint
+  `finsoft_posting_number` exactly (confirmed already correctly named). The
+  prior fixture using a savepoint named `s` is now a rejected case; new
+  cases prove a stray `ROLLBACK`/`COMMIT`/savepoint anywhere else in the
+  kernel is caught. `lint-boundaries.spec.ts`: 110/110 before → 134/134
+  after.
+- **PARTIES** (Database R2/R3): `parties` gets its own forbid-mutation
+  trigger set (`parties_no_update`/`_delete`/`_truncate`), matching
+  `journal_lines`' shape, plus an owner test proving even the owning role
+  can't bypass it. The party lookup index is replaced with ADR-0026
+  Compliance row 8's exact shape: `(tenant_id, party_id, account_id) WHERE
+  party_id IS NOT NULL`.
+- **TESTS** (Accounting F4/R4, F5/R5): new coverage for `ENTRY_NOT_FOUND`
+  (unknown id, malformed id, and another tenant's real entry id all give
+  the identical answer), `REVERSAL_REASON_REQUIRED`,
+  `REVERSAL_VIA_SOURCE_REQUIRED` (against a document-sourced entry inserted
+  as the migration role, since `sales_invoice` doesn't exist until M3), and
+  `ACCOUNT_INACTIVE` on both the JV and reversal paths. The golden runner's
+  trial-balance checks now call the real `trialBalance()` from
+  `@finsoft/reporting` instead of a parallel computation — proven to bite by
+  deliberately corrupting the report's presentation and watching four
+  scenarios fail, then reverting. Invariant 6 now builds the whole
+  per-(account, party) residual map for every reversal pair and asserts
+  every cell is exactly zero, not an aggregate.
+- **COMMENTS** (Accounting F6/F7, Database R5): corrected the false "gaps
+  are acceptable" claim about document numbering (the counter is an
+  ordinary locked row, not a sequence — a rolled-back posting consumes no
+  number) in migration 013's header, its `COMMENT ON COLUMN`, and
+  `sequences.ts`; fixed stale `LOCK_REGISTRY.md` position references
+  (period lock is 5b, numbering is 5c).
+- **BACKFILL** (Database R4, Accounting C3): the CLI now refuses
+  `NODE_ENV=production` without an explicit `FINSOFT_ENVIRONMENT=staging`
+  marker (staging and production both set `NODE_ENV=production`, so
+  `NODE_ENV` alone can't distinguish them), and even then refuses if any
+  tenant outside the known demo set (`BHATTI1`/`BHATTI2`) exists on the
+  target — mirroring the *intent* of the M1-X demo seed's own rule (that
+  script doesn't exist in this worktree yet; reconcile the two rules once
+  it lands). Every audit record it writes now carries `via:
+  'backfill-accounting'` and a fresh request id, via a new optional
+  `AuditOrigin` parameter on `seedChartOfAccounts`/`createFiscalYear`.
+  Confirmed the CLI imports nothing from `@finsoft/accounting-kernel`. All
+  four behaviors verified against the live dev database, including a direct
+  query against `audit_log` confirming the `via` tag.
+- **REVERSED_BY**: Accounting seat ruled `journal_entries.reversed_by → R.id`
+  per ADR-0006 is correct as built. No change made.
+- **MERGE ORDER** (Architecture): not yet mergeable pending (a) the
+  request-correlation middleware lane merging — explicitly deferred per the
+  coordinator's instruction; the `requestId`/`ip` null call sites in
+  `posting-engine.ts`/`reversal.ts`/periods are untouched, waiting for that
+  signal — (b) ADR-0026 landing on `develop`, (c) ADR-0027 Accepted
+  (confirmed accepted on `feature/M2-000b-adr-0027` per the coordinator).
+  `REQUIRED_SCHEMA_VERSION` 9→13 happens at the final rebase, not here.
+
+**Evidence, twice, against the real `finsoft-m2a` Postgres stack:**
+`test:schema` 363/363 (20 files), `test:security` 216/216 (9 files),
+`test:accounting` 129/129 (7 files), `test:reconciliation` 32/32,
+`@finsoft/accounting-kernel` 34/34, `@finsoft/reporting` 4/4,
+`tests/accounting/period-transitions.spec.ts` 5/5,
+`tests/security/lint-kernel-fences.spec.ts` 21/21. Only failure on either
+run: the same pre-existing, out-of-scope `REQUIRED_SCHEMA_VERSION` drift in
+`apps/api` noted above.
+
+A note on process: this round again involved two guardian subagents editing
+overlapping files concurrently (`eslint.config.mjs`,
+`tests/security/lint-boundaries.spec.ts`, `accounting-triggers.spec.ts`,
+`parties.spec.ts`), which produced some duplicated tests that had to be
+reconciled by hand — both guardians caught and resolved this themselves,
+confirmed against each other's final state rather than assuming their own
+last-known version was correct.
