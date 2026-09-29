@@ -95,14 +95,20 @@ Two alternatives were rejected. **Controllers in the module, built by SWC**: thi
 
 ---
 
-**Amendment, 2026-09-29** (Council review of M2-B; Architecture + Database/Security seats — the
-Architecture seat's countersignature is pending, see docs/BOARD.md): statement 9's migration
-numbers are corrected. Migration **014** was taken by the M2-B Council ruling's permission backfill
-(`database/migrations/014_add_account_and_period_permissions.sql`, `-- Owner: packages/permissions`
-— not a `modules/<name>` migration, so it did not wait for M3-C). M3's three reserved migrations
-move up by one: **015** `customers` (M3-C), **016** and **017** (M3-P). Every other reference to
-014/015/016 in this document's signed body (statement 9, C10) describes the RULE — "the module
-migration after the kernel's own chain, module migrations numbered in sequence" — not the specific
-numbers, and needs no further change. The numbers themselves are corrected wherever they appear in
-[docs/design/M3/README.md](../design/M3/README.md) §2, [docs/design/M3/open-questions.md](../design/M3/open-questions.md)
-and [docs/IMPLEMENTATION.md](../IMPLEMENTATION.md).
+**Amendment, 2026-09-29** (Council review of M2-B; Architecture + Database/Security seats).
+The signed body is not edited; this note overrides it where the two differ.
+
+1. **Statement 9's numbers.** Statement 9 names migrations 014, 015 and 016 for M3. Migration
+   **014** was taken by the M2-B permission backfill
+   (`database/migrations/014_add_account_and_period_permissions.sql`), a platform migration that
+   is not part of any module. M3's three migrations therefore move up by one: **015**
+   `customers` (M3-C), **016** and **017** (M3-P). The numbers are corrected in
+   [docs/design/M3/README.md](../design/M3/README.md) §2,
+   [docs/design/M3/open-questions.md](../design/M3/open-questions.md) and
+   [docs/IMPLEMENTATION.md](../IMPLEMENTATION.md).
+2. **C10 and S4 owners.** C10 applies to every migration from 014 on, as signed. S4's owner rule
+   is widened: `-- Owner:` must name an existing `modules/<name>` **or** `packages/<name>`
+   directory. A `packages/<name>` owner marks a platform or kernel migration. All of S4's
+   content bans still apply to it unchanged. Migration 014 is owned by `packages/permissions`.
+   The M3-C checker implements this rule, with a passing fixture for a `packages/<name>` owner
+   and a failing fixture for a directory that does not exist.
