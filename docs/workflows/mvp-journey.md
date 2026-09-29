@@ -127,13 +127,15 @@ correction would. No fiscal period is ever closed or reopened by this file.
 `playwright.deployed.config.ts`'s file-wide `retries: 1`) — a retry after money has already
 posted would run the whole journey again and leave a *second*, unreversed set on a shared demo
 tenant. If a step fails after the invoice or receipt posted but before step 7 reverses it, each
-tenant's own cleanup hook still runs: it reverses, by direct API call (not the UI, since a broken
-screen is exactly the failure this needs to survive), whatever that run posted and had not yet
-reversed, in the same order (receipt, then invoice — PO-Q1) as the normal path. If it cannot
-finish — say the API itself is down — it throws a named, actionable error listing exactly which
-document(s) are still open, reported as its own failure alongside the test's. Either way, check
-the run's output before assuming `BHATTI1`/`BHATTI2` are clean, and reverse anything it names by
-hand if it says it could not.
+tenant's own cleanup hook still runs: it lists that run's customer's invoices and receipts by
+customer id — known from the moment the customer is created, long before either document exists,
+so this does not depend on having captured a document id at exactly the right moment — and
+reverses, by direct API call (not the UI, since a broken screen is exactly the failure this needs
+to survive), whichever of them are actually `POSTED`, in the same order (receipt, then invoice —
+PO-Q1) as the normal path. If it cannot finish — say the API itself is down — it throws a named,
+actionable error listing exactly which document(s) are still open, reported as its own failure
+alongside the test's. Either way, check the run's output before assuming `BHATTI1`/`BHATTI2` are
+clean, and reverse anything it names by hand if it says it could not.
 
 ### What it never does
 

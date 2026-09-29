@@ -53,11 +53,14 @@ import { rs, twoDp } from './helpers/money.ts'
  * real money would otherwise re-run the whole journey and post a SECOND, unreversed set on a
  * shared demo tenant. Each tenant's own `test.afterAll` is the safety net for the case that
  * still matters: this run's OWN test failing partway through, after the invoice or receipt
- * posted but before step 7 reversed it. It reverses, by direct API call (not the UI — a broken
- * screen is exactly the kind of failure this needs to survive), whatever this run itself is
- * still tracking as posted-and-not-yet-reversed, and throws (reported as a SEPARATE afterAll
- * failure, never in place of the test's own recorded failure) naming anything it could not
- * clean up, for a human to finish by hand.
+ * posted but before step 7 reversed it. It does not trust any id captured from the screen after
+ * the fact — it lists this run's customer's invoices and receipts by `customerId` (known from
+ * step 2, long before either document exists) and reverses, by direct API call (not the UI — a
+ * broken screen is exactly the kind of failure this needs to survive), whichever of them are
+ * actually `POSTED`. It throws (reported as a SEPARATE afterAll failure, never in place of the
+ * test's own recorded failure) naming anything it could not clean up, for a human to finish by
+ * hand. See `PostedDocs`'s own comment for the full reasoning, added after a second security
+ * review round found the first version of this net still had a gap.
  */
 
 const BHATTI_TENANTS = [
@@ -101,20 +104,41 @@ async function login(page: Page, code: string, email: string, password: string):
   return body.accessToken
 }
 
-/** What one tenant's run has posted, and whether this run has already reversed it. */
+/**
+ * What one tenant's run might have posted. `customerId`/`customerName` are known from the
+ * moment step 2 returns 201 — long before either document exists — and are enough on their own
+ * to find anything this run posted (below): each run's customer is created fresh with a name
+ * unique to that run (see step 2's own comment), so nothing found under this `customerId` could
+ * belong to any other run, and there is never a need to match a specific document id.
+ *
+ * `invoicePossiblyPosted` / `receiptPossiblyPosted` are set right before the SECOND click of
+ * each confirm dialog — the one that actually calls I7/R6 — and are never unset again. That is
+ * the fix for the gap the second security review round found: an id captured only AFTER a
+ * heading renders is never recorded at all if the post succeeded on the server but the page then
+ * failed to render it, which is exactly the case that leaves a real, unreversed document behind.
+ * A flag set BEFORE the click that risks it has no such gap — the worst case is a redundant,
+ * harmless list call in `afterAll` when nothing was actually posted (the click opened the dialog,
+ * the confirm click never fired, or it fired and the server rejected it).
+ */
 interface PostedDocs {
   session?: ApiSession
-  invoiceId?: string
-  invoiceReversed?: boolean
-  receiptId?: string
-  receiptReversed?: boolean
+  customerId?: string
+  customerName?: string
+  invoicePossiblyPosted?: boolean
+  receiptPossiblyPosted?: boolean
 }
 
 const CLEANUP_REASON = 'E2E deployed check: automatic cleanup after an interrupted run'
 
+interface ListedDoc {
+  id: string
+  number: string | null
+  status: string
+}
+
 function acceptableReversalResult(result: ApiResult<{ error?: string }>): boolean {
   // 200: reversed just now, by this cleanup. 409 ALREADY_REVERSED: the in-test step (7) already
-  // reversed it and only failed to update `posted.*Reversed` before the test itself failed —
+  // reversed it, by the UI, before the test itself failed for some unrelated reason —
   // reversal.md §3 row 2's own error code, not guessed at.
   return (
     result.status === 200 || (result.status === 409 && result.body?.error === 'ALREADY_REVERSED')
@@ -122,60 +146,102 @@ function acceptableReversalResult(result: ApiResult<{ error?: string }>): boolea
 }
 
 /**
- * The `afterAll` safety net (see the file header). Best-effort in the sense that it tries both
- * documents even if one fails, and reports rather than throws mid-way — but it is NOT
- * best-effort in the sense of swallowing a problem: anything still unreversed at the end is
- * thrown as a named, actionable error, because leaving real money posted on a shared demo tenant
- * is exactly the outcome this exists to prevent. PO-Q1 order preserved: the receipt before the
- * invoice, same as the in-test reversal step.
+ * Lists this customer's documents of one kind (I1/R1, filtered by `customerId` — never
+ * paginated further here: one run's customer has, at most, the one invoice and the one receipt
+ * this journey itself could have created) and reverses whichever are actually `POSTED`. A
+ * `DRAFT` is left alone — it has zero accounting effect (service-sale.md §2 /
+ * customer-receipt.md §1.1) and is not a cleanup problem, only clutter. `REVERSED` and
+ * `CANCELLED` need nothing either. Anything that cannot be listed or reversed is named in
+ * `problems`, never thrown here — the caller decides when enough of the sweep has run to report.
  */
-async function reverseLeftovers(request: APIRequestContext, posted: PostedDocs): Promise<void> {
-  if (!posted.session) return // never logged in — nothing could have posted
+async function resolveAndReverseKind(
+  request: APIRequestContext,
+  session: ApiSession,
+  kind: 'invoice' | 'receipt',
+  customerId: string,
+  who: string,
+  problems: string[],
+): Promise<void> {
+  const listPath = kind === 'invoice' ? '/api/invoices' : '/api/receipts'
 
-  const problems: string[] = []
-
-  if (posted.receiptId && !posted.receiptReversed) {
-    try {
-      const result = await apiCall<{ error?: string; message?: string }>(
-        request,
-        posted.session,
-        'POST',
-        `/api/receipts/${posted.receiptId}/reverse`,
-        { data: { reason: CLEANUP_REASON }, idempotencyKey: newIdempotencyKey() },
-      )
-      if (acceptableReversalResult(result)) posted.receiptReversed = true
-      else
-        problems.push(
-          `receipt ${posted.receiptId}: ${result.status} ${JSON.stringify(result.body)}`,
-        )
-    } catch (error) {
-      problems.push(`receipt ${posted.receiptId}: ${String(error)}`)
+  let items: readonly ListedDoc[]
+  try {
+    const list = await apiCall<{ items: ListedDoc[] }>(request, session, 'GET', listPath, {
+      query: { customerId },
+    })
+    if (!list.ok) {
+      problems.push(`listing ${kind}s${who}: ${list.status} ${JSON.stringify(list.body)}`)
+      return
     }
+    items = list.body.items
+  } catch (error) {
+    problems.push(`listing ${kind}s${who}: ${String(error)}`)
+    return
   }
 
-  if (posted.invoiceId && !posted.invoiceReversed) {
+  for (const item of items) {
+    if (item.status !== 'POSTED') continue
+    const label = `${kind} ${item.number ?? item.id}${who}`
     try {
-      const result = await apiCall<{ error?: string; message?: string }>(
+      const result = await apiCall<{ error?: string }>(
         request,
-        posted.session,
+        session,
         'POST',
-        `/api/invoices/${posted.invoiceId}/reverse`,
+        `${listPath}/${item.id}/reverse`,
         { data: { reason: CLEANUP_REASON }, idempotencyKey: newIdempotencyKey() },
       )
-      if (acceptableReversalResult(result)) posted.invoiceReversed = true
-      else
-        problems.push(
-          `invoice ${posted.invoiceId}: ${result.status} ${JSON.stringify(result.body)}`,
-        )
+      if (!acceptableReversalResult(result)) {
+        problems.push(`${label}: ${result.status} ${JSON.stringify(result.body)}`)
+      }
     } catch (error) {
-      problems.push(`invoice ${posted.invoiceId}: ${String(error)}`)
+      problems.push(`${label}: ${String(error)}`)
     }
+  }
+}
+
+/**
+ * The `afterAll` safety net (see the file header and `PostedDocs` above). Best-effort in the
+ * sense that it tries both kinds even if one fails, and reports rather than throws mid-way — but
+ * NOT best-effort in the sense of swallowing a problem: anything still unreversed at the end is
+ * thrown as a named, actionable error, because leaving real money posted on a shared demo tenant
+ * is exactly the outcome this exists to prevent. PO-Q1 order preserved: every receipt for this
+ * customer is resolved and reversed before any invoice is — an invoice with a still-LIVE
+ * allocation cannot be reversed at all (service-sale.md §8), so reversing receipts first is not
+ * just tidiness, it is what makes the invoice reversal below possible.
+ */
+async function reverseLeftovers(request: APIRequestContext, posted: PostedDocs): Promise<void> {
+  if (!posted.session || !posted.customerId) return // never logged in, or never got a customer — nothing could have posted
+
+  const who = posted.customerName
+    ? ` (customer ${posted.customerName})`
+    : ` (customer ${posted.customerId})`
+  const problems: string[] = []
+
+  if (posted.receiptPossiblyPosted) {
+    await resolveAndReverseKind(
+      request,
+      posted.session,
+      'receipt',
+      posted.customerId,
+      who,
+      problems,
+    )
+  }
+  if (posted.invoicePossiblyPosted) {
+    await resolveAndReverseKind(
+      request,
+      posted.session,
+      'invoice',
+      posted.customerId,
+      who,
+      problems,
+    )
   }
 
   if (problems.length > 0) {
     throw new Error(
-      `Deployed MVP journey left ${problems.length} document(s) UNREVERSED on a shared demo ` +
-        `tenant after cleanup — fix by hand: ${problems.join('; ')}`,
+      `Deployed MVP journey left document(s) UNREVERSED on a shared demo tenant after cleanup ` +
+        `— fix by hand: ${problems.join('; ')}`,
     )
   }
 }
@@ -258,6 +324,10 @@ if (OPT_IN_MISSING.length > 0) {
             expect(created.status, JSON.stringify(created.body)).toBe(201)
             expect(created.body.balance).toBe('0.0000')
             customerId = created.body.id
+            // Known from here on, long before either document exists — see `PostedDocs`'s own
+            // comment for why this alone is enough for `afterAll` to find anything this run posts.
+            posted.customerId = customerId
+            posted.customerName = customerName
           })
 
           let invoiceId = ''
@@ -292,6 +362,12 @@ if (OPT_IN_MISSING.length > 0) {
               name: /save\s*&\s*post|post invoice/i,
             })
             await expect(confirmDialog.getByText(rs('10000')).first()).toBeVisible()
+            // Flagged the instant before the click that actually calls I7 (post), not after the
+            // heading below renders — a post that succeeds on the server and then fails to
+            // render (a network blip, a slow redirect) must still be found by `afterAll`, and an
+            // id captured only from that heading would never exist to find it with. See
+            // `PostedDocs`'s own comment.
+            posted.invoicePossiblyPosted = true
             await confirmDialog
               .getByRole('button', { name: /save\s*&\s*post|post invoice/i })
               .click()
@@ -301,10 +377,6 @@ if (OPT_IN_MISSING.length > 0) {
             await expect(heading).toHaveText(/^INV-\d{4}-\d{6}$/, { timeout: 20_000 })
             invoiceNumber = (await heading.textContent())!.trim()
             invoiceId = new URL(page.url()).pathname.split('/').pop()!
-            // Tracked the moment the id is known — the server has already committed the posting
-            // by the time this heading renders, so afterAll must consider it live from here even
-            // if a later step in THIS test fails.
-            posted.invoiceId = invoiceId
           })
 
           await test.step('4. receive 6,000 against it', async () => {
@@ -333,13 +405,13 @@ if (OPT_IN_MISSING.length > 0) {
             await postButton.click()
             const confirmDialog = page.getByRole('dialog', { name: /post/i })
             await expect(confirmDialog.getByText(rs('6000')).first()).toBeVisible()
+            // Same reasoning as the invoice's flag above: before the click that actually calls
+            // R6, not after.
+            posted.receiptPossiblyPosted = true
             await confirmDialog.getByRole('button', { name: /^post$/i }).click()
             await expect(page.getByRole('heading', { level: 1 })).toHaveText(/^RCT-\d{4}-\d{6}$/, {
               timeout: 20_000,
             })
-            // Same reasoning as the invoice above: posted the moment the draft becomes a real,
-            // numbered receipt.
-            posted.receiptId = receiptId
           })
 
           await test.step('5. the customer ledger shows 4,000', async () => {
@@ -356,8 +428,10 @@ if (OPT_IN_MISSING.length > 0) {
           // human would use to correct a posting error, not just that the API can do it. The
           // OTHER safety net (each tenant's `test.afterAll` above, `reverseLeftovers`) exists for
           // exactly the case this step itself cannot cover: this test failing before reaching
-          // here, with real money already posted. That net calls the API directly rather than the
-          // UI, because a broken screen is exactly the failure it needs to survive.
+          // here, with real money already posted. That net calls the API directly rather than
+          // the UI, because a broken screen is exactly the failure it needs to survive — and it
+          // re-lists rather than trusting a flag was cleared, so if THIS step already succeeded,
+          // `afterAll`'s own list call simply finds nothing left `POSTED` and does nothing.
           await test.step('7. reverse the receipt, then the invoice (PO-Q1)', async () => {
             await page.goto(`/sales/${invoiceId}`)
             await expect(page.getByRole('button', { name: 'Reverse', exact: true })).toBeDisabled()
@@ -370,7 +444,6 @@ if (OPT_IN_MISSING.length > 0) {
             await expect(page.getByText('Reversed', { exact: true })).toBeVisible({
               timeout: 20_000,
             })
-            posted.receiptReversed = true
 
             await page.goto(`/sales/${invoiceId}`)
             await expect(page.getByRole('button', { name: 'Reverse', exact: true })).toBeEnabled()
@@ -381,7 +454,6 @@ if (OPT_IN_MISSING.length > 0) {
             await expect(page.getByText('Reversed', { exact: true })).toBeVisible({
               timeout: 20_000,
             })
-            posted.invoiceReversed = true
           })
 
           await test.step('8. net zero — the ledger and TB are correct again', async () => {
