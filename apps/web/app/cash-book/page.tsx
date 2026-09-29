@@ -1,15 +1,13 @@
 'use client'
-/* Route /cash-book — generated from the prototype route table in
- * ui-prototype/src/App.tsx. The screen and its props are unchanged. */
+/* Route /cash-book — M2-S: the real ledger of Cash in Hand.
+ * docs/design-system/pages/cash-book/README.md. */
 import { CashBook } from '@/screens/cashbook'
 import { Guard } from '@/components/guard'
-import { useFinsoft } from '@/app-context'
 
 export default function Page() {
-  const f = useFinsoft()
   return (
     <Guard module="Cash, Bank & GL">
-      <CashBook data={f.data} />
+      <CashBook />
     </Guard>
   )
 }

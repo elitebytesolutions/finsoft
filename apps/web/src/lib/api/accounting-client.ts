@@ -1,24 +1,31 @@
 /*
- * The M2 accounting API — journals, the account ledger and the trial balance. Built against
- * `docs/design/M2/api-contract.md` (M2-B, pushed 2026-09-29), routes marked **Built** only
- * (§0 status summary). Everything here goes through `apiFetch` (`client.ts`) — same-origin
- * `/api` base, the shared 401-refresh-retry and 403 → `/unauthorized` contract, nothing
+ * The M2 accounting API — journals, the account ledger, the trial balance, the chart of
+ * accounts (read-only) and fiscal periods (view/close/reopen — no lock route in M2, Council
+ * ruling). Built against `docs/design/M2/api-contract.md` on `feature/M2-B-accounting-api`
+ * (merged locally into this branch only, per the M2-S brief — not pushed, not yet on
+ * `develop`). Everything here goes through `apiFetch` (`client.ts`) — same-origin `/api`
+ * base, the shared 401-refresh-retry and 403 → `/unauthorized` contract, nothing
  * reimplemented.
  *
- * NOT wired here because the contract's own §5/§6 mark them blocked (no permission code, no
- * route mounted): `GET /api/accounts`, `GET /api/periods`, `POST /api/periods/:id/close`,
- * `POST /api/periods/:id/reopen`. Calling any of those would 404 — see the M2-S delivery
- * report, BLOCKED.
+ * `POST /api/accounts` and `POST /api/periods/:id/lock` are NOT wired here because they do
+ * not exist — the contract's own §5/§6: account creation conflicts with the APPROVED
+ * `coa-standard.md` §5 (chart is read-only in M2, a scope ruling, not a permission gap), and
+ * there is no `period.lock` permission or route by the Council's explicit ruling ("build
+ * view, close and reopen only"). Calling either would 404.
  */
 import { apiFetch } from './client'
 import type {
+  AccountsResponseDto,
+  FiscalPeriodDto,
   JournalListQuery,
   JournalListResponse,
   JournalEntryDetail,
   LedgerQuery,
   LedgerResponse,
+  PeriodsResponseDto,
   PostJournalRequest,
   PostJournalResponse,
+  ReopenPeriodRequest,
   ReverseJournalRequest,
   ReverseJournalResponse,
   TrialBalanceResponse,
@@ -114,4 +121,42 @@ export function getLedger(accountId: string, query: LedgerQuery): Promise<Ledger
  */
 export function getTrialBalance(asOf: string): Promise<TrialBalanceResponse> {
   return apiFetch<TrialBalanceResponse>(`/api/reports/trial-balance${toQueryString({ asOf })}`)
+}
+
+/**
+ * `GET /api/accounts` — the full chart, headers and postable accounts, ordered by code.
+ * Permission: `account.view`. Read-only: there is no create/edit/deactivate endpoint in M2
+ * (`coa-standard.md` §5) — build the tree client-side from `parentId`.
+ */
+export function listAccounts(): Promise<AccountsResponseDto> {
+  return apiFetch<AccountsResponseDto>('/api/accounts')
+}
+
+/** `GET /api/periods` — every fiscal period of the caller's tenant. Permission: `period.view`. */
+export function listPeriods(): Promise<PeriodsResponseDto> {
+  return apiFetch<PeriodsResponseDto>('/api/periods')
+}
+
+/**
+ * `POST /api/periods/:id/close` — no body. Permission: `period.close` (Owner, Accountant).
+ * Only when every earlier period is `CLOSED`/`LOCKED` — `409 period_close_out_of_order`
+ * otherwise. Produces no journal entry (periods.md §7).
+ */
+export function closePeriod(id: string): Promise<FiscalPeriodDto> {
+  return apiFetch<FiscalPeriodDto>(`/api/periods/${encodeURIComponent(id)}/close`, {
+    method: 'POST',
+  })
+}
+
+/**
+ * `POST /api/periods/:id/reopen` — Permission: `period.reopen` (**Owner only** — `period.close`
+ * does not imply it). Only the tenant's latest `CLOSED` period may be reopened —
+ * `409 period_reopen_out_of_order` otherwise, `409 PERIOD_LOCKED` for a locked one. `reason` is
+ * required.
+ */
+export function reopenPeriod(id: string, body: ReopenPeriodRequest): Promise<FiscalPeriodDto> {
+  return apiFetch<FiscalPeriodDto>(`/api/periods/${encodeURIComponent(id)}/reopen`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
 }
