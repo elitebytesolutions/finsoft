@@ -59,7 +59,18 @@ import {
 import { usePersistentData } from '@/mocks/api'
 import { MasterModal, ProductFormModal } from './master-form'
 import { EmployeeFormModal } from './employee-form'
-import { Button, Badge, PageHead, Kpi, Panel, SearchField, Modal, Table } from '@finsoft/ui'
+import {
+  Button,
+  Badge,
+  PageHead,
+  Kpi,
+  Panel,
+  SearchField,
+  Modal,
+  Table,
+  Field,
+  TextInput,
+} from '@finsoft/ui'
 import { money } from '@finsoft/ui'
 import { useAuth } from '@/lib/api/auth-context'
 import { useApiQuery } from '@/lib/api/use-api-query'
@@ -1580,6 +1591,7 @@ export function Admin({
 }) {
   const [tab, setTab] = useState(initialTab),
     navigate = useNavigate()
+  const { can } = useAuth()
   return (
     <>
       <PageHead
@@ -1587,21 +1599,31 @@ export function Admin({
         title="Admin & control"
         description="Manage people, permissions, periods and every security-sensitive action."
         actions={
-          <Button>
-            <Plus /> Invite user
-          </Button>
+          // "Invite user" has no endpoint behind it yet — shown disabled (Button's own
+          // "coming later" title) to a holder of admin.user_manage, hidden for anyone else,
+          // rather than offered as if it worked (M4-W course correction).
+          can('admin.user_manage') ? (
+            <Button disabled>
+              <Plus /> Invite user
+            </Button>
+          ) : undefined
         }
       />
-      <div className="admin-banner">
-        <span>
-          <ShieldCheck />
-        </span>
-        <div>
-          <b>Security posture is strong</b>
-          <p>2FA is enabled for 14 of 16 users. No unusual activity detected.</p>
+      {/* M4-W: the old banner claimed 2FA coverage and a security score neither of which
+          exist (MFA is GAP-003) — removed. Its slot stays in the layout; only the Audit log
+          tab has real data to say something honest with. Every other tab is still mock, so
+          the slot is simply empty there rather than showing invented content. */}
+      {tab === 'Audit log' && (
+        <div className="admin-banner">
+          <span>
+            <ShieldCheck />
+          </span>
+          <div>
+            <b>Audit trail</b>
+            <p>Every security-sensitive action, in order, with a tamper-evident hash chain.</p>
+          </div>
         </div>
-        <Badge tone="good">92 / 100</Badge>
-      </div>
+      )}
       <div className="tabs">
         {[
           'Users',
@@ -1690,29 +1712,35 @@ export function Admin({
  * `can('audit.view')` before ever calling the API and shows a Denied panel instead — never
  * a blank table that quietly 403s and redirects (docs/design-system/04-states.md §5).
  */
+/** The filters `AuditLogPanel` actually queries with — set only by Apply/Reset, never live
+ * on every keystroke, matching the Customers filter bar's own Apply Filters/Reset pattern. */
+interface AuditFilters {
+  from: string
+  to: string
+  action: string
+  entityType: string
+}
+const EMPTY_AUDIT_FILTERS: AuditFilters = { from: '', to: '', action: '', entityType: '' }
+
 function AuditLogPanel() {
-  const { can } = useAuth()
+  const { can, user } = useAuth()
   const allowed = can('audit.view')
-  const [from, setFrom] = useState('')
-  const [to, setTo] = useState('')
-  const [action, setAction] = useState('')
-  const [entityType, setEntityType] = useState('')
-  const [actor, setActor] = useState('')
+  const [draft, setDraft] = useState<AuditFilters>(EMPTY_AUDIT_FILTERS)
+  const [applied, setApplied] = useState<AuditFilters>(EMPTY_AUDIT_FILTERS)
   const [pages, setPages] = useState<AuditPage[]>([])
 
+  const query = (cursor?: string) => ({
+    from: applied.from ? new Date(applied.from).toISOString() : undefined,
+    to: applied.to ? new Date(applied.to).toISOString() : undefined,
+    action: applied.action || undefined,
+    entityType: applied.entityType || undefined,
+    limit: 50,
+    cursor,
+  })
+
   const { state, reload } = useApiQuery(
-    () =>
-      allowed
-        ? listAuditEvents({
-            from: from ? new Date(from).toISOString() : undefined,
-            to: to ? new Date(to).toISOString() : undefined,
-            action: action || undefined,
-            entityType: entityType || undefined,
-            actor: actor || undefined,
-            limit: 50,
-          })
-        : Promise.reject(new Error('denied')),
-    [allowed, from, to, action, entityType, actor],
+    () => (allowed ? listAuditEvents(query()) : Promise.reject(new Error('denied'))),
+    [allowed, applied],
   )
 
   useEffect(() => {
@@ -1733,15 +1761,14 @@ function AuditLogPanel() {
   const items = pages.flatMap((p) => p.items)
   const loadMore = () => {
     if (!lastPage?.nextCursor) return
-    listAuditEvents({
-      from: from ? new Date(from).toISOString() : undefined,
-      to: to ? new Date(to).toISOString() : undefined,
-      action: action || undefined,
-      entityType: entityType || undefined,
-      actor: actor || undefined,
-      limit: 50,
-      cursor: lastPage.nextCursor,
-    }).then((page) => setPages((prev) => [...prev, page]))
+    listAuditEvents(query(lastPage.nextCursor)).then((page) =>
+      setPages((prev) => [...prev, page]),
+    )
+  }
+  const applyFilters = () => setApplied(draft)
+  const resetFilters = () => {
+    setDraft(EMPTY_AUDIT_FILTERS)
+    setApplied(EMPTY_AUDIT_FILTERS)
   }
   const outcomeOf = (ev: AuditEvent): 'good' | 'warn' | 'danger' => {
     const a = ev.action.toUpperCase()
@@ -1751,45 +1778,47 @@ function AuditLogPanel() {
 
   return (
     <Panel title="Audit log" sub="Security-sensitive actions across the organisation, newest first">
-      <div className="toolbar" style={{ flexWrap: 'wrap', gap: 8 }}>
-        <label>
-          From{' '}
+      <div className="form-grid" style={{ marginBottom: 16 }}>
+        <Field label="From" htmlFor="audit-from">
           <input
-            aria-label="From date"
+            id="audit-from"
+            className="text-input"
             type="date"
-            value={from}
-            onChange={(e) => setFrom(e.target.value)}
-            max={to || todayIso()}
+            value={draft.from}
+            onChange={(e) => setDraft({ ...draft, from: e.target.value })}
+            max={draft.to || todayIso()}
           />
-        </label>
-        <label>
-          To{' '}
+        </Field>
+        <Field label="To" htmlFor="audit-to">
           <input
-            aria-label="To date"
+            id="audit-to"
+            className="text-input"
             type="date"
-            value={to}
-            onChange={(e) => setTo(e.target.value)}
+            value={draft.to}
+            onChange={(e) => setDraft({ ...draft, to: e.target.value })}
             max={todayIso()}
           />
-        </label>
-        <input
-          aria-label="Filter by action"
-          placeholder="Action (e.g. CUSTOMER_CREATED)"
-          value={action}
-          onChange={(e) => setAction(e.target.value)}
-        />
-        <input
-          aria-label="Filter by entity type"
-          placeholder="Entity type (e.g. customer)"
-          value={entityType}
-          onChange={(e) => setEntityType(e.target.value)}
-        />
-        <input
-          aria-label="Filter by actor id"
-          placeholder="Actor id"
-          value={actor}
-          onChange={(e) => setActor(e.target.value)}
-        />
+        </Field>
+        <Field label="Action" htmlFor="audit-action" helper="e.g. CUSTOMER_CREATED">
+          <TextInput
+            id="audit-action"
+            value={draft.action}
+            onChange={(v) => setDraft({ ...draft, action: v })}
+          />
+        </Field>
+        <Field label="Entity type" htmlFor="audit-entity-type" helper="e.g. customer">
+          <TextInput
+            id="audit-entity-type"
+            value={draft.entityType}
+            onChange={(v) => setDraft({ ...draft, entityType: v })}
+          />
+        </Field>
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
+          <Button onClick={applyFilters}>Apply filters</Button>
+          <Button kind="secondary" onClick={resetFilters}>
+            Reset
+          </Button>
+        </div>
       </div>
 
       {state.status === 'loading' && <div className="empty-state">Loading audit events…</div>}
@@ -1803,7 +1832,8 @@ function AuditLogPanel() {
       )}
       {state.status === 'ready' && items.length === 0 && (
         <div className="empty-state">
-          No audit events for {from || 'the start'} to {to || 'today'} with these filters.
+          No audit events for {applied.from || 'the start'} to {applied.to || 'today'} with these
+          filters.
         </div>
       )}
       {state.status === 'ready' && items.length > 0 && (
@@ -1812,7 +1842,9 @@ function AuditLogPanel() {
             headers={['Timestamp', 'User', 'Action', 'Entity', 'Detail', 'Outcome']}
             rows={items.map((ev) => [
               <time dateTime={ev.occurredAt}>{ev.occurredAt.replace('T', ' ').slice(0, 19)}</time>,
-              actorLabel(ev.actorUserId),
+              <span title={ev.actorUserId ?? undefined}>
+                {actorLabel(ev.actorUserId, user?.id)}
+              </span>,
               humanizeAction(ev.action),
               `${ev.entityType} · ${entityLabel(ev.entityId)}`,
               humanizeAction(ev.action),

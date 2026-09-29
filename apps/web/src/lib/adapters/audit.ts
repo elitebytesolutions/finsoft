@@ -16,11 +16,19 @@ export function humanizeAction(action: string): string {
   return words[0].charAt(0).toUpperCase() + words[0].slice(1) + ' ' + words.slice(1).join(' ')
 }
 
-/** A short "who" label from an actor id alone — no user-directory lookup is in this lane's
+/**
+ * A short "who" label from an actor id alone — no user-directory lookup is in this lane's
  * scope (OBSERVED in the M4-W report), so this is deliberately not a real name. `null` is a
- * genuine, documented case (migration 009): a job/system action, or the chain-anchor row. */
-export function actorLabel(actorUserId: string | null): string {
-  return actorUserId ? actorUserId.slice(0, 8) : 'System'
+ * genuine, documented case (migration 009): a job/system action, or the chain-anchor row.
+ * `currentUserId` (from `useAuth().user.id`) lets the one id a viewer can actually recognise
+ * — their own — read as "You" instead of a meaningless fragment; every other id stays a
+ * short, clearly-a-fragment "User · 9d92…" rather than the raw uuid (which both overflows a
+ * pill and asks the reader to do the id-matching by eye).
+ */
+export function actorLabel(actorUserId: string | null, currentUserId?: string | null): string {
+  if (!actorUserId) return 'System'
+  if (currentUserId && actorUserId === currentUserId) return 'You'
+  return `User · ${actorUserId.slice(0, 4)}…`
 }
 
 /** A short "what" label from an entity id alone. `null` when the event has no single
