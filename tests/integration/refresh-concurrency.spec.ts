@@ -49,11 +49,14 @@ function delay(ms: number): Promise<void> {
  * transaction stays open — not "slow to notice", genuinely never, across
  * 20 polls / 6 seconds. This reproduced with both the original `pg_locks`
  * `NOT granted` count and a `pg_blocking_pids()`-based count: the query
- * text was never the defect, the CONNECTION issuing it was. (Likely cause:
- * once a session has taken a real row lock, `pg_stat_activity` as queried
- * from THAT session stops reflecting backends that registered afterward —
- * observed on PostgreSQL 17.10; not chased further since the fix below
- * sidesteps it entirely rather than depending on its exact mechanism.)
+ * text was never the defect, the CONNECTION issuing it was. (Cause, per
+ * the Security seat's review: PostgreSQL snapshots the cumulative-stats
+ * views, `pg_stat_activity` included, ONCE per transaction and holds that
+ * snapshot until the transaction ends. Any open transaction does this, not
+ * specifically a row lock, so backends that connect after the first poll
+ * stay invisible to that session. That explains the flakiness: in a full
+ * run, pool connections that already existed were visible; in an isolated
+ * run, fresh ones were not.)
  *
  * The fix: poll from a connection that is NOT the lock holder — a plain,
  * no-open-transaction connection, opened once and reused for every poll.
