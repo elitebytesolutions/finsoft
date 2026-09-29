@@ -248,7 +248,10 @@ function renderNodes(
 export function Shell({
   children,
   role,
-  setRole,
+  // Prop kept (app-frame.tsx still passes it) for whichever mock screen down the tree
+  // still reads FinsoftContext's setRole — the topbar's own role switcher that used to
+  // call it directly was removed (M4-W: the header shows the real role now).
+  setRole: _setRole,
 }: {
   children: ReactNode
   role: string

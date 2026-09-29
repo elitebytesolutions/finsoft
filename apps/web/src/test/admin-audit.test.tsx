@@ -107,26 +107,32 @@ describe('Admin — Audit log tab (real API)', () => {
     await waitFor(() => expect(screen.getByText(/no audit events for/i)).toBeInTheDocument())
   })
 
-  it('filters by action and entity type via the real query', async () => {
+  it('filters by action and entity type only after Apply filters, via the kit Field/TextInput', async () => {
     const fetchMock = fetch as ReturnType<typeof vi.fn>
     let lastUrl = ''
+    let calls = 0
     fetchMock.mockImplementation((url: string) => {
       lastUrl = url
+      calls += 1
       return Promise.resolve(jsonResponse(200, { items: [], nextCursor: null }))
     })
 
     renderScreen()
     await waitFor(() => expect(screen.getByText(/no audit events for/i)).toBeInTheDocument())
+    const callsBeforeTyping = calls
 
-    fireEvent.change(screen.getByLabelText('Filter by action'), {
-      target: { value: 'CUSTOMER_CREATED' },
-    })
-    fireEvent.change(screen.getByLabelText('Filter by entity type'), {
-      target: { value: 'customer' },
-    })
+    fireEvent.change(screen.getByLabelText('Action'), { target: { value: 'CUSTOMER_CREATED' } })
+    fireEvent.change(screen.getByLabelText('Entity type'), { target: { value: 'customer' } })
+    // Typing alone must not re-query — only Apply filters does (the Customers filter bar's
+    // own Apply/Reset pattern, not a live-as-you-type query).
+    expect(calls).toBe(callsBeforeTyping)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Apply filters' }))
 
     await waitFor(() => expect(lastUrl).toContain('action=CUSTOMER_CREATED'))
     expect(lastUrl).toContain('entityType=customer')
+    // There is no Actor id filter any more — no endpoint exists to resolve one to a name.
+    expect(screen.queryByLabelText(/actor/i)).not.toBeInTheDocument()
   })
 
   it('never calls the API and shows Denied for a caller without audit.view — a Viewer', async () => {
@@ -139,5 +145,53 @@ describe('Admin — Audit log tab (real API)', () => {
       screen.getByText(/your role does not have permission to view the audit trail/i),
     ).toBeInTheDocument()
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('shows "You" for the signed-in user\'s own events and a short id for anyone else', async () => {
+    const fetchMock = fetch as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, {
+        items: [{ ...AUDIT_PAGE.items[0], actorUserId: 'u1' }, AUDIT_PAGE.items[1]],
+        nextCursor: null,
+      }),
+    )
+
+    renderScreen()
+
+    await waitFor(() => expect(screen.getByText('You')).toBeInTheDocument())
+    expect(screen.getByText('User · user…')).toBeInTheDocument()
+    expect(screen.queryByText('user-bbbbbbbb-1111')).not.toBeInTheDocument()
+  })
+
+  it('shows no fabricated security-posture banner, and an honest one instead', async () => {
+    const fetchMock = fetch as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValue(jsonResponse(200, { items: [], nextCursor: null }))
+
+    renderScreen()
+    await waitFor(() => expect(screen.getByText(/no audit events for/i)).toBeInTheDocument())
+
+    expect(screen.queryByText(/security posture is strong/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/2fa is enabled/i)).not.toBeInTheDocument()
+    expect(screen.queryByText('92 / 100')).not.toBeInTheDocument()
+    expect(
+      screen.getByText(
+        /every security-sensitive action, in order, with a tamper-evident hash chain/i,
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it('shows Invite user disabled for admin.user_manage, and hides it otherwise', async () => {
+    const fetchMock = fetch as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValue(jsonResponse(200, { items: [], nextCursor: null }))
+
+    const { unmount } = renderScreen((code) => code === 'admin.user_manage')
+    await waitFor(() => expect(screen.getByRole('button', { name: /invite user/i })).toBeDisabled())
+    unmount()
+
+    renderScreen(() => false)
+    await waitFor(() =>
+      expect(screen.getAllByRole('heading', { level: 1 }).length).toBeGreaterThan(0),
+    )
+    expect(screen.queryByRole('button', { name: /invite user/i })).not.toBeInTheDocument()
   })
 })

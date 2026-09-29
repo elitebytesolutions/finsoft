@@ -1761,9 +1761,7 @@ function AuditLogPanel() {
   const items = pages.flatMap((p) => p.items)
   const loadMore = () => {
     if (!lastPage?.nextCursor) return
-    listAuditEvents(query(lastPage.nextCursor)).then((page) =>
-      setPages((prev) => [...prev, page]),
-    )
+    listAuditEvents(query(lastPage.nextCursor)).then((page) => setPages((prev) => [...prev, page]))
   }
   const applyFilters = () => setApplied(draft)
   const resetFilters = () => {

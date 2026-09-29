@@ -1458,7 +1458,7 @@ function useParty(data: AppData, kind: Kind) {
 export function CustomerDetail() {
   const navigate = useNavigate()
   const { id } = useParams()
-  const { can } = useAuth()
+  const { can, user } = useAuth()
   const [tab, setTab] = useState('All Transactions')
   const [openRow, setOpenRow] = useState<string | null>(null)
   const [statusOpen, setStatusOpen] = useState(false)
@@ -1822,8 +1822,8 @@ export function CustomerDetail() {
               </select>
             </label>
             <label>
-              Credit Limit <small>(not tracked yet)</small>
-              <input value="" disabled placeholder="Not part of this release" />
+              Credit Limit
+              <input value="Not tracked yet" disabled readOnly />
             </label>
           </div>
           {saveError && (
@@ -1895,7 +1895,9 @@ export function CustomerDetail() {
                         {ev.entityType} · {entityLabel(ev.entityId)}
                       </small>
                     </div>
-                    <span>{actorLabel(ev.actorUserId)}</span>
+                    <span title={ev.actorUserId ?? undefined} style={{ whiteSpace: 'nowrap' }}>
+                      {actorLabel(ev.actorUserId, user?.id)}
+                    </span>
                   </li>
                 ))}
               </ul>
