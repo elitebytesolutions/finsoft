@@ -591,6 +591,185 @@ const authLookupIdentifierSyntax = [
   },
 ]
 
+/*
+ * modules/** — ADR-0028, M3-C's first PR. C6, C7, C8, S1, S2.
+ *
+ * A module is the same "ships TypeScript source, runs under Node type
+ * stripping" shape as packages/*, plus its own boundary: no NestJS/HTTP
+ * framework (controllers live in apps/api/src/<module>/, statement 4),
+ * withTenant opened only in application/ (statement 6), query construction
+ * only in infrastructure/ (statement 8, README §5 item 3), and — S2 — every
+ * builder call in a module's infrastructure/ names only that module's own
+ * table.
+ */
+
+/** S1: modules/** never imports the pg driver directly — packages/database owns it (ADR-0013). */
+const PG_DRIVER_IMPORT_BAN = {
+  name: 'pg',
+  message: 'ADR-0013: the pg driver lives in packages/database only. A module never imports it.',
+}
+
+/**
+ * S1: modules/** never imports packages/database's auth/login query surface
+ * — that subpath is packages/auth's own query surface (ADR-0023), and a
+ * module has no legitimate reason to reach it.
+ */
+const DATABASE_AUTH_IMPORT_BAN = {
+  name: '@finsoft/database/auth',
+  message:
+    'ADR-0023: @finsoft/database/auth is the auth/login query surface for packages/auth. ' +
+    'modules/** has no legitimate reason to import it.',
+}
+
+/** ADR-0028 C6: withGlobal is never used in modules/** — a module is always tenant-scoped. */
+const WITHGLOBAL_MODULES_BAN = {
+  name: '@finsoft/database',
+  importNames: ['withGlobal'],
+  message:
+    'ADR-0028 C6: withGlobal is not used in modules/**. A module unit of work is always ' +
+    'tenant-scoped — see withTenant, opened once in application/.',
+}
+
+/**
+ * ADR-0028 statement 6 / C6: withTenant is opened ONLY in application/ — a
+ * state-changing use case is ONE withTenant(tx => …) unit of work, opened
+ * there. api/, infrastructure/ and index.ts all RECEIVE a TenantTx as a
+ * parameter (from application/, or from apps/api's caller); none of them
+ * opens one itself. Composed into a block that `ignores` modules/*\/application/**.
+ */
+const WITHTENANT_OUTSIDE_APPLICATION_BAN = {
+  name: '@finsoft/database',
+  importNames: ['withTenant'],
+  message:
+    'ADR-0028 statement 6 / C6: withTenant is opened only inside modules/*/application/** — ' +
+    'one unit of work per state-changing use case. api/, infrastructure/, domain/ and index.ts ' +
+    'receive a TenantTx as a parameter and never open a transaction themselves.',
+}
+
+/** The full modules/** import-ban list every layer shares (S1: composes the four platform bans). */
+const MODULES_IMPORT_BAN_PATHS = [
+  ...DECIMAL_LIB_IMPORT_PATHS,
+  REQUEST_SCOPE_IMPORT_BAN,
+  TENANT_CONTEXT_IMPORT_BAN,
+  TESTING_IMPORT_BAN,
+  PROVISIONING_IMPORT_BAN,
+  PG_DRIVER_IMPORT_BAN,
+  DATABASE_AUTH_IMPORT_BAN,
+  WITHGLOBAL_MODULES_BAN,
+]
+
+/** ADR-0028 statement 1 / C6: no NestJS controllers/decorators anywhere in modules/**. */
+const noDecoratorsSyntax = [
+  {
+    selector: 'Decorator',
+    message:
+      'ADR-0028 statement 1/4: modules/** has no decorators. A module runs under Node type ' +
+      'stripping, which cannot load emitDecoratorMetadata output — controllers are thin ' +
+      'adapters in apps/api/src/<module>/, not inside the module.',
+  },
+]
+
+/**
+ * C7: query construction lives ONLY in modules/*\/infrastructure/**
+ * (README §5 item 3 / ADR-0028 statement 8). Extends `appsQuerySyntax`'s
+ * builder-call selectors with a ban on the `sql` tagged template too — a
+ * module's api/, application/ and domain/ layers, and its index.ts, receive
+ * a TenantTx as a parameter, which dependency-cruiser cannot see (the same
+ * gap `appsQuerySyntax` exists to close for apps/**).
+ */
+const moduleNonInfraQuerySyntax = [
+  ...appsQuerySyntax.map((rule) => ({
+    ...rule,
+    message:
+      'ADR-0028 C7 / docs/design/M3/README.md §5 item 3: query construction lives only in ' +
+      "modules/*/infrastructure/**. Receiving a TenantTx through a parameter doesn't make " +
+      'this the data layer. Put the query behind infrastructure/ and call that.',
+  })),
+  {
+    selector: "TaggedTemplateExpression[tag.name='sql']",
+    message:
+      'ADR-0028 C7: an sql`` tag outside modules/*/infrastructure/** is query construction in ' +
+      'the wrong layer.',
+  },
+]
+
+/**
+ * S2: table-ownership escape hatches, banned everywhere in modules/** (not
+ * only infrastructure/) — a dynamic identifier defeats the literal-match
+ * table-ownership check below, so the escape hatches themselves are the
+ * thing that must never exist, not merely the table names they could name.
+ */
+const noDynamicTableEscapeHatchSyntax = [
+  {
+    selector: "CallExpression[callee.object.name='sql'][callee.property.name=/^(table|ref)$/]",
+    message:
+      'S2 (ADR-0028): sql.table/sql.ref build a table reference from a runtime string, which ' +
+      'defeats the table-ownership check by construction. Not used in modules/**.',
+  },
+  {
+    selector: "MemberExpression[object.name='db'][property.name='dynamic']",
+    message:
+      'S2 (ADR-0028): db.dynamic builds a table reference from a runtime string — same reason ' +
+      'as sql.table/sql.ref. Not used in modules/**.',
+  },
+  {
+    selector: "Identifier[name='CompiledQuery']",
+    message:
+      'S2 (ADR-0028): CompiledQuery runs a query the builder never saw, bypassing the ' +
+      'table-ownership check entirely. Not used in modules/**.',
+  },
+  {
+    selector: "CallExpression[callee.property.name='executeQuery']",
+    message:
+      'S2 (ADR-0028): executeQuery runs a pre-compiled/raw query, bypassing the ' +
+      'table-ownership check. Not used in modules/**.',
+  },
+]
+
+/**
+ * C8 / S2: `modules/customers/infrastructure/**` names only its own table,
+ * `customers`. The literal must match as an EXACT identifier after any
+ * ` as alias` suffix is stripped — `'customers as c'` passes, `'customers_x'`
+ * and `'parties'` do not (S2's own two named examples). A table argument
+ * that is not a string literal at all is ALSO an error ("fails closed") —
+ * a dynamic name is exactly what `noDynamicTableEscapeHatchSyntax` above
+ * cannot see coming from a variable rather than one of its named escape
+ * hatches, so the builder-call selector itself must reject anything that
+ * isn't a literal, not merely a literal naming the wrong table.
+ */
+const BUILDER_METHODS =
+  'selectFrom|insertInto|updateTable|deleteFrom|mergeInto|(inner|left|right|full)Join'
+function tableOwnershipSyntax(table) {
+  const allowedLiteral = `/^${table}(\\s+as\\s+[A-Za-z_][A-Za-z0-9_]*)?$/`
+  const message =
+    `C8 / S2 (ADR-0028): modules/${table}/infrastructure/** names only its own table, ` +
+    `'${table}' (optionally aliased, e.g. '${table} as x'). A builder call naming any other ` +
+    'table, or a non-literal (dynamic) table argument, is a lint error — the check fails closed.'
+  return [
+    {
+      selector:
+        `CallExpression[callee.property.name=/^(${BUILDER_METHODS})$/]` +
+        `[arguments.0.type='Literal']:not([arguments.0.value=${allowedLiteral}])`,
+      message,
+    },
+    {
+      selector:
+        `CallExpression[callee.property.name=/^(${BUILDER_METHODS})$/]` +
+        `:not([arguments.0.type='Literal'])`,
+      message,
+    },
+    {
+      // A DML clause (FROM/INTO/UPDATE/JOIN) naming anything other than
+      // this table. Fails closed for any table name not yet written, not
+      // just a fixed deny-list — the negative lookahead is the whole point.
+      selector: `TaggedTemplateExpression[tag.name='sql'] TemplateElement[value.raw=/\\b(from|into|update|join)\\s+"?(?!${table}\\b)[a-z_][a-z0-9_]*"?\\b/i]`,
+      message:
+        `C8 / S2 (ADR-0028): an sql\`\` tag in modules/${table}/infrastructure/** named a table ` +
+        `other than '${table}'.`,
+    },
+  ]
+}
+
 export default tseslint.config(
   {
     ignores: [
@@ -953,6 +1132,43 @@ export default tseslint.config(
   },
 
   /* ---------------------------------------------------------------- *
+   * ADR-0028 statement 4 / C6: apps/api/src/customers/** controllers open
+   * no transaction — they validate with the module's zod schema, call ONE
+   * use case (which opens its own withTenant unit of work inside
+   * modules/customers/application/), map the result, and declare
+   * @RequirePermission. Neither withTenant nor withGlobal belongs here. A
+   * LATER, more specific block than the generic apps/** one below, so it
+   * restates that block's full list rather than losing it.
+   * ---------------------------------------------------------------- */
+  {
+    files: ['apps/api/src/customers/**/*.ts'],
+    ignores: ['apps/api/src/customers/**/*.spec.ts', 'apps/api/src/customers/**/*.test.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            ...DECIMAL_LIB_IMPORT_PATHS,
+            REQUEST_SCOPE_IMPORT_BAN,
+            TENANT_CONTEXT_IMPORT_BAN,
+            TESTING_IMPORT_BAN,
+            PROVISIONING_IMPORT_BAN,
+            WITHGLOBAL_MODULES_BAN,
+            {
+              name: '@finsoft/database',
+              importNames: ['withTenant'],
+              message:
+                'ADR-0028 statement 4 / C6: apps/api/src/customers/** controllers open no ' +
+                'transaction. Call one use case from @finsoft/customers, which opens its own ' +
+                'withTenant unit of work inside modules/customers/application/.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+
+  /* ---------------------------------------------------------------- *
    * apps/worker — everything the block above applies, PLUS strip-only.
    *
    * Split out rather than folded in, because the two apps are compiled
@@ -1273,14 +1489,117 @@ export default tseslint.config(
       'no-restricted-imports': [
         'error',
         {
-          paths: [
-            ...DECIMAL_LIB_IMPORT_PATHS,
-            REQUEST_SCOPE_IMPORT_BAN,
-            TENANT_CONTEXT_IMPORT_BAN,
-            TESTING_IMPORT_BAN,
-            PROVISIONING_IMPORT_BAN,
+          paths: MODULES_IMPORT_BAN_PATHS,
+          patterns: [
+            {
+              // ADR-0028 statements 1/4/21: no NestJS, express or fastify
+              // anywhere in modules/** — controllers are thin adapters in
+              // apps/api/src/<module>/, never inside the module itself.
+              group: ['@nestjs/*', 'express', 'fastify'],
+              message:
+                'ADR-0028 statement 1: modules/** has no NestJS, express or fastify import. ' +
+                'Controllers live in apps/api/src/<module>/.',
+            },
           ],
         },
+      ],
+      // C6: every syntax invariant the rest of the codebase already proves,
+      // plus stripOnlySyntax (a module runs under Node type stripping, same
+      // as packages/*) and a decorator ban (no NestJS decorators can appear
+      // even without an @nestjs/* import — a local re-declaration would
+      // still be meaningless, but this also catches the honest case of a
+      // decorator copied in from apps/api by habit).
+      'no-restricted-syntax': [
+        'error',
+        ...invariantSyntax,
+        ...connectionOwnershipSyntax,
+        ...authLookupIdentifierSyntax,
+        ...financialTruthWriteSyntax,
+        ...stripOnlySyntax,
+        ...noDecoratorsSyntax,
+        ...noDynamicTableEscapeHatchSyntax,
+      ],
+    },
+  },
+
+  /* ---------------------------------------------------------------- *
+   * ADR-0028 statement 6 / C6: withTenant is opened ONLY inside
+   * modules/*\/application/**. A LATER, more specific block than the one
+   * just above — flat config replaces no-restricted-imports per matching
+   * file, so this restates the full list (S1's platform bans plus the
+   * @nestjs/express/fastify pattern) rather than losing them for every
+   * non-application module file the moment this block also matches.
+   * ---------------------------------------------------------------- */
+  {
+    files: ['modules/**/*.ts', 'modules/**/*.tsx'],
+    ignores: ['modules/*/application/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [...MODULES_IMPORT_BAN_PATHS, WITHTENANT_OUTSIDE_APPLICATION_BAN],
+          patterns: [
+            {
+              group: ['@nestjs/*', 'express', 'fastify'],
+              message:
+                'ADR-0028 statement 1: modules/** has no NestJS, express or fastify import. ' +
+                'Controllers live in apps/api/src/<module>/.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+
+  /* ---------------------------------------------------------------- *
+   * C7 (ADR-0028) / docs/design/M3/README.md §5 item 3: query construction
+   * outside modules/*\/infrastructure/** is a lint error, in api/,
+   * application/, domain/ and the composition root index.ts alike.
+   * dependency-cruiser cannot see a TenantTx arriving as a parameter, which
+   * is exactly how the readiness probe once built queries in apps/api's
+   * HTTP layer (ADR-0013 "Receiving a handle...") — same gap, same fix.
+   * ---------------------------------------------------------------- */
+  {
+    files: [
+      'modules/*/api/**/*.ts',
+      'modules/*/application/**/*.ts',
+      'modules/*/domain/**/*.ts',
+      'modules/*/index.ts',
+    ],
+    ignores: ['modules/**/*.spec.ts', 'modules/**/*.test.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        ...invariantSyntax,
+        ...connectionOwnershipSyntax,
+        ...authLookupIdentifierSyntax,
+        ...financialTruthWriteSyntax,
+        ...stripOnlySyntax,
+        ...noDecoratorsSyntax,
+        ...noDynamicTableEscapeHatchSyntax,
+        ...moduleNonInfraQuerySyntax,
+      ],
+    },
+  },
+
+  /* ---------------------------------------------------------------- *
+   * C8 / S2 (ADR-0028): modules/customers/infrastructure/** names only its
+   * own table. M3-P adds the receivables block alongside this one.
+   * ---------------------------------------------------------------- */
+  {
+    files: ['modules/customers/infrastructure/**/*.ts'],
+    ignores: ['modules/customers/infrastructure/**/*.spec.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        ...invariantSyntax,
+        ...connectionOwnershipSyntax,
+        ...authLookupIdentifierSyntax,
+        ...financialTruthWriteSyntax,
+        ...stripOnlySyntax,
+        ...noDecoratorsSyntax,
+        ...noDynamicTableEscapeHatchSyntax,
+        ...tableOwnershipSyntax('customers'),
       ],
     },
   },

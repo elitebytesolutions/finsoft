@@ -1359,3 +1359,389 @@ describe('app.tenant_id in a TEMPLATE LITERAL (ADR-0004)', () => {
     expect(matching(angle, 'never asserted')).not.toHaveLength(0)
   })
 })
+
+/* ====================================================================== *
+ * ADR-0028, M3-C's first PR. C6 (decorators, strip-only, framework bans,
+ * withTenant/withGlobal placement), C7 (query construction confined to
+ * infrastructure/), C8 + S2 (table ownership), S1 (the platform bans still
+ * fire per layer, and both TenantContext/withGlobal entries fire on the
+ * same specifier).
+ * ====================================================================== */
+
+describe('modules/** has no decorators and no NestJS/HTTP framework (ADR-0028 statement 1, C6)', () => {
+  it('catches a decorator in a module file', async () => {
+    const messages = await messagesFor(
+      'modules/customers/application/x.ts',
+      '@Injectable()\nexport class X {}',
+    )
+    expect(matching(messages, 'modules/** has no decorators')).toHaveLength(1)
+  })
+
+  it('catches an @nestjs/* import anywhere in modules/**', async () => {
+    const messages = await messagesFor(
+      'modules/customers/application/x.ts',
+      "import { Injectable } from '@nestjs/common'\nexport const x = Injectable",
+    )
+    expect(matching(messages, 'modules/** has no NestJS, express or fastify import')).toHaveLength(
+      1,
+    )
+  })
+
+  it('catches express and fastify too', async () => {
+    for (const pkg of ['express', 'fastify']) {
+      const messages = await messagesFor(
+        'modules/customers/infrastructure/x.ts',
+        `import x from '${pkg}'\nexport const y = x`,
+      )
+      expect(
+        matching(messages, 'modules/** has no NestJS, express or fastify import'),
+        pkg,
+      ).toHaveLength(1)
+    }
+  })
+
+  it('catches a parameter property, an enum and a namespace (strip-only, same as packages/*)', async () => {
+    const cases = {
+      'a parameter property': 'export class A { constructor(private readonly b: string) {} }',
+      'an enum': 'export enum E { A, B }',
+      'a namespace': 'export namespace N { export const a = 1 }',
+    }
+    for (const [label, code] of Object.entries(cases)) {
+      const messages = await messagesFor('modules/customers/domain/x.ts', code)
+      expect(matching(messages, 'strip-only'), label).not.toHaveLength(0)
+    }
+  })
+
+  it('leaves the real customers.controller.ts (apps/api, SWC-built) alone — decorators belong there', async () => {
+    const messages = await messagesFor(
+      'apps/api/src/customers/x.controller.ts',
+      "import { Controller } from '@nestjs/common'\n@Controller('x')\nexport class X {}",
+    )
+    expect(matching(messages, 'modules/** has no decorators')).toEqual([])
+  })
+})
+
+describe('withTenant opens only inside modules/*/application/** (ADR-0028 statement 6, C6)', () => {
+  it('catches withTenant imported in infrastructure/', async () => {
+    const messages = await messagesFor(
+      'modules/customers/infrastructure/x.ts',
+      "import { withTenant } from '@finsoft/database'\nexport const w = withTenant",
+    )
+    expect(matching(messages, 'withTenant is opened only inside')).toHaveLength(1)
+  })
+
+  it('catches withTenant imported in api/', async () => {
+    const messages = await messagesFor(
+      'modules/customers/api/x.ts',
+      "import { withTenant } from '@finsoft/database'\nexport const w = withTenant",
+    )
+    expect(matching(messages, 'withTenant is opened only inside')).toHaveLength(1)
+  })
+
+  it('catches withTenant imported in domain/ — via the STRONGER, domain-specific ban', async () => {
+    // domain/ has its own, more specific no-restricted-imports block (a
+    // blanket @finsoft/database ban — ARCHITECTURE §2: "domain/ never sees
+    // a connection or a row type"), which flat config REPLACES the general
+    // modules/** withTenant-outside-application block with. The import is
+    // still caught, just by the stronger rule and a different message.
+    const messages = await messagesFor(
+      'modules/customers/domain/x.ts',
+      "import { withTenant } from '@finsoft/database'\nexport const w = withTenant",
+    )
+    expect(matching(messages, 'domain/ never sees a connection or a row type')).toHaveLength(1)
+  })
+
+  it("catches withTenant imported in the module's index.ts", async () => {
+    const messages = await messagesFor(
+      'modules/customers/index.ts',
+      "import { withTenant } from '@finsoft/database'\nexport const w = withTenant",
+    )
+    expect(matching(messages, 'withTenant is opened only inside')).toHaveLength(1)
+  })
+
+  it('leaves application/ alone — the one layer allowed to open one', async () => {
+    const messages = await messagesFor(
+      'modules/customers/application/x.ts',
+      "import { withTenant } from '@finsoft/database'\nexport const w = withTenant",
+    )
+    expect(matching(messages, 'withTenant is opened only inside')).toEqual([])
+  })
+
+  it('catches withGlobal in every non-domain layer (a module is always tenant-scoped)', async () => {
+    for (const file of [
+      'modules/customers/application/x.ts',
+      'modules/customers/infrastructure/x.ts',
+      'modules/customers/api/x.ts',
+      'modules/customers/index.ts',
+    ]) {
+      const messages = await messagesFor(
+        file,
+        "import { withGlobal } from '@finsoft/database'\nexport const w = withGlobal",
+      )
+      expect(matching(messages, 'withGlobal is not used in modules'), file).toHaveLength(1)
+    }
+  })
+
+  it('catches withGlobal in domain/ too — via the stronger, domain-specific ban', async () => {
+    const messages = await messagesFor(
+      'modules/customers/domain/x.ts',
+      "import { withGlobal } from '@finsoft/database'\nexport const w = withGlobal",
+    )
+    expect(matching(messages, 'domain/ never sees a connection or a row type')).toHaveLength(1)
+  })
+
+  it('the withTenant-outside-application ban has no spec/test exemption — it fires on a module spec file too', async () => {
+    // Unlike the C6/C7/C8 syntax blocks (which DO ignore *.spec.ts/*.test.ts),
+    // this specific no-restricted-imports block carries no such exemption.
+    // ADR-0028 statement 10's unit tests are domain/api-contract tests with
+    // "no database" — they have no legitimate reason to import withTenant
+    // either, so the stricter behaviour is intentional, not a gap; pinned
+    // here so a future change to the ignore list is a deliberate edit.
+    const messages = await messagesFor(
+      'modules/customers/infrastructure/x.spec.ts',
+      "import { withTenant } from '@finsoft/database'\nexport const w = withTenant",
+    )
+    expect(matching(messages, 'withTenant is opened only inside')).toHaveLength(1)
+  })
+})
+
+describe('S1: the platform bans still fire, per module layer, and both entries fire on one specifier', () => {
+  const layers = [
+    'modules/customers/api/x.ts',
+    'modules/customers/application/x.ts',
+    'modules/customers/infrastructure/x.ts',
+    'modules/customers/index.ts',
+  ]
+
+  it.each(layers)('TenantContext still fires in %s', async (file) => {
+    const messages = await messagesFor(
+      file,
+      "import { TenantContext } from '@finsoft/database'\nexport const t = TenantContext",
+    )
+    expect(matching(messages, 'M1-X T2')).toHaveLength(1)
+  })
+
+  it.each(layers)('@finsoft/database/testing still fires in %s', async (file) => {
+    const messages = await messagesFor(
+      file,
+      "import { runAs } from '@finsoft/database/testing'\nexport const r = runAs",
+    )
+    expect(matching(messages, 'Council re-review 1')).toHaveLength(1)
+  })
+
+  it.each(layers)('@finsoft/database/provisioning still fires in %s', async (file) => {
+    const messages = await messagesFor(
+      file,
+      "import { createTenant } from '@finsoft/database/provisioning'\nexport const c = createTenant",
+    )
+    expect(matching(messages, 'Council re-review 1')).toHaveLength(1)
+  })
+
+  it.each(layers)('@finsoft/database/request-scope still fires in %s', async (file) => {
+    const messages = await messagesFor(
+      file,
+      "import { withTenantAsPrincipal } from '@finsoft/database/request-scope'\nexport const w = withTenantAsPrincipal",
+    )
+    expect(matching(messages, 'M1-X T1')).toHaveLength(1)
+  })
+
+  it.each(layers)('pg still fires in %s (S1)', async (file) => {
+    const messages = await messagesFor(file, "import { Pool } from 'pg'\nexport const p = Pool")
+    expect(matching(messages, 'the pg driver lives in packages/database only')).toHaveLength(1)
+  })
+
+  it.each(layers)('@finsoft/database/auth still fires in %s (S1)', async (file) => {
+    const messages = await messagesFor(
+      file,
+      "import { findLoginCandidate } from '@finsoft/database/auth'\nexport const f = findLoginCandidate",
+    )
+    expect(matching(messages, 'the auth/login query surface')).toHaveLength(1)
+  })
+
+  it('both the withGlobal ban AND the TenantContext ban fire on the same @finsoft/database specifier', async () => {
+    const messages = await messagesFor(
+      'modules/customers/infrastructure/x.ts',
+      "import { TenantContext, withGlobal } from '@finsoft/database'\nexport const x = [TenantContext, withGlobal]",
+    )
+    expect(matching(messages, 'M1-X T2')).toHaveLength(1)
+    expect(matching(messages, 'withGlobal is not used in modules')).toHaveLength(1)
+  })
+})
+
+describe('C7 (ADR-0028): query construction is confined to modules/*/infrastructure/**', () => {
+  const nonInfra = [
+    'modules/customers/api/x.ts',
+    'modules/customers/application/x.ts',
+    'modules/customers/domain/x.ts',
+    'modules/customers/index.ts',
+  ]
+
+  it.each(nonInfra)('catches a builder call received on a parameter, in %s', async (file) => {
+    const messages = await messagesFor(
+      file,
+      "export function w(tx: any) { return tx.selectFrom('customers').selectAll().execute() }",
+    )
+    expect(matching(messages, 'query construction lives only in')).toHaveLength(1)
+  })
+
+  it.each(nonInfra)('catches an sql`` tag in %s', async (file) => {
+    const messages = await messagesFor(
+      file,
+      "import { sql } from 'kysely'\nexport const q = sql`select 1`",
+    )
+    expect(matching(messages, 'sql`` tag outside modules')).toHaveLength(1)
+  })
+
+  it('leaves infrastructure/ alone — the one layer allowed to build a query', async () => {
+    const messages = await messagesFor(
+      'modules/customers/infrastructure/x.ts',
+      "export function w(tx: any) { return tx.selectFrom('customers').selectAll().execute() }",
+    )
+    expect(matching(messages, 'query construction lives only in')).toEqual([])
+  })
+
+  it('does not fire on a spec file outside infrastructure/', async () => {
+    const messages = await messagesFor(
+      'modules/customers/application/x.spec.ts',
+      "export function w(tx: any) { return tx.selectFrom('customers').selectAll().execute() }",
+    )
+    expect(matching(messages, 'query construction lives only in')).toEqual([])
+  })
+})
+
+describe('C8 / S2 (ADR-0028): modules/customers/infrastructure/** names only its own table', () => {
+  it('allows a literal naming customers, aliased', async () => {
+    const messages = await messagesFor(
+      'modules/customers/infrastructure/x.ts',
+      "export function w(tx: any) { return tx.selectFrom('customers as c').selectAll().execute() }",
+    )
+    expect(matching(messages, 'names only its own table')).toEqual([])
+  })
+
+  it("catches a literal that is customers with a suffix ('customers_x'), not an exact match", async () => {
+    const messages = await messagesFor(
+      'modules/customers/infrastructure/x.ts',
+      "export function w(tx: any) { return tx.selectFrom('customers_x').selectAll().execute() }",
+    )
+    expect(matching(messages, 'names only its own table')).toHaveLength(1)
+  })
+
+  it("catches a literal naming a different table ('parties')", async () => {
+    const messages = await messagesFor(
+      'modules/customers/infrastructure/x.ts',
+      "export function w(tx: any) { return tx.insertInto('parties').values({}).execute() }",
+    )
+    expect(matching(messages, 'names only its own table')).toHaveLength(1)
+  })
+
+  it.each([
+    'selectFrom',
+    'insertInto',
+    'updateTable',
+    'deleteFrom',
+    'mergeInto',
+    'innerJoin',
+    'leftJoin',
+  ])('catches every builder method (%s) naming another table', async (method) => {
+    const messages = await messagesFor(
+      'modules/customers/infrastructure/x.ts',
+      `export function w(tx: any) { return tx.${method}('parties').execute() }`,
+    )
+    expect(matching(messages, 'names only its own table')).toHaveLength(1)
+  })
+
+  it('fails CLOSED on a non-literal (dynamic) table argument, even one that LOOKS like customers', async () => {
+    const messages = await messagesFor(
+      'modules/customers/infrastructure/x.ts',
+      'export function w(tx: any, t: string) { return tx.selectFrom(t).selectAll().execute() }',
+    )
+    expect(matching(messages, 'names only its own table')).toHaveLength(1)
+  })
+
+  it('catches a nested builder call (eb.selectFrom) naming another table', async () => {
+    const messages = await messagesFor(
+      'modules/customers/infrastructure/x.ts',
+      `export function w(tx: any) {
+         return tx.selectFrom('customers').where((eb: any) => eb.selectFrom('parties').select('id'))
+       }`,
+    )
+    expect(matching(messages, 'names only its own table')).toHaveLength(1)
+  })
+
+  it('catches an sql`` tag naming another table', async () => {
+    const messages = await messagesFor(
+      'modules/customers/infrastructure/x.ts',
+      "import { sql } from 'kysely'\nexport const q = (tx: any) => sql`select * from parties`.execute(tx)",
+    )
+    expect(matching(messages, 'named a table other than')).toHaveLength(1)
+  })
+
+  it('leaves an sql`` tag naming customers itself alone', async () => {
+    const messages = await messagesFor(
+      'modules/customers/infrastructure/x.ts',
+      "import { sql } from 'kysely'\nexport const q = (tx: any) => sql`select * from customers where id = ${1}`.execute(tx)",
+    )
+    expect(matching(messages, 'named a table other than')).toEqual([])
+  })
+
+  it.each(['table', 'ref'])(
+    'catches sql.%s, which builds a table reference dynamically (S2)',
+    async (member) => {
+      const messages = await messagesFor(
+        'modules/customers/infrastructure/x.ts',
+        `import { sql } from 'kysely'\nexport const q = (n: string) => sql.${member}(n)`,
+      )
+      expect(matching(messages, 'defeats the table-ownership check by construction')).toHaveLength(
+        1,
+      )
+    },
+  )
+
+  it('catches db.dynamic (S2)', async () => {
+    const messages = await messagesFor(
+      'modules/customers/infrastructure/x.ts',
+      "export const d = (db: any) => db.dynamic.ref('x')",
+    )
+    expect(matching(messages, 'builds a table reference from a runtime string')).toHaveLength(1)
+  })
+
+  it('catches CompiledQuery (S2)', async () => {
+    // Every AST Identifier named CompiledQuery matches (the import
+    // specifier's imported/local names and the usage), so this fires more
+    // than once for one import + one reference — not a length-1 count.
+    const messages = await messagesFor(
+      'modules/customers/infrastructure/x.ts',
+      "import { CompiledQuery } from 'kysely'\nexport const q = CompiledQuery",
+    )
+    expect(
+      matching(messages, 'bypassing the table-ownership check entirely').length,
+    ).toBeGreaterThan(0)
+  })
+
+  it('catches executeQuery (S2)', async () => {
+    const messages = await messagesFor(
+      'modules/customers/infrastructure/x.ts',
+      'export const q = (tx: any, c: any) => tx.executeQuery(c)',
+    )
+    expect(matching(messages, 'bypassing the table-ownership check')).toHaveLength(1)
+  })
+
+  it('leaves a read on customers alone', async () => {
+    const messages = await messagesFor(
+      'modules/customers/infrastructure/x.ts',
+      "export function r(tx: any) { return tx.selectFrom('customers').selectAll().execute() }",
+    )
+    expect(matching(messages, 'names only its own table')).toEqual([])
+  })
+
+  it('leaves the real customers.repository.ts clean', async () => {
+    const results = await eslint.lintFiles(['modules/customers/infrastructure/**/*.ts'])
+    const hits = results.flatMap((r) =>
+      r.messages
+        .filter((m) => m.message.includes('names only its own table'))
+        .map((m) => `${r.filePath}:${m.line}: ${m.message}`),
+    )
+    expect(hits).toEqual([])
+    expect(results.length).toBeGreaterThan(0)
+  })
+})

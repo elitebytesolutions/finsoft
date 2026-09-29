@@ -370,6 +370,37 @@ describe('schema', () => {
     }
   })
 
+  it('makes every foreign key from a tenant table to a tenant table composite on tenant_id (S3, ADR-0028)', async () => {
+    // PostgreSQL foreign-key checks run with row security OFF (ADR-0026's
+    // own reasoning, generalised): a single-column reference from one
+    // tenant-owned table to another would let tenant B insert a row
+    // pointing at tenant A's, and would tell B whether that id exists —
+    // both a tenant boundary break and a cross-tenant existence oracle.
+    // Only a composite key carrying tenant_id on BOTH sides closes it.
+    const all = await constraints()
+    const tenantOwned = new Set(
+      (await columns())
+        .filter((c) => c.column_name === 'tenant_id' && !isGlobalTable(c.table_name))
+        .map((c) => c.table_name),
+    )
+
+    const offenders = all
+      .filter((c) => c.contype === 'f')
+      .filter((c) => c.referenced_table !== null && c.referenced_table !== 'tenants')
+      .filter((c) => tenantOwned.has(c.table_name) && tenantOwned.has(c.referenced_table as string))
+      .filter((c) => !/^FOREIGN KEY \(tenant_id,/.test(c.definition))
+      .map(
+        (c) =>
+          `${c.table_name}.${c.constraint_name} -> ${String(c.referenced_table)}: ${c.definition}`,
+      )
+
+    expect(
+      offenders,
+      'a tenant-to-tenant foreign key is not composite on tenant_id, leading. A single-column ' +
+        'reference bypasses RLS at the referential-integrity check (S3, ADR-0028).',
+    ).toEqual([])
+  })
+
   it('never uses ON DELETE CASCADE, and always RESTRICT (rule 4)', async () => {
     const foreignKeys = (await constraints()).filter((c) => c.contype === 'f')
     expect(foreignKeys.length).toBeGreaterThan(0)

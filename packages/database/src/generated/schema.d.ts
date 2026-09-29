@@ -85,6 +85,34 @@ export interface AuditLog {
   tenant_id: string;
 }
 
+export interface Customers {
+  address: string | null;
+  city: string | null;
+  /**
+   * System-generated at create from documentNumbers.next(tx, { series: 'CUST' }) (K7), CUST-000001 style, immutable thereafter (customers_enforce_immutable_identity). The create API accepts no code (M3-Q2).
+   */
+  code: string;
+  create_fingerprint: string;
+  create_idempotency_key: string;
+  created_at: Generated<Timestamp>;
+  created_by: string;
+  credit_days: Generated<number>;
+  email: string | null;
+  /**
+   * Equal to the id registerParty(tx, 'CUSTOMER') returned in the same transaction (ADR-0026 statement 4) — never a fresh gen_random_uuid() at this table.
+   */
+  id: string;
+  name: string;
+  ntn: string | null;
+  party_type: Generated<string>;
+  phone: string | null;
+  status: Generated<string>;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+  updated_by: string;
+  version: Generated<number>;
+}
+
 export interface DocumentSequences {
   created_at: Generated<Timestamp>;
   created_by: string;
@@ -450,6 +478,7 @@ export interface Users {
 export interface DB {
   accounts: Accounts;
   audit_log: AuditLog;
+  customers: Customers;
   document_sequences: DocumentSequences;
   fiscal_periods: FiscalPeriods;
   journal_entries: JournalEntries;

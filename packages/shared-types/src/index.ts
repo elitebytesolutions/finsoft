@@ -23,3 +23,14 @@ export interface AuthContext {
   /** Whether this session completed MFA. */
   readonly mfa: boolean
 }
+
+// M3-C: modules/customers response types. docs/design/M3/api-contract.md §4.1.
+export type {
+  Customer,
+  CustomerLedger,
+  CustomerLedgerLine,
+  CustomerListItem,
+  CustomerListPage,
+  Instant,
+  LocalDate,
+} from './customer.ts'

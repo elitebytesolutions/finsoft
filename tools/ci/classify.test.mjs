@@ -94,8 +94,10 @@ test('mixed changes take the highest matching tier', () => {
   ])
   assert.equal(r.tier, 'T3')
   assert.equal(r.runFinancial, true)
-  // Only apps/web/src/x.tsx maps to an image; the kernel and the doc do not.
-  assert.deepEqual(r.images.slice().sort(), ['web'])
+  // ADR-0028 C1: images.api now also maps packages/accounting-kernel/**
+  // (the API embeds and runs it under type stripping), so the kernel path
+  // forces an api rebuild alongside web's; the doc still maps to neither.
+  assert.deepEqual(r.images.slice().sort(), ['api', 'web'])
 })
 
 test('image mapping: apps/api/src change maps to the api image', () => {

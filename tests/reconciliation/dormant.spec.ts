@@ -99,14 +99,43 @@ describe('the reconciliation deferral is still valid', () => {
     },
   )
 
-  it('no subledger or stock table that would need reconciling has been migrated', () => {
+  /*
+   * M3-C (this migration, 015): THE SECOND PRECONDITION PARTIALLY FIRED, AS
+   * DESIGNED, AND WAS ANSWERED RATHER THAN WEAKENED.
+   *
+   * `customers` is the first table this precondition's regex was written to
+   * catch. It is master data, not a subledger DOCUMENT with monetary lines
+   * of its own — creating a customer posts nothing — so it does not, by
+   * itself, make SUBLEDGER-TO-GL reconciliation (reconcileSubledgerToGeneralLedger,
+   * this directory's own comparison) either possible or necessary yet: that
+   * still needs `sales_invoices` / `customer_receipts` / an allocations
+   * table, none of which exist until M3-P. What `customers` DOES make
+   * possible is the ADJACENT reconciliation ADR-0026 Compliance 6 calls
+   * for — the party registry (parties <-> customers, by shared id) — and
+   * that one is answered live, not deferred:
+   * tests/reconciliation/party-registry.spec.ts, run against real rows,
+   * every test run, with a fixture proving it detects an orphan and names
+   * it.
+   *
+   * `CUSTOMERS_TABLE_ANSWERED_BY` is a narrow, reviewed exception — like
+   * `GLOBALLY_UNIQUE_INDEX_ALLOWLIST` (database/tests/schema.spec.ts) — not
+   * a widening of the regex: `customer_receipts`, `sales_invoices` and an
+   * allocations table still trip this same assertion the moment M3-P adds
+   * them, exactly as designed, because only the literal name "customers" is
+   * excepted.
+   */
+  const CUSTOMERS_TABLE_ANSWERED_BY =
+    'tests/reconciliation/party-registry.spec.ts (ADR-0026 Compliance 6)'
+
+  it('no subledger or stock table that would need reconciling has been migrated (except customers, answered)', () => {
     /*
      * The second precondition, and the one that can change without either
      * kernel gaining a line: a migration adding a document subledger
-     * (customers, invoices, receipts, allocations — M3) or `stock_movements`
-     * makes live reconciliation possible whatever the TypeScript looks like.
-     * journal_entries / journal_lines (M2-A) are the GL side only; there is
-     * nothing to reconcile them AGAINST until one of these exists.
+     * (invoices, receipts, allocations — M3-P) or `stock_movements` makes
+     * live subledger-to-GL reconciliation possible whatever the TypeScript
+     * looks like. journal_entries / journal_lines (M2-A) are the GL side
+     * only; there is nothing to reconcile them AGAINST until one of these
+     * exists.
      *
      * Reads the migration FILES rather than the database, so this runs
      * without a cluster and fails in the pull request that adds the table
@@ -128,18 +157,24 @@ describe('the reconciliation deferral is still valid', () => {
 
     // The GL side must exist for the re-arm above to mean anything.
     expect(created).toEqual(expect.arrayContaining(['journal_entries', 'journal_lines', 'parties']))
+    // customers itself must exist too, or the exception below is vacuous.
+    expect(created).toEqual(expect.arrayContaining(['customers']))
 
-    const reconcilable = created.filter((t) =>
-      /^(stock_|sales_|purchase_|customer|vendor|supplier|receipt|invoice|payment)|allocation/.test(
-        t,
-      ),
-    )
+    const reconcilable = created
+      .filter((t) =>
+        /^(stock_|sales_|purchase_|customer|vendor|supplier|receipt|invoice|payment)|allocation/.test(
+          t,
+        ),
+      )
+      .filter((t) => t !== 'customers')
 
     expect(
       reconcilable,
       'A table that reconciliation is ABOUT now exists, so the fixture-only suite\n' +
         'in this directory no longer covers what it appears to cover. See the\n' +
-        'instructions on the kernel assertions above.',
+        'instructions on the kernel assertions above.\n\n' +
+        `('customers' is excepted, answered by ${CUSTOMERS_TABLE_ANSWERED_BY} — see this file's ` +
+        'own comment above this test for why that is not a widening of the regex.)',
     ).toEqual([])
   })
 })
