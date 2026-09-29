@@ -4,11 +4,17 @@
   --m-fast: 180ms ease;
   --m-base: 250ms ease;
   --m-lift: translateY(-2px);
+  /* Duration only (no easing baked in) — consumed by an `animation:` shorthand
+   * that supplies its own linear/infinite, e.g. Button's busy spinner. */
+  --m-spin: 900ms;
 }
 @media (prefers-reduced-motion: reduce) {
   :root {
     --m-fast: 0ms;
     --m-base: 0ms;
     --m-lift: none;
+    /* 0ms freezes the spinner on a static frame instead of a continuous
+     * rotation — same pattern as --m-fast/--m-base above. */
+    --m-spin: 0ms;
   }
 }
