@@ -1,4 +1,5 @@
 import type { AuthContext } from '@finsoft/shared-types'
+import { getAccountStateCached } from './account-state-cache.ts'
 import { TokenVerificationError, verifyAccessToken } from './jwt.ts'
 import { isSessionActiveCached } from './session-cache.ts'
 
@@ -18,6 +19,32 @@ export class SessionInactiveError extends Error {
   }
 }
 
+/**
+ * M1-X, L1. The user or the tenant is no longer ACTIVE. Checked on every
+ * request, not only at login/refresh — a suspension must take effect before
+ * the access token's own 15-minute expiry, not after it.
+ */
+export class AccountInactiveError extends Error {
+  constructor() {
+    super('The user or the tenant is not active.')
+    this.name = 'AccountInactiveError'
+  }
+}
+
+/**
+ * M1-X, L1. `perm_ver` on the token is behind `users.version` right now — a
+ * role or permission grant changed after this token was minted. ADR-0009:
+ * "a privilege reduction takes effect on the next request." The caller must
+ * refresh (which always mints from the current version) or, if the refresh
+ * token is also gone, re-authenticate.
+ */
+export class PermissionVersionStaleError extends Error {
+  constructor() {
+    super("The access token's permission version is behind the account's current version.")
+    this.name = 'PermissionVersionStaleError'
+  }
+}
+
 export { TokenVerificationError }
 
 export async function verifyBearerToken(token: string): Promise<AuthContext> {
@@ -26,6 +53,14 @@ export async function verifyBearerToken(token: string): Promise<AuthContext> {
   const active = await isSessionActiveCached(claims.tenantId, claims.userId, claims.sessionId)
   if (!active) {
     throw new SessionInactiveError()
+  }
+
+  const state = await getAccountStateCached(claims.tenantId, claims.userId)
+  if (!state || state.userStatus !== 'ACTIVE' || state.tenantStatus !== 'ACTIVE') {
+    throw new AccountInactiveError()
+  }
+  if (claims.permissionVersion < state.permissionVersion) {
+    throw new PermissionVersionStaleError()
   }
 
   return {

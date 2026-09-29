@@ -10,7 +10,14 @@
  * pure decision callback where one is needed.
  */
 
-export { login, ACCESS_TOKEN_TTL_SECONDS } from './login.ts'
+export {
+  login,
+  ACCESS_TOKEN_TTL_SECONDS,
+  failedLoginAuditWorkCountForTests,
+  resetFailedLoginAuditWorkCountForTests,
+  failedLoginAuditSuppressionEventCountForTests,
+  resetFailedLoginAuditSuppressionEventCountForTests,
+} from './login.ts'
 export type {
   LoginInput,
   LoginResult,
@@ -40,7 +47,12 @@ export {
 } from './jwt.ts'
 export type { AccessTokenClaims, VerifiedAccessToken, SignedAccessToken } from './jwt.ts'
 
-export { verifyBearerToken, SessionInactiveError } from './guard.ts'
+export {
+  verifyBearerToken,
+  AccountInactiveError,
+  PermissionVersionStaleError,
+  SessionInactiveError,
+} from './guard.ts'
 
 export {
   hashPassword,
@@ -53,11 +65,18 @@ export {
 export { hashRefreshToken, mintRefreshToken, REFRESH_TOKEN_TTL_MS } from './refresh-token.ts'
 export type { MintedRefreshToken } from './refresh-token.ts'
 
-export { ThrottleUnavailableError, closeThrottleClient } from './throttle.ts'
+export { ThrottleUnavailableError, checkLayers, closeThrottleClient } from './throttle.ts'
+export type { ThrottleDecision, ThrottleLayer } from './throttle.ts'
 
 export { closeSessionCacheClient, invalidateSessionCache } from './session-cache.ts'
 
-export { noopAuthAuditSink } from './audit-sink.ts'
+export {
+  closeAccountStateCacheClient,
+  getAccountStateCached,
+  invalidateAccountStateCache,
+} from './account-state-cache.ts'
+
+export { authAuditSink, noopAuthAuditSink } from './audit-sink.ts'
 export type { AuthAuditEvent, AuthAuditSink } from './audit-sink.ts'
 
 export { atAuthBoundary, SanitisedDatabaseError } from './db-error.ts'

@@ -1,10 +1,12 @@
 import {
   Body,
+  ConflictException,
   Controller,
   ForbiddenException,
   Get,
   HttpCode,
   HttpException,
+  Patch,
   Post,
   Req,
   Res,
@@ -12,14 +14,24 @@ import {
   UnauthorizedException,
   UsePipes,
 } from '@nestjs/common'
+import {
+  ApiBadRequestResponse,
+  ApiBody,
+  ApiConflictResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiUnauthorizedResponse,
+} from '@nestjs/swagger'
 import type { Request, Response } from 'express'
 import { HashingQueueFullError, ThrottleUnavailableError } from '@finsoft/auth'
 import { logCommittedBusinessEvent } from '@finsoft/observability'
+import { AuthenticatedOnly } from '../common/authenticated-only.decorator'
 import { Public } from '../common/tenant.guard'
 import { ZodValidationPipe } from '../common/zod-validation.pipe'
 import { AuthService } from './auth.service'
 import { clearRefreshCookie, hasCsrfHeader, readRefreshCookie, setRefreshCookie } from './cookie'
 import { LoginSchema, type LoginDto } from './dto/login.dto'
+import { UpdateMeSchema, type UpdateMeDto } from './dto/update-me.dto'
 import { clientIp, deviceFingerprint, ipPrefix } from './request-context'
 
 /*
@@ -142,6 +154,7 @@ export class AuthController {
       result = await this.auth.refresh({
         presentedRefreshToken: presented,
         ipPrefix: ipPrefix(ip),
+        ip,
         deviceId: deviceFingerprint(req),
       })
     } catch (error) {
@@ -186,6 +199,7 @@ export class AuthController {
     }
   }
 
+  @AuthenticatedOnly()
   @Post('logout')
   @HttpCode(204)
   async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response): Promise<void> {
@@ -202,10 +216,11 @@ export class AuthController {
     const auth = req.auth
     if (!auth) throw new UnauthorizedException(INVALID_CREDENTIALS)
 
-    await this.auth.logout(auth)
+    await this.auth.logout(auth, clientIp(req))
     clearRefreshCookie(res)
   }
 
+  @AuthenticatedOnly()
   @Get('me')
   async me(@Req() req: Request) {
     const auth = req.auth
@@ -214,6 +229,59 @@ export class AuthController {
     const profile = await this.auth.me(auth)
     if (!profile) throw new UnauthorizedException(INVALID_CREDENTIALS)
     return profile
+  }
+
+  /**
+   * M1-X, W1-006 exit criterion 1: the minimal authorised write "tenant A
+   * can read and update its own record" needs. Updates only fullName —
+   * audited by updateOwnFullName itself (packages/database/src/auth/
+   * session.ts), inside the same transaction as the write.
+   *
+   * M1-X, Council DB C3: `body.version` is the optimistic-concurrency token
+   * GET /api/auth/me returned. A mismatch is reported as 409 with NO audit
+   * row written — an update that did not happen is not an event.
+   */
+  @AuthenticatedOnly()
+  @Patch('me')
+  @UsePipes(new ZodValidationPipe(UpdateMeSchema))
+  @ApiOperation({
+    summary: "Update the caller's own display name.",
+    description:
+      'Optimistic concurrency: version must match the value GET /api/auth/me returned, or the ' +
+      'request 409s with the current version and writes nothing (not even an audit row).',
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['fullName', 'version'],
+      properties: {
+        fullName: { type: 'string', minLength: 1, maxLength: 200 },
+        version: { type: 'integer', minimum: 0 },
+      },
+    },
+  })
+  @ApiOkResponse({ description: 'Updated profile, including the new version.' })
+  @ApiBadRequestResponse({ description: 'fullName or version failed validation.' })
+  @ApiUnauthorizedResponse({ description: 'Missing, invalid, expired or revoked credentials.' })
+  @ApiConflictResponse({ description: 'version did not match the row’s current version.' })
+  async updateMe(@Body() body: UpdateMeDto, @Req() req: Request) {
+    const auth = req.auth
+    if (!auth) throw new UnauthorizedException(INVALID_CREDENTIALS)
+
+    const outcome = await this.auth.updateMe(auth.userId, body.fullName, body.version)
+
+    if (outcome.outcome === 'not_found') throw new UnauthorizedException(INVALID_CREDENTIALS)
+
+    if (outcome.outcome === 'version_conflict') {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'version_conflict',
+        message: 'The record has changed since you last read it.',
+        currentVersion: outcome.currentVersion,
+      })
+    }
+
+    return outcome.profile
   }
 
   @Public()

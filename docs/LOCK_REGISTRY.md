@@ -219,6 +219,41 @@ Recorded per the Database Guardian's review of `feature/M1-R-rbac` (DB-C2). See
 `database/migrations/008_create_rbac.sql`'s own comments for the code-adjacent version of this
 entry.
 
+### M1-X, Council DB C4 — a future role-grant endpoint's audit write is NOT covered by the ascending-`id` order above
+
+No role-grant/revoke endpoint exists yet (M1-X ships only the auth/audit surface); this is
+recorded now so whoever builds one reads it before choosing where the audit write goes.
+
+The 008 cascade above locks the AFFECTED users' rows — the grantee(s) of the role being
+changed — one at a time, in ascending `id`. `recordAudit` (`packages/database/src/audit/writer.ts`)
+is, by ADR-0020 §5, the LAST write before commit (LOCK_REGISTRY position 6, terminal) — and its
+`audit_log_actor_fkey` takes an implicit `KEY SHARE` lock on the ACTOR's own `users` row (the
+admin performing the grant) as part of the `INSERT`. If the actor is not among the rows the
+cascade already locked, that `KEY SHARE` acquisition happens LAST, at whatever numeric `id` the
+actor's row happens to have — outside, and unordered relative to, the cascade's own
+ascending-`id` discipline. A concurrent transaction that locks the SAME two rows (the actor's and
+one of the grant's affected rows) in true ascending order — another grant naming both of them, say
+— can then deadlock against this one: exactly the "outside one of these three cascades" case the
+008 section above already names as an accepted, unmitigated residual risk category, made concrete.
+
+**A future role-grant endpoint must therefore establish the actor's row lock BEFORE the cascade
+runs** — for example, an explicit `SELECT ... FOR UPDATE` on the actor's own `users` row as the
+endpoint's first statement, ahead of the `role_permissions`/`user_roles` write — rather than
+relying on the audit write's own terminal-position FK lock to be the first (and only) place that
+row is touched. This is a documented constraint on that endpoint's transaction shape, not a
+mechanism that exists today; nothing enforces it yet because nothing needs it yet.
+
+### `sessions.permission_version` is unused — registered as TD, not fixed by a migration
+
+Migration 005 created `sessions.permission_version` for exactly the purpose ADR-0009:102
+describes: "a token whose version is behind is refused at the guard." M1-X wires that guard
+check against `users.version` instead (see [TECH_DEBT.md](TECH_DEBT.md) TD-008) — nothing
+writes to `sessions.permission_version` beyond the column's own `DEFAULT 0`, and nothing reads
+it. No migration touches this now (010–016 are reserved for M2/M3); TD-008 is the record, and a
+future dedicated `users.permission_version` column (TD-008's own fix) should also settle whether
+`sessions.permission_version` is repurposed, documented as permanently vestigial via `COMMENT ON
+COLUMN`, or dropped in a later migration — not silently left ambiguous.
+
 ---
 
 ## Adding an entry

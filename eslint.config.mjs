@@ -18,6 +18,88 @@ import prettier from 'eslint-config-prettier'
 /** Decimal libraries. ADR-0011 / ADR-0014: exactly one, only in packages/validation. */
 const DECIMAL_LIBS = ['decimal.js', 'decimal.js-light', 'big.js', 'bignumber.js']
 
+const DECIMAL_LIB_IMPORT_PATHS = DECIMAL_LIBS.map((name) => ({
+  name,
+  message:
+    'ADR-0011/ADR-0014: import Money from @finsoft/validation. The decimal library lives there and nowhere else.',
+}))
+
+/*
+ * M1-X, Council T1 (Architecture R1 / Security 1 / Database C1).
+ * withTenantAsPrincipal lives at its own narrow subpath,
+ * @finsoft/database/request-scope, and is importable ONLY from
+ * apps/api/src/common/permission.guard.ts — the one caller it exists for
+ * (a NestJS GUARD, which runs strictly before any interceptor and so cannot
+ * rely on the request-wide TenantContextInterceptor having run yet).
+ */
+const REQUEST_SCOPE_IMPORT_BAN = {
+  name: '@finsoft/database/request-scope',
+  message:
+    'M1-X T1: withTenantAsPrincipal may be imported only from ' +
+    'apps/api/src/common/permission.guard.ts.',
+}
+
+/*
+ * M1-X, Council T2 (Architecture R2 / Security 1). Replaces the earlier
+ * call-pattern rule (`TenantContext.run(...)`), which an aliased import
+ * (`import { TenantContext as T }`), a namespace access
+ * (`TenantContext['run']`) or a destructure (`const { run } = TenantContext`)
+ * all walk straight past — every one of those still requires the IMPORT,
+ * which this rule catches regardless of how the code goes on to use it.
+ * `importNames` matches the imported name, not the local binding, so
+ * aliasing does not evade it either.
+ *
+ * Confined to the request-scoping interceptor,
+ * apps/worker/src/outbox/dispatcher.ts (Council re-review Arch R2: the
+ * SPECIFIC worker file that needs it, not the whole app — the outbox
+ * dispatcher opens a TenantContext per row it replays, since each row names
+ * a different tenant and there is no request to inherit one from; no other
+ * job in apps/worker does this today), packages/database and packages/auth
+ * — everywhere else establishes tenant scope through one of those instead of
+ * importing TenantContext to do it locally.
+ */
+const TENANT_CONTEXT_IMPORT_BAN = {
+  name: '@finsoft/database',
+  importNames: ['TenantContext'],
+  message:
+    'M1-X T2: TenantContext may be imported only by the request-scoping interceptor ' +
+    '(apps/api/src/common/tenant-context.interceptor.ts), ' +
+    'apps/worker/src/outbox/dispatcher.ts, packages/database and packages/auth. Establish ' +
+    'tenant scope through one of those instead of importing it here.',
+}
+
+/*
+ * M1-X, Council re-review item 1 (Security F1 / Database C5).
+ * `runAs` (`@finsoft/database/testing`) is `TenantContext.run` with ANY
+ * principal a caller supplies — no less powerful than the real thing, built
+ * for fixtures that need to become a specific tenant/user on demand, never
+ * for a real request or job path. Importable only from a test file.
+ */
+const TESTING_IMPORT_BAN = {
+  name: '@finsoft/database/testing',
+  message:
+    'M1-X Council re-review 1: @finsoft/database/testing (runAs = TenantContext.run with any ' +
+    'caller-supplied principal) is a Vitest fixture helper against the TEST database, ' +
+    'importable only from a test file — never from application code.',
+}
+
+/*
+ * M1-X, Council re-review item 1 (Security F1 / Database C5).
+ * `@finsoft/database/provisioning` sets tenant context from a caller-supplied
+ * tenantId and creates ACTIVE users with role grants — and, by that file's
+ * own header, writes NO audit row. Its one legitimate non-test caller is
+ * tools/seed/** (the demo seed script today; the M2 backfill CLI,
+ * tools/seed/backfill-accounting.mjs, when it lands). Anywhere else, calling
+ * it would create or grant a real account with nothing to show for it in
+ * the audit trail.
+ */
+const PROVISIONING_IMPORT_BAN = {
+  name: '@finsoft/database/provisioning',
+  message:
+    'M1-X Council re-review 1: @finsoft/database/provisioning writes no audit row and is ' +
+    'importable only from tools/seed/** or a test file — never from application code.',
+}
+
 /** Network clients. ADR-0001: the kernels have no network. */
 const HTTP_CLIENTS = ['axios', 'node-fetch', 'undici', 'got', 'superagent', 'ky']
 
@@ -313,13 +395,7 @@ export default tseslint.config(
       'no-restricted-syntax': ['error', ...invariantSyntax],
       'no-restricted-imports': [
         'error',
-        {
-          paths: DECIMAL_LIBS.map((name) => ({
-            name,
-            message:
-              'ADR-0011/ADR-0014: import Money from @finsoft/validation. The decimal library lives there and nowhere else.',
-          })),
-        },
+        { paths: [...DECIMAL_LIB_IMPORT_PATHS, REQUEST_SCOPE_IMPORT_BAN] },
       ],
       eqeqeq: ['error', 'always', { null: 'ignore' }],
       'no-console': ['warn', { allow: ['warn', 'error'] }],
@@ -551,6 +627,101 @@ export default tseslint.config(
   },
 
   /* ---------------------------------------------------------------- *
+   * M1-X T2: TenantContext is importable in apps/** only by the
+   * request-scoping interceptor and, below,
+   * apps/worker/src/outbox/dispatcher.ts (Council re-review Arch R2: the
+   * one worker file that needs it, named specifically rather than
+   * exempting apps/worker/** wholesale — no other job in apps/worker
+   * imports it today, and a new one that starts to must be a deliberate,
+   * reviewed addition to this list, not a silent grant). Everywhere else in
+   * apps/** — including PermissionGuard, which gets its OWN, more specific
+   * block next (it may import withTenantAsPrincipal from request-scope, and
+   * nothing else here permits) — is banned from importing it at all.
+   * ---------------------------------------------------------------- */
+  {
+    files: ['apps/**/*.ts', 'apps/**/*.tsx'],
+    ignores: [
+      'apps/**/*.spec.ts',
+      'apps/**/*.test.ts',
+      'apps/worker/src/outbox/dispatcher.ts',
+      'apps/api/src/common/tenant-context.interceptor.ts',
+      'apps/api/src/common/permission.guard.ts',
+    ],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            ...DECIMAL_LIB_IMPORT_PATHS,
+            REQUEST_SCOPE_IMPORT_BAN,
+            TENANT_CONTEXT_IMPORT_BAN,
+            TESTING_IMPORT_BAN,
+            PROVISIONING_IMPORT_BAN,
+          ],
+        },
+      ],
+    },
+  },
+
+  /* ---------------------------------------------------------------- *
+   * Security seat, final check on a7576ac (medium). The interceptor and
+   * the outbox dispatcher are excluded from the block above (`ignores`)
+   * specifically so their own legitimate `TenantContext` import is not
+   * caught by `TENANT_CONTEXT_IMPORT_BAN` — but `ignores` means the WHOLE
+   * block skips them, not just that one entry, so they were also escaping
+   * every other ban that block carries: decimal libraries, request-scope,
+   * and (Council re-review item 1) testing/provisioning. Nothing else in
+   * this file matched them, so nothing replaced the missing rule either —
+   * this is the block that should have existed alongside the `ignores`.
+   *
+   * `TenantContext` itself is deliberately absent from this list: that
+   * import is the entire reason these two files are named here rather than
+   * covered by the block above.
+   * ---------------------------------------------------------------- */
+  {
+    files: [
+      'apps/api/src/common/tenant-context.interceptor.ts',
+      'apps/worker/src/outbox/dispatcher.ts',
+    ],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            ...DECIMAL_LIB_IMPORT_PATHS,
+            REQUEST_SCOPE_IMPORT_BAN,
+            TESTING_IMPORT_BAN,
+            PROVISIONING_IMPORT_BAN,
+          ],
+        },
+      ],
+    },
+  },
+
+  /* ---------------------------------------------------------------- *
+   * The one file allowed to import withTenantAsPrincipal from
+   * request-scope (M1-X T1) — and, per T2, ALSO banned from importing
+   * TenantContext directly: PermissionGuard establishes its tenant scope
+   * through withTenantAsPrincipal, never TenantContext.run itself.
+   * ---------------------------------------------------------------- */
+  {
+    files: ['apps/api/src/common/permission.guard.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            ...DECIMAL_LIB_IMPORT_PATHS,
+            TENANT_CONTEXT_IMPORT_BAN,
+            TESTING_IMPORT_BAN,
+            PROVISIONING_IMPORT_BAN,
+          ],
+        },
+      ],
+    },
+  },
+
+  /* ---------------------------------------------------------------- *
    * apps/worker — everything the block above applies, PLUS strip-only.
    *
    * Split out rather than folded in, because the two apps are compiled
@@ -579,6 +750,33 @@ export default tseslint.config(
         ...authLookupIdentifierSyntax,
         ...appsQuerySyntax,
         ...stripOnlySyntax,
+      ],
+    },
+  },
+
+  /* ---------------------------------------------------------------- *
+   * M1-X T2: TenantContext is importable only in packages/database and
+   * packages/auth. Every other package — permissions, reporting,
+   * shared-types, observability, ui, and the kernels/validation (which get
+   * their own more specific blocks, above and below) — establishes a
+   * tenant scope through withTenant/withGlobal (received via callback),
+   * never by importing TenantContext to do it locally.
+   * ---------------------------------------------------------------- */
+  {
+    files: ['packages/*/src/**/*.ts', 'packages/*/src/**/*.tsx'],
+    ignores: ['packages/database/**', 'packages/auth/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            ...DECIMAL_LIB_IMPORT_PATHS,
+            REQUEST_SCOPE_IMPORT_BAN,
+            TENANT_CONTEXT_IMPORT_BAN,
+            TESTING_IMPORT_BAN,
+            PROVISIONING_IMPORT_BAN,
+          ],
+        },
       ],
     },
   },
@@ -617,7 +815,53 @@ export default tseslint.config(
    * ---------------------------------------------------------------- */
   {
     files: ['packages/validation/**/*.ts'],
-    rules: { 'no-restricted-imports': 'off' },
+    rules: {
+      // Decimal libraries are deliberately NOT restricted here — this is
+      // the one package allowed to import them. M1-X T2 still bans
+      // TenantContext and request-scope — validation never legitimately
+      // needs a tenant scope. Council re-review 1: nor does it ever need a
+      // test fixture or a provisioning helper.
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            TENANT_CONTEXT_IMPORT_BAN,
+            REQUEST_SCOPE_IMPORT_BAN,
+            TESTING_IMPORT_BAN,
+            PROVISIONING_IMPORT_BAN,
+          ],
+        },
+      ],
+    },
+  },
+
+  /* ---------------------------------------------------------------- *
+   * M1-X, Council re-review item 1: packages/auth is excluded from the
+   * generic "packages/<name>/src" block above (it is one of the two packages
+   * allowed to import TenantContext directly), so it needs its own
+   * statement of the testing/provisioning ban — a narrower one than that
+   * block's, since TenantContext and request-scope stay allowed here.
+   * Restates DECIMAL_LIB_IMPORT_PATHS too: flat config replaces
+   * no-restricted-imports per matching file rather than merging it, and the
+   * repo-wide block's decimal-library ban would otherwise be lost for this
+   * package the moment this more specific block also matches its files.
+   * ---------------------------------------------------------------- */
+  {
+    files: ['packages/auth/src/**/*.ts'],
+    ignores: ['packages/auth/src/**/*.spec.ts', 'packages/auth/src/**/*.test.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            ...DECIMAL_LIB_IMPORT_PATHS,
+            REQUEST_SCOPE_IMPORT_BAN,
+            TESTING_IMPORT_BAN,
+            PROVISIONING_IMPORT_BAN,
+          ],
+        },
+      ],
+    },
   },
 
   /* ---------------------------------------------------------------- *
@@ -647,6 +891,12 @@ export default tseslint.config(
               name: '@nestjs/common',
               message: 'ARCHITECTURE §3: the kernels know nothing about HTTP or NestJS.',
             },
+            // M1-X T2: kernels import withTenant/withGlobal, never TenantContext directly.
+            TENANT_CONTEXT_IMPORT_BAN,
+            REQUEST_SCOPE_IMPORT_BAN,
+            // Council re-review 1: nor a test fixture or a provisioning helper.
+            TESTING_IMPORT_BAN,
+            PROVISIONING_IMPORT_BAN,
           ],
           patterns: [
             {
@@ -666,8 +916,41 @@ export default tseslint.config(
   },
 
   /* ---------------------------------------------------------------- *
+   * M1-X T2: TenantContext is never imported anywhere in modules/** —
+   * application, infrastructure and api layers scope a tenant through
+   * withTenant/withGlobal (received via a callback, or their own repository
+   * base class), never by establishing their own AsyncLocalStorage scope.
+   * domain/ already bans the whole @finsoft/database package (below, and
+   * stricter than this); this covers the layers that legitimately import
+   * OTHER things from it.
+   * ---------------------------------------------------------------- */
+  {
+    files: ['modules/**/*.ts', 'modules/**/*.tsx'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            ...DECIMAL_LIB_IMPORT_PATHS,
+            REQUEST_SCOPE_IMPORT_BAN,
+            TENANT_CONTEXT_IMPORT_BAN,
+            TESTING_IMPORT_BAN,
+            PROVISIONING_IMPORT_BAN,
+          ],
+        },
+      ],
+    },
+  },
+
+  /* ---------------------------------------------------------------- *
    * Module domain layers — pure TypeScript
    * ARCHITECTURE.md §2: "no NestJS, no ORM, no HTTP"
+   *
+   * A LATER, more specific block than the one just above — flat config
+   * replaces no-restricted-imports per matching file, so domain/ needs its
+   * own full list rather than relying on the broader modules/** block. Its
+   * blanket @finsoft/database ban (below) is already stricter than M1-X
+   * T2's TenantContext-only ban, so it is not repeated here.
    * ---------------------------------------------------------------- */
   {
     files: ['modules/*/domain/**/*.ts'],
@@ -682,6 +965,11 @@ export default tseslint.config(
               name: '@finsoft/database',
               message: 'ARCHITECTURE §2: domain/ never sees a connection or a row type.',
             },
+            // Council re-review 1: the blanket ban above does not match
+            // subpath specifiers (no-restricted-imports matches the exact
+            // string), so these need stating explicitly too.
+            TESTING_IMPORT_BAN,
+            PROVISIONING_IMPORT_BAN,
             ...DECIMAL_LIBS.map((name) => ({
               name,
               message: 'ADR-0011: import Money from @finsoft/validation.',
@@ -725,6 +1013,10 @@ export default tseslint.config(
               name: '@finsoft/database',
               message: 'ARCHITECTURE §5: apps/web reaches ui, shared-types and validation only.',
             },
+            // Council re-review 1: the ban above matches only the bare
+            // specifier, not a subpath — stated explicitly here too.
+            TESTING_IMPORT_BAN,
+            PROVISIONING_IMPORT_BAN,
             { name: 'kysely', message: 'ARCHITECTURE §5: the browser has no database.' },
             { name: 'pg', message: 'ARCHITECTURE §5: the browser has no database.' },
           ],
@@ -769,6 +1061,67 @@ export default tseslint.config(
       },
     },
     rules: { 'no-console': 'off' },
+  },
+
+  /* ---------------------------------------------------------------- *
+   * M1-X, Council re-review item 1 (Security F1 / Database C5).
+   * @finsoft/database/testing (runAs — TenantContext.run with any
+   * caller-supplied principal) has no legitimate caller anywhere under
+   * tools/: it is a Vitest fixture helper against the disposable TEST
+   * database, not a provisioning or seeding mechanism. Every tools/ script,
+   * including tools/seed/**, is banned — a separate, narrower block below
+   * allows tools/seed/** to import @finsoft/database/provisioning instead.
+   *
+   * Security seat, final check on a7576ac (low regression): restates
+   * DECIMAL_LIB_IMPORT_PATHS and REQUEST_SCOPE_IMPORT_BAN, which the
+   * repo-wide block above already bans for every file with no `files` key
+   * — including every tools/ script — until a LATER, more specific block
+   * matches the same file and flat config replaces its no-restricted-imports
+   * setting wholesale rather than merging it. Without restating them here,
+   * this block's own match on every tools/ script silently dropped both
+   * bans the moment this task added it.
+   * ---------------------------------------------------------------- */
+  {
+    files: ['tools/**/*.mjs'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [...DECIMAL_LIB_IMPORT_PATHS, REQUEST_SCOPE_IMPORT_BAN, TESTING_IMPORT_BAN],
+        },
+      ],
+    },
+  },
+
+  /* ---------------------------------------------------------------- *
+   * M1-X, Council re-review item 1 (Security F1 / Database C5).
+   * @finsoft/database/provisioning is importable only from tools/seed/**
+   * (the demo seed script today; the M2 backfill CLI,
+   * tools/seed/backfill-accounting.mjs, when it lands) — restated with
+   * TESTING_IMPORT_BAN rather than left to the block above, because flat
+   * config replaces no-restricted-imports per matching file: without this,
+   * a tools/seed/** file matching BOTH this block and the one above would
+   * keep only whichever config happens to be listed last, silently
+   * dropping the other ban. DECIMAL_LIB_IMPORT_PATHS and
+   * REQUEST_SCOPE_IMPORT_BAN restated for the same reason as the block
+   * above (Security seat, final check on a7576ac).
+   * ---------------------------------------------------------------- */
+  {
+    files: ['tools/**/*.mjs'],
+    ignores: ['tools/seed/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            ...DECIMAL_LIB_IMPORT_PATHS,
+            REQUEST_SCOPE_IMPORT_BAN,
+            TESTING_IMPORT_BAN,
+            PROVISIONING_IMPORT_BAN,
+          ],
+        },
+      ],
+    },
   },
   {
     files: ['**/*.cjs'],

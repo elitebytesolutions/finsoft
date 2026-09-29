@@ -188,6 +188,35 @@ const CASES: readonly Case[] = [
       'ADR-0014: the decimal constructor is configured once, in packages/validation. A ' +
       'second import is a second rounding mode, and money computed two ways.',
   },
+  {
+    rule: 'no-testing-outside-database',
+    dir: 'modules/probe/domain',
+    source: "import { runAs } from '@finsoft/database/testing'\nexport const r = runAs\n",
+    because:
+      'M1-X, Security seat final check 3: this is the module-graph half of the ' +
+      "testing-import ban — ESLint's no-restricted-imports matches the specifier as " +
+      'written and would miss the same file reached by a relative path; this rule ' +
+      'does not care how the edge was spelled.',
+  },
+  {
+    rule: 'no-provisioning-outside-owners',
+    dir: 'modules/probe/domain',
+    source:
+      "import { createTenant } from '@finsoft/database/provisioning'\nexport const c = createTenant\n",
+    because:
+      'M1-X, Security seat final check 3: provisioning writes no audit row and is reachable ' +
+      'only from tools/seed/** or packages/database itself, by any path.',
+  },
+  {
+    rule: 'no-request-scope-outside-guard',
+    dir: 'modules/probe/domain',
+    source:
+      "import { withTenantAsPrincipal } from '@finsoft/database/request-scope'\n" +
+      'export const w = withTenantAsPrincipal\n',
+    because:
+      'M1-X, Council T1 / Security seat final check 3: request-scope has exactly one ' +
+      'legitimate caller, permission.guard.ts, by any path.',
+  },
 ]
 
 describe('every boundary rule fires against a file that violates it', () => {

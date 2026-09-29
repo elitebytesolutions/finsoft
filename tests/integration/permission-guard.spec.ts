@@ -354,39 +354,58 @@ describe('PermissionGuard', () => {
     })
   })
 
-  describe('SEC-C6: req.auth must be corroborated by TenantContext', () => {
-    it('401s when TenantContext was never established, even though req.auth is present', async () => {
+  describe('M1-X C5: PermissionGuard establishes its own tenant context, independent of any ambient one', () => {
+    /*
+     * Superseded SEC-C6. Under the pre-M1-X architecture, TenantContext was
+     * established ad hoc by whatever ran before the guard, and PermissionGuard
+     * only VERIFIED it agreed with req.auth. Under C5, the request-wide
+     * TenantContext is established by an INTERCEPTOR (tenant-context.interceptor.ts)
+     * that runs strictly after every guard — PermissionGuard, itself a guard,
+     * can never depend on it having already run (see permission.guard.ts's own
+     * header). It establishes its OWN scoped context instead, via
+     * withTenantAsPrincipal, sourced only from req.auth — so it now resolves
+     * correctly with NO ambient context at all.
+     */
+    it('resolves correctly with no ambient TenantContext at all', async () => {
       const res = await request(app.getHttpServer())
         .get('/probe/vouchers')
         .set({ ...asAuth(viewerUserId, tenant.tenantId), 'x-test-no-context': '1' })
-      expect(res.status).toBe(401)
+      expect(res.status).toBe(200)
     })
 
-    it('401s when TenantContext names a different tenant than req.auth claims', async () => {
+    /*
+     * M1-X, Council T1: withTenantAsPrincipal now THROWS rather than silently
+     * ignoring a DIFFERENT principal already in scope — this test's own
+     * middleware is the only thing that can construct that scenario (nothing
+     * in the real guard chain establishes an ambient TenantContext before
+     * PermissionGuard runs), and it is exactly the invariant violation the
+     * throw exists to surface loudly rather than paper over. A 500 here is
+     * correct: an internal contradiction, not an authorization outcome.
+     */
+    it('throws (500) rather than silently ignoring an ambient TenantContext naming a different tenant', async () => {
       const res = await request(app.getHttpServer())
         .get('/probe/vouchers')
         .set({
           ...asAuth(viewerUserId, tenant.tenantId),
           'x-test-context-tenant-id': otherTenant.tenantId,
         })
-      expect(res.status).toBe(401)
+      expect(res.status).toBe(500)
     })
 
-    it('401s when TenantContext names a different user than req.auth claims', async () => {
+    it('throws (500) rather than silently ignoring an ambient TenantContext naming a different user', async () => {
       const res = await request(app.getHttpServer())
         .get('/probe/vouchers')
         .set({
           ...asAuth(viewerUserId, tenant.tenantId),
           'x-test-context-user-id': tenant.ownerId,
         })
-      expect(res.status).toBe(401)
+      expect(res.status).toBe(500)
     })
 
-    it('never 500s from the mismatch — it is a controlled 401', async () => {
+    it('still 401s with no req.auth at all — there is no context to fall back to', async () => {
       const res = await request(app.getHttpServer())
         .get('/probe/vouchers')
-        .set({ ...asAuth(viewerUserId, tenant.tenantId), 'x-test-no-context': '1' })
-      expect(res.status).not.toBe(500)
+        .set({ 'x-test-no-context': '1' })
       expect(res.status).toBe(401)
     })
   })

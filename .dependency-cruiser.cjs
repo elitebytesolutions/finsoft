@@ -203,8 +203,12 @@ module.exports = {
       severity: 'error',
       comment:
         'ADR-0013: connection ownership — Pool construction and the pg driver live in ' +
-        'packages/database and nowhere else.',
-      from: { pathNot: '^packages/database/' },
+        'packages/database and nowhere else. tools/db/outbox-plan.mjs is the one named ' +
+        'exception (M1-X, Council S3 widened depcruise to tools/): a standalone benchmarking ' +
+        'script, reviewed and already documented in its own header as writing to the ' +
+        'disposable TEST database only, run manually via npm run db:outbox-plan — never part ' +
+        'of the running application or a package another module imports.',
+      from: { pathNot: ['^packages/database/', '^tools/db/outbox-plan\\.mjs$'] },
       to: { path: '^node_modules/(pg|pg-types|pg-pool)/' },
     },
     {
@@ -220,6 +224,70 @@ module.exports = {
         ],
       },
       to: { path: '^node_modules/kysely/' },
+    },
+
+    /* ------------------------------------------------------------------ *
+     * M1-X, Security seat final check on a7576ac (item 3, "close it rather
+     * than defer"). eslint.config.mjs's no-restricted-imports bans
+     * @finsoft/database/testing, /provisioning and /request-scope by NAME —
+     * but that rule matches the import specifier as written, and neither a
+     * dynamic `import('@finsoft/database/testing')` (a template-literal or
+     * otherwise non-static specifier defeats the AST-level name match) nor
+     * a relative path reaching the SAME FILE from underneath
+     * (`../../../packages/database/src/testing/harness.ts`, which never
+     * names the package specifier at all) is caught by it. dependency-
+     * cruiser watches the RESOLVED module graph instead: it does not care
+     * how an edge was spelled, only which file it ends up pointing at, so
+     * these three rules close exactly the gap the ESLint rules cannot.
+     *
+     * package.json's own "exports" map already makes a deep bare-specifier
+     * path (`@finsoft/database/src/testing/harness.ts`,
+     * `@finsoft/database/testing/harness.ts`) unresolvable — Node's exports
+     * field is exclusive by default, with no wildcard entry here that would
+     * reopen it, so nothing there needed tightening. The gap was never in
+     * how the package is entered; it was in the module graph having no
+     * rule watching the destination file itself, regardless of entry path.
+     * ------------------------------------------------------------------ */
+    {
+      name: 'no-testing-outside-database',
+      severity: 'error',
+      comment:
+        'M1-X, Council re-review 1 / Security seat final check 3: @finsoft/database/testing ' +
+        '(runAs — TenantContext.run with any caller-supplied principal) is a Vitest fixture ' +
+        'helper, reachable only from inside packages/database itself. Every other importer — ' +
+        'including one reaching the same file by a relative path or a dynamic import, which ' +
+        "ESLint's own name-based ban does not see — is a real request or job path acquiring " +
+        'the power to become any tenant on demand.',
+      from: { pathNot: '^packages/database/' },
+      to: { path: '^packages/database/src/testing/' },
+    },
+    {
+      name: 'no-provisioning-outside-owners',
+      severity: 'error',
+      comment:
+        'M1-X, Council re-review 1 / Security seat final check 3: @finsoft/database/' +
+        'provisioning (sets tenant context from a caller-supplied tenantId; creates ACTIVE ' +
+        "users with role grants; writes no audit row — see the file's own header) is " +
+        'reachable only from inside packages/database itself or tools/seed/** (the demo seed ' +
+        'script today; the M2 backfill CLI, tools/seed/backfill-accounting.mjs, when it ' +
+        'lands). Every other importer, by any path, is onboarding a real account with ' +
+        'nothing to show for it in the audit trail.',
+      from: { pathNot: ['^packages/database/', '^tools/seed/'] },
+      to: { path: '^packages/database/src/provisioning\\.ts$' },
+    },
+    {
+      name: 'no-request-scope-outside-guard',
+      severity: 'error',
+      comment:
+        "M1-X, Council T1 / Security seat final check 3: @finsoft/database/request-scope's " +
+        'withTenantAsPrincipal opens a guard-scoped TenantContext for exactly one caller — ' +
+        'PermissionGuard, which runs before the request-wide TenantContextInterceptor has had ' +
+        'a chance to. Reachable only from inside packages/database itself or ' +
+        'apps/api/src/common/permission.guard.ts, by any path.',
+      from: {
+        pathNot: ['^packages/database/', '^apps/api/src/common/permission\\.guard\\.ts$'],
+      },
+      to: { path: '^packages/database/src/request-scope\\.ts$' },
     },
 
     /* ------------------------------------------------------------------ *

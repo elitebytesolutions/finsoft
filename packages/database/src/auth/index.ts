@@ -15,8 +15,11 @@
  */
 
 export {
+  decoyAuditRoundTrip,
   withLoginAttempt,
   type LoginAttemptResult,
+  type LoginAuditHook,
+  type LoginAuditOutcome,
   type LoginCandidate,
   type LoginCandidateUser,
   type LoginDecision,
@@ -28,14 +31,21 @@ export {
 export {
   spendRefreshToken,
   type RefreshOutcome,
+  type RefreshReuseAuditHook,
+  type RefreshReuseAuditOutcome,
   type SpendRefreshTokenParams,
   type RefreshTestHooks,
 } from './refresh.ts'
 
 export {
+  getAccountState,
   getAuthenticatedProfile,
   isSessionActive,
   revokeSession,
   touchSessionLastSeen,
+  updateOwnFullName,
+  type AccountState,
   type AuthenticatedProfile,
+  type UpdatedProfile,
+  type UpdateOwnFullNameOutcome,
 } from './session.ts'

@@ -1,6 +1,6 @@
 import { Writable } from 'node:stream'
 import { Controller, Get, Module, type INestApplication } from '@nestjs/common'
-import { APP_GUARD } from '@nestjs/core'
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core'
 import { Test } from '@nestjs/testing'
 import cookieParser from 'cookie-parser'
 import { Redis } from 'ioredis'
@@ -11,6 +11,7 @@ import { prepareTestDatabase, teardownTestDatabase } from '@finsoft/database/tes
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { AllExceptionsFilter } from '../../apps/api/src/common/all-exceptions.filter.ts'
 import { FinsoftNestLogger } from '../../apps/api/src/common/nest-logger.ts'
+import { TenantContextInterceptor } from '../../apps/api/src/common/tenant-context.interceptor.ts'
 import { TenantGuard } from '../../apps/api/src/common/tenant.guard.ts'
 import { AuthModule } from '../../apps/api/src/auth/auth.module.ts'
 import { createActiveUserFixture } from './helpers/auth-seed.ts'
@@ -209,7 +210,10 @@ describe('framework messages go through the same redactor', () => {
 describe('the auth routes leak neither credentials nor their hashes', () => {
   @Module({
     imports: [AuthModule],
-    providers: [{ provide: APP_GUARD, useClass: TenantGuard }],
+    providers: [
+      { provide: APP_GUARD, useClass: TenantGuard },
+      { provide: APP_INTERCEPTOR, useClass: TenantContextInterceptor },
+    ],
   })
   class LogLeakAuthModule {}
 
