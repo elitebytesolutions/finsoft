@@ -11,7 +11,7 @@
   "source": "docs/posting-rules/reversal.md",
   "governedBy": ["ADR-0006", "ADR-0012", "ADR-0014", "Invariant 6"],
   "executableFrom": "M3",
-  "status": "Specified, hand-computed. Not yet executed: needs invoices and receipts (M3). Step 3 follows PO-Q1 Option A, decided by the Product Owner 2026-09-27.",
+  "status": "Specified, hand-computed. Not yet executed: needs invoices and receipts (M3). Step 3 follows PO-Q1 Option A, decided by the Product Owner 2026-09-27. Step 3's errorDetail corrected to the contract's real shape (Accounting seat ruling, 2026-09-29, review of the M3-Q throwaway verify against M3-P @efb7e3f): `receipts: [\"RCT-2027-000001\"]` -> `receipts: [{ \"number\": \"RCT-2027-000001\" }]` (the real shape also carries an `id`, an opaque runtime uuid the golden file does not assert). Number unchanged.",
   "description": [
     "Setup: P05's invoice (10000.0000, 2026-09-15) and receipt (6000.0000, 2026-09-20).",
     "",
@@ -113,7 +113,7 @@
       "expect": {
         "outcome": "REJECTED",
         "error": "INVOICE_HAS_LIVE_ALLOCATIONS",
-        "errorDetail": { "receipts": ["RCT-2027-000001"] },
+        "errorDetail": { "receipts": [{ "number": "RCT-2027-000001" }] },
         "entriesAfter": 2
       }
     },

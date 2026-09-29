@@ -6,7 +6,7 @@
   "source": "docs/posting-rules/service-sale.md §6",
   "governedBy": ["ADR-0011", "ADR-0014"],
   "executableFrom": "M3",
-  "status": "Specified, hand-computed. Not yet executed: needs sales invoices (M3).",
+  "status": "Specified, hand-computed. Not yet executed: needs sales invoices (M3). Step 1 marked \"level\": \"kernel\" (Accounting seat ruling, 2026-09-29, review of the M3-Q throwaway verify against M3-P @efb7e3f): the real modules/receivables command has no lineNet field for a client to submit, so SALE_AMOUNT_MISMATCH is reachable only at the kernel, as P03 does. Step 2 (module-level) gains an `invoiceLines` assertion that the module independently computes the SAME half-up tie, 3086.4193 — the reason this scenario exists. No figure changed.",
   "description": [
     "Line 1: 2.500000 × 1234.567700 = 3086.41925 exactly — a tie at the 5th decimal.",
     "  half-up (ADR-0011, away from zero)  → 3086.4193   ← the only accepted value",
@@ -40,6 +40,7 @@
     {
       "step": 1,
       "do": "post",
+      "level": "kernel",
       "event": "SALE_POSTED",
       "referenceType": "sales_invoice",
       "referenceId": "INV-X1",
@@ -111,6 +112,20 @@
           { "account": "4200", "debit": "0.0000", "credit": "3100.0000" }
         ],
         "totals": { "debit": "3100.0000", "credit": "3100.0000" },
+        "invoiceLines": [
+          {
+            "description": "Technician hours",
+            "quantity": "2.500000",
+            "unitPrice": "1234.567700",
+            "lineNet": "3086.4193"
+          },
+          {
+            "description": "Call-out fee",
+            "quantity": "1.000000",
+            "unitPrice": "13.580700",
+            "lineNet": "13.5807"
+          }
+        ],
         "entriesAfter": 1
       }
     },

@@ -316,12 +316,29 @@ export function createFakeReceivablesPort(clockIso: string): ReceivablesPort {
       doc.status = 'POSTED'
       doc.number = nextNumber('INV')
     }
+    /*
+     * P10's `invoiceLines` (Accounting seat ruling, 2026-09-29): the fake
+     * port posts the payload's OWN `lines` verbatim (no server-side
+     * recomputation — unlike the real module), so this is `rawPayload.lines`
+     * itself, narrowed to the four fields `InvoiceLine` names. Good enough
+     * to validate the runner's plumbing against golden-posting-runner-m3.
+     * spec.ts; the real module's INDEPENDENT recomputation is what
+     * receivables-real-port.ts's `postInvoice` proves.
+     */
+    const rawLines = (doc.rawPayload.lines as Record<string, unknown>[] | undefined) ?? []
+    const lines = rawLines.map((line) => ({
+      description: line.description as string,
+      quantity: line.quantity as string,
+      unitPrice: line.unitPrice as string,
+      lineNet: line.lineNet as string,
+    }))
     return {
       outcome: result.outcome,
       documentNumber: doc.number!,
       entryNumber: result.entry.entryNumber,
       entryId: result.entry.id,
       documentStatus: doc.status,
+      lines,
     }
   }
 

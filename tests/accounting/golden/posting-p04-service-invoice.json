@@ -6,7 +6,7 @@
   "source": "docs/posting-rules/service-sale.md",
   "governedBy": ["ADR-0005", "ADR-0011", "ADR-0014"],
   "executableFrom": "M3",
-  "status": "Specified, hand-computed. Not yet executed: needs customers and sales invoices (M3).",
+  "status": "Specified, hand-computed. Not yet executed: needs customers and sales invoices (M3). Steps 1-2 marked \"level\": \"kernel\" (Accounting seat ruling, 2026-09-29, review of the M3-Q throwaway verify against M3-P @efb7e3f): the real modules/receivables command has no lineNet/netAmount field for a client to submit — the module always computes them itself — so SALE_AMOUNT_MISMATCH is a kernel-only defense, reachable only by calling postingEngine directly, as P03 does. No figure changed.",
   "description": [
     "Line nets, computed by hand at the ONE rounding boundary (per line, half-up, 4 dp):",
     "  Line 1  1.000000 × 7500.000000 = 7500.000000  → 7500.0000",
@@ -37,6 +37,7 @@
     {
       "step": 1,
       "do": "post",
+      "level": "kernel",
       "event": "SALE_POSTED",
       "referenceType": "sales_invoice",
       "referenceId": "INV-X1",
@@ -73,6 +74,7 @@
     {
       "step": 2,
       "do": "post",
+      "level": "kernel",
       "event": "SALE_POSTED",
       "referenceType": "sales_invoice",
       "referenceId": "INV-X2",

@@ -43,7 +43,7 @@ import {
   reversalResiduals,
 } from './golden-support.ts'
 import { checkInvariant9, invariant9Available } from './ar-invariant-9.ts'
-import type { ReceivablesPort } from './receivables-port.ts'
+import type { InvoiceLine, ReceivablesPort } from './receivables-port.ts'
 // modules/customers exists (M3-C, merged): the real, shipped use cases —
 // each opens its own withTenant internally, so these are called under
 // `runAs`, never inside `act`/`withTenant`.
@@ -136,6 +136,15 @@ const STEP_INPUT_KEYS = new Set([
   'action',
   'period',
   'expect',
+  /*
+   * `level: "kernel"` (P04 steps 1-2, P10 step 1 — Accounting seat ruling,
+   * 2026-09-29): routes a `SALE_POSTED`/`CUSTOMER_PAYMENT_RECEIVED` `post`
+   * step to `postingEngine` directly instead of through the receivables
+   * port, for a rejection the module's command shape cannot even submit
+   * (SALE_AMOUNT_MISMATCH — the real command has no lineNet for a client to
+   * get wrong). Absent, a document event still routes through the port.
+   */
+  'level',
 ])
 
 function assertOnlyKnownKeys(
@@ -434,11 +443,21 @@ export async function runPostingScenario(
     )
     expect(error.code, `${where}: error code`).toBe(exp.error)
     if (exp.errorDetail) {
+      /*
+       * A SUBSET match (toMatchObject), not a full deep-equal — Accounting
+       * seat ruling, 2026-09-29 (review of the M3-Q throwaway verify
+       * against M3-P @efb7e3f): some real error details carry an opaque
+       * runtime id alongside a real, hand-computable business number
+       * (`INVOICE_HAS_LIVE_ALLOCATIONS`'s `receipts: [{ id, number }]`,
+       * `ALLOCATION_EXCEEDS_OUTSTANDING`'s `invoiceId`/`invoiceNumber`
+       * pair) — a golden file can and must pin the number, and cannot
+       * pin an id nothing hand-computes. `toMatchObject` still requires
+       * every NAMED key (and, inside an array, every array ELEMENT) to be
+       * present and correct; it only stops requiring the golden file to
+       * spell out keys it does not name.
+       */
       const details = error.details ?? {}
-      for (const [key, value] of Object.entries(exp.errorDetail as Record<string, unknown>)) {
-        expect(key in details, `${where}: error carries detail "${key}"`).toBe(true)
-        expect(details[key], `${where}: errorDetail.${key}`).toEqual(value)
-      }
+      expect(details, `${where}: errorDetail`).toMatchObject(exp.errorDetail as Record<string, unknown>)
     }
   }
 
@@ -491,6 +510,7 @@ export async function runPostingScenario(
     'allocations',
     'invoiceOutstanding',
     'inventoryMovementsWritten',
+    'invoiceLines',
   ]
 
   /** Re-reads the entry `checkPosted` needs from `entryId`, so the SAME checks run for a module post as for a kernel one. */
@@ -513,11 +533,27 @@ export async function runPostingScenario(
   function checkDocumentExtras(
     where: string,
     documentRef: string,
-    result: { documentNumber: string; documentStatus: string },
+    result: { documentNumber: string; documentStatus: string; lines?: readonly InvoiceLine[] },
     exp: Expect,
   ): void {
     if (exp.documentNumber !== undefined)
       expect(result.documentNumber, `${where}: documentNumber`).toBe(exp.documentNumber)
+    if (exp.invoiceLines !== undefined) {
+      /*
+       * P10 step 2 (Accounting seat ruling, 2026-09-29): the module
+       * independently computes the SAME half-up tie the kernel enforces —
+       * 3086.4193, not the half-even/truncated 3086.4192. `result.lines` is
+       * the module's own read-back, not a value this runner derived, so
+       * this proves the module's arithmetic, not just the kernel's.
+       */
+      if (!result.lines) {
+        throw new Error(
+          `${where}: invoiceLines asserted but the receivables port returned no lines for ` +
+            `${documentRef}.`,
+        )
+      }
+      expect(result.lines, `${where}: invoiceLines`).toEqual(exp.invoiceLines)
+    }
     if (exp.documentStatus !== undefined) {
       /*
        * Two shapes, both written verbatim by golden files: a `post` step's
@@ -553,7 +589,15 @@ export async function runPostingScenario(
   for (const step of executableSteps(scenario, milestone)) {
     const where = `${scenario.id} step ${String(step.step)}`
     const verb = step.do as string
-    const isDocumentPost = verb === 'post' && DOCUMENT_EVENTS.has(step.event as string)
+    /*
+     * `level: "kernel"` (see STEP_INPUT_KEYS above) takes a document event
+     * OUT of the module-routed path below and into the generic
+     * `verb === 'post'` kernel path further down — P04 steps 1-2, P10 step
+     * 1, all SALE_AMOUNT_MISMATCH rejections the module's own command
+     * shape cannot reproduce (no client-submitted lineNet to get wrong).
+     */
+    const isDocumentPost =
+      verb === 'post' && DOCUMENT_EVENTS.has(step.event as string) && step.level !== 'kernel'
 
     // P09: a step may name its own tenant (`"tenant": "GOLDEN_B"`),
     // proving isolation inside one scenario run. See the `let acting`
@@ -824,24 +868,49 @@ export async function runPostingScenario(
         'auditRecordsWritten',
         'postingAuditRecordsAfter',
       ])
-      assertOnlyKnownKeys(where, step, [...STEP_INPUT_KEYS])
+      assertOnlyKnownKeys(where, step, [...STEP_INPUT_KEYS, 'referenceType', 'referenceId'])
       const auditBefore = await act((tx) => countAuditRecords(tx, tenantId))
 
       try {
         if (verb === 'post') {
           const raw = step.payload as Record<string, unknown>
-          const payload = {
-            ...raw,
-            lines: (raw.lines as Record<string, unknown>[]).map((line) => {
-              const { account, ...rest } = line
-              return { accountId: accountId(account as string), ...rest }
-            }),
-          }
+          /*
+           * `referenceType` defaults to journal_voucher (every M2 kernel-post
+           * scenario predates this field and carries none). A kernel-level
+           * SALE_POSTED step (`level: "kernel"`) names its own
+           * ("sales_invoice", matching the kernel's SALE_SOURCE_TYPE — see
+           * posting-engine.ts's rule.sourceType check) — but its `referenceId`
+           * is still a fixture REF ("INV-X1"), not a uuid, because that field
+           * was written for the module-routed path this step no longer takes;
+           * the kernel requires a real uuid, so it is ignored here in favour
+           * of the SAME per-idempotency-key uuid journal-voucher steps use.
+           */
+          const referenceType = (step.referenceType as string | undefined) ?? 'journal_voucher'
+          const payload =
+            step.event === 'SALE_POSTED'
+              ? (() => {
+                  // customer (a fixture ref) -> customerId (a uuid): the
+                  // kernel's own ServiceSalePayload shape (service-sale.ts
+                  // PAYLOAD_KEYS) has no room for "customer" — it must be
+                  // DELETED, not left `undefined` (requireKnownKeys reads
+                  // Object.keys, which includes an own key set to undefined).
+                  const { customer, ...rest } = raw as Record<string, unknown> & {
+                    customer?: string
+                  }
+                  return { ...rest, customerId: customerId(customer as string) }
+                })()
+              : {
+                  ...raw,
+                  lines: (raw.lines as Record<string, unknown>[]).map((line) => {
+                    const { account, ...rest } = line
+                    return { accountId: accountId(account as string), ...rest }
+                  }),
+                }
           const result = await act((tx) =>
             engine.post(
               {
                 event: step.event as FinancialEventName,
-                referenceType: 'journal_voucher',
+                referenceType,
                 referenceId: referenceIdFor(step.idempotencyKey as string),
                 occurredAt: step.occurredAt as string,
                 idempotencyKey: step.idempotencyKey as string,

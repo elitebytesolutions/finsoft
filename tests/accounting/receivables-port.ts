@@ -34,6 +34,14 @@ export type PostOutcome = 'POSTED' | 'REPLAYED'
  * data value — the same contract `postingEngine.post` and
  * `reversalEngine.reverseForSource` already use.
  */
+/** A posted invoice's own line, as the module independently computed it (golden `invoiceLines` — P10). */
+export interface InvoiceLine {
+  readonly description: string
+  readonly quantity: string
+  readonly unitPrice: string
+  readonly lineNet: string
+}
+
 export interface DocumentPostResult {
   readonly outcome: PostOutcome
   /** The document's own number (`INV-…` / `RCT-…`). */
@@ -43,6 +51,13 @@ export interface DocumentPostResult {
   /** The journal entry's id — so `entryIdByNumber` (golden-posting-runner.ts) can feed `do: "reverse"` (direct journal reversal, expected REVERSAL_VIA_SOURCE_REQUIRED, kernel-level). */
   readonly entryId: string
   readonly documentStatus: string
+  /**
+   * ONLY for `postInvoice`: the module's own computed invoice lines, read
+   * back after posting — P10 exists to prove the module independently
+   * arrives at the SAME half-up tie (3086.4193) the kernel enforces.
+   * Undefined for a receipt or a reversal, which carry no invoice lines.
+   */
+  readonly lines?: readonly InvoiceLine[]
 }
 
 export interface DraftResult {

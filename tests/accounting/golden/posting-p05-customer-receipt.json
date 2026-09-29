@@ -6,7 +6,7 @@
   "source": "docs/posting-rules/customer-receipt.md",
   "governedBy": ["ADR-0005", "ADR-0011"],
   "executableFrom": "M3",
-  "status": "Specified, hand-computed. Not yet executed: needs customers, invoices and receipts (M3).",
+  "status": "Specified, hand-computed. Not yet executed: needs customers, invoices and receipts (M3). Step 2's errorDetail keys corrected to the contract's real shape (Accounting seat ruling, 2026-09-29, review of the M3-Q throwaway verify against M3-P @efb7e3f): `invoice` -> `invoiceNumber` (`invoiceId` omitted — an opaque runtime uuid, not a hand-computable figure). outstanding/requested unchanged.",
   "description": [
     "Step 1 posts P04's invoice (10000.0000 to CUST-A).",
     "",
@@ -89,7 +89,7 @@
         "outcome": "REJECTED",
         "error": "ALLOCATION_EXCEEDS_OUTSTANDING",
         "errorDetail": {
-          "invoice": "INV-A1",
+          "invoiceNumber": "INV-2027-000001",
           "outstanding": "10000.0000",
           "requested": "10000.0001"
         },

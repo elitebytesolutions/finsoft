@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url'
 import { TenantContext } from '@finsoft/database'
 import { REPO_ROOT } from '@finsoft/database/testing'
 import { customerDirectory } from '../../modules/customers/index.ts'
-import type { DocumentPostResult, DraftResult, ReceivablesPort } from './receivables-port.ts'
+import type { DocumentPostResult, DraftResult, InvoiceLine, ReceivablesPort } from './receivables-port.ts'
 
 /*
  * Loads a REAL `ReceivablesPort` from `modules/receivables`, once M3-P
@@ -207,12 +207,36 @@ export async function loadReceivablesRealPort(): Promise<ReceivablesPort | null>
         idempotencyKey: input.idempotencyKey,
         actor: actor(),
       })
+      /*
+       * P10 (Accounting seat ruling, 2026-09-29): read the module's OWN
+       * computed lines back (getInvoice, not a value this adapter derived),
+       * so `invoiceLines` proves the module independently arrives at the
+       * same half-up tie the kernel enforces. `ComputedInvoiceLine` also
+       * carries `lineNo`, which `InvoiceLine` (receivables-port.ts) does
+       * not — stripped here, not added to the golden file, because line
+       * order is already what the array's own position asserts.
+       */
+      const current = await uc.getInvoice(id)
+      const lines: readonly InvoiceLine[] = (
+        current.lines as readonly {
+          description: string
+          quantity: string
+          unitPrice: string
+          lineNet: string
+        }[]
+      ).map((line) => ({
+        description: line.description,
+        quantity: line.quantity,
+        unitPrice: line.unitPrice,
+        lineNet: line.lineNet,
+      }))
       return {
         outcome: result.replayed ? 'REPLAYED' : 'POSTED',
         documentNumber: result.invoice.number as string,
         entryNumber: result.journalEntryNumber,
         entryId: result.journalEntryId,
         documentStatus: result.invoice.status,
+        lines,
       } satisfies DocumentPostResult
     },
 
