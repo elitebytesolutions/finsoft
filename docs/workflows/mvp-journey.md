@@ -68,12 +68,46 @@ This posts real documents on the shared staging demo tenants, `BHATTI1` and `BHA
 
 ### Run it
 
+**Never paste a password into a command, and never paste one through `!` in a Claude session or
+into any agent chat.** A password pasted straight into a command string lands in your shell
+history on disk, and pasting it to an agent puts it in that session's transcript — neither is
+somewhere a credential for a shared tenant belongs. Type each password at your own terminal's
+prompt instead, where it is never echoed and never written anywhere:
+
+**bash / Git Bash:**
+
+```bash
+read -rs -p "BHATTI1 Accountant password: " E2E_BHATTI1_ACCOUNTANT_PASSWORD; echo
+read -rs -p "BHATTI2 Accountant password: " E2E_BHATTI2_ACCOUNTANT_PASSWORD; echo
+export E2E_BHATTI1_ACCOUNTANT_PASSWORD E2E_BHATTI2_ACCOUNTANT_PASSWORD
+export E2E_BASE_URL=https://31-220-74-159.sslip.io
+
+npx playwright test --config tests/e2e/playwright.deployed.config.ts \
+  tests/e2e/mvp-journey.deployed.spec.ts --reporter=list
 ```
-E2E_BASE_URL=https://31-220-74-159.sslip.io \
-E2E_BHATTI1_ACCOUNTANT_PASSWORD='<paste from your credentials file>' \
-E2E_BHATTI2_ACCOUNTANT_PASSWORD='<paste from your credentials file>' \
-npx playwright test --config tests/e2e/playwright.deployed.config.ts tests/e2e/mvp-journey.deployed.spec.ts
+
+**PowerShell:**
+
+```powershell
+$b1 = Read-Host -AsSecureString "BHATTI1 Accountant password"
+$b2 = Read-Host -AsSecureString "BHATTI2 Accountant password"
+$env:E2E_BHATTI1_ACCOUNTANT_PASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+  [Runtime.InteropServices.Marshal]::SecureStringToBSTR($b1))
+$env:E2E_BHATTI2_ACCOUNTANT_PASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+  [Runtime.InteropServices.Marshal]::SecureStringToBSTR($b2))
+$env:E2E_BASE_URL = 'https://31-220-74-159.sslip.io'
+
+npx playwright test --config tests/e2e/playwright.deployed.config.ts `
+  tests/e2e/mvp-journey.deployed.spec.ts --reporter=list
 ```
+
+`--reporter=list` is explicit above even though `playwright.deployed.config.ts` already pins
+`reporter: [['list']]` for every `*.deployed.spec.ts` file — filling the password field renders
+its literal value into Playwright's own step description (`Fill "<password>"`), which only an
+HTML or JSON reporter would ever persist anywhere. Passing `--reporter=list` here means a stray
+`--reporter=html` cannot be added later without someone noticing it contradicts this documented
+command. `trace`, `screenshot` and `video` are already forced `off` inside the spec file itself,
+so there is no trace or recording to check either way.
 
 Any one of the three variables missing and the file registers a single, always-passing
 "opted out" placeholder test instead of the real journey — the run tells you what to set, rather
@@ -89,18 +123,26 @@ exactly `0.0000` and the trial balance is `Balanced` afterwards. Nothing is dele
 customer, the reversed invoice and the reversed receipt stay visible forever, exactly as a real
 correction would. No fiscal period is ever closed or reopened by this file.
 
-If a step fails **after** money has posted, the test does not attempt automatic cleanup — see the
-comment above the reversal step in the file for why: guessing at a reversal from a partially
-broken state risks posting something else wrong on a shared demo tenant. A failure past step 2
-means a human (you) checks `BHATTI1`/`BHATTI2`'s open items and reverses by hand, with full
-context, the same as any other posting correction.
+**This suite never retries** (`test.describe.configure({ retries: 0 })`, overriding
+`playwright.deployed.config.ts`'s file-wide `retries: 1`) — a retry after money has already
+posted would run the whole journey again and leave a *second*, unreversed set on a shared demo
+tenant. If a step fails after the invoice or receipt posted but before step 7 reverses it, each
+tenant's own cleanup hook still runs: it reverses, by direct API call (not the UI, since a broken
+screen is exactly the failure this needs to survive), whatever that run posted and had not yet
+reversed, in the same order (receipt, then invoice — PO-Q1) as the normal path. If it cannot
+finish — say the API itself is down — it throws a named, actionable error listing exactly which
+document(s) are still open, reported as its own failure alongside the test's. Either way, check
+the run's output before assuming `BHATTI1`/`BHATTI2` are clean, and reverse anything it names by
+hand if it says it could not.
 
 ### What it never does
 
-Reads a credentials file itself, prints a password (to a log, a trace, a screenshot or a video —
-`trace`/`screenshot`/`video` are all forced `off` for this file specifically), or hardcodes a
-secret. The access token Playwright itself might echo into an assertion failure's console output
-is a short-lived session credential the server can revoke, not the account password.
+Reads a credentials file itself, prints a password (to the console, a log, a trace, a screenshot
+or a video — `trace`/`screenshot`/`video` are all forced `off` for this file specifically, and
+`--reporter=list` above keeps a step's rendered `Fill "<password>"` description out of any
+persisted report), or hardcodes a secret. The access token Playwright itself might echo into an
+assertion failure's console output is a short-lived session credential the server can revoke, not
+the account password.
 
 ## Proposal: wiring this into `tools/ship/staging.mjs`
 
@@ -109,8 +151,13 @@ lane's `ALLOWED` paths. For whoever picks it up:
 
 - Add an **optional** post-smoke step, after `infrastructure/staging/smoke.sh` passes, that runs
   exactly the command above — `playwright test --config tests/e2e/playwright.deployed.config.ts
-  tests/e2e/mvp-journey.deployed.spec.ts` — with `E2E_BASE_URL` set to the same staging origin the
-  smoke test just checked.
+  tests/e2e/mvp-journey.deployed.spec.ts --reporter=list` — with `E2E_BASE_URL` set to the same
+  staging origin the smoke test just checked. The retry-off and net-zero cleanup behaviour live in
+  the spec file itself (`test.describe.configure({ retries: 0 })`, each tenant's `afterAll`), not
+  in the ship tool, so wiring this in needs no extra safety logic on that side — only passing the
+  two password env vars through from wherever `ship:staging`'s caller keeps them, never printing
+  or logging them, and surfacing the step's pass/fail (including a cleanup-hook failure, which is
+  its own actionable signal that a demo tenant needs a human to look at it).
 - Keep it **optional and separate from the pass/fail gate that blocks a deploy**: this step posts
   and reverses real documents on a shared tenant, which is a materially different risk than a
   read-only smoke check, and a transient UI flake here should not trigger `ship:staging`'s
