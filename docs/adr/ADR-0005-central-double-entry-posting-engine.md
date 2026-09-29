@@ -5,6 +5,27 @@
 **Deciders:** Product Owner, Architecture Guardian, Accounting Guardian
 **Authority:** LEVEL 1 — reversing this requires a superseding ADR
 
+---
+
+> ## ⛔ Partial supersession — pipeline step 2 (:56) is no longer in force
+>
+> **This ADR is still in force**, and this notice is permanent. Its `Status:` stays `Accepted`. The notice records status only, and the decision, rationale and consequences below stay exactly as accepted, per [the ADR README](README.md) §4. Because the supersession is partial, this record does not become `Superseded by ADR-0027`.
+>
+> [ADR-0027](ADR-0027-posting-idempotency-resolved-against-the-journal.md) (**Accepted 2026-09-28**) supersedes **step 2 of the pipeline and nothing else in this record**. It also clarifies one field-table cell without changing it. The body below still states :56 as an unqualified rule, and this notice is the only thing that says otherwise, which is why it is not removed:
+>
+> | Provision | Under ADR-0027 |
+> |---|---|
+> | Line 56: "├─ 2  idempotency: INSERT (tenant_id, idempotency_key) → on conflict, return prior result" | **No longer in force.** Read instead: step 2 is a *lookup* in `journal_entries` by `(tenant_id, idempotency_key)`, and then by source. A replay returns the prior result. `journal_entries`' unique index is the only idempotency record. Numbering and the entry INSERT (`ON CONFLICT DO NOTHING`) run inside one kernel savepoint, `finsoft_posting_number`, which is rolled back on a lost race so that no number is consumed |
+> | Line 48: "The kernel never opens its own." | **In force, clarified.** The kernel opens, commits and rolls back no transaction. Inside the caller's `tx` it may issue that one named savepoint (`SAVEPOINT`, `RELEASE`, `ROLLBACK TO`) and no other transaction-control statement |
+>
+> Everything else stays in force: steps 1 and 3–11 in ADR-0005's order, the field table, and Compliance :165's `UNIQUE (tenant_id, idempotency_key)`, which is the index ADR-0027 resolves against.
+>
+> **Before changing the posting pipeline, read ADR-0027.** For step 2 it, not the line below, is the operative rule. Nothing is blocked on this record.
+>
+> **Line numbers.** Every `ADR-0005:NN` citation in the repository was written against the **as-accepted** text. This notice adds 21 lines at the head, so an as-accepted line NN is now at NN+21: :48 → 69, :56 → 77. Citations are not rewritten. The notice is permanent, so the offset is permanent and fixed at +21. Any later edit here must preserve its line count.
+
+---
+
 ## Context
 
 A dozen modules — sales, procurement, banking, cheques, inventory, tax, HR, administration — all end in a journal entry. If each builds its own debits and credits, the system acquires a dozen implementations of double entry, each with its own account resolution, its own period check, its own rounding, its own idempotency handling, and its own bugs.
