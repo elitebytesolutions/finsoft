@@ -68,10 +68,11 @@ test.describe('M2 accounting journey (real API, real tenant)', () => {
   }) => {
     await login(page, fixture.accountantEmail, fixture.password)
 
-    // 1. Chart of Accounts — the PO's original screen design, restored (M2-UI). Add/Edit/
-    // Delete are back in the DOM (the PO now wants account creation in the MVP) but disabled
-    // behind ACCOUNT_CREATE_ENABLED until a real POST /api/accounts exists — the chart itself
-    // is still read-only server-side (coa-standard.md §5).
+    // 1. Chart of Accounts — the PO's original screen design, restored (M2-UI). Add/Edit/Move
+    // are back in the DOM (the PO now wants account creation in the MVP) but disabled behind
+    // ACCOUNT_CREATE_ENABLED until a real POST /api/accounts exists — the chart itself is
+    // still read-only server-side (coa-standard.md §5). There is no Delete button at all:
+    // accounts are never hard-deleted.
     await page.goto('/accounts')
     await expect(
       page.getByRole('heading', { name: 'Chart of Accounts', exact: true }),

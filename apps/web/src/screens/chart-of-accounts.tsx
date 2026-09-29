@@ -56,7 +56,6 @@ import {
   ShoppingBag,
   Table2,
   Tag,
-  Trash2,
   TrendingUp,
   Upload,
   Users,
@@ -64,7 +63,7 @@ import {
   X,
   Download,
 } from 'lucide-react'
-import { Banner, Button, Modal, moneyFromString } from '@finsoft/ui'
+import { Banner, Button, moneyFromString } from '@finsoft/ui'
 import type { Master } from '@/mocks/api'
 import { MasterModal } from './master-form'
 import { listAccounts, getTrialBalance } from '@/lib/api/accounting-client'
@@ -190,7 +189,6 @@ function ChartReady({ data }: { data: Awaited<ReturnType<typeof loadChart>> }) {
   )
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [modal, setModal] = useState<null | { level: number; parent?: string; type: string }>(null)
-  const [del, setDel] = useState<AdaptedAccount | null>(null)
   const [view, setView] = useState<'table' | 'map'>('table')
   const [density, setDensity] = useState<'list' | 'comfy' | 'grid'>('comfy')
   const [nameWidth, setNameWidth] = useState(() => {
@@ -828,7 +826,7 @@ function ChartReady({ data }: { data: Awaited<ReturnType<typeof loadChart>> }) {
                     onClick={() =>
                       m.kind === 'Postable'
                         ? navigate(`/ledgers?account=${encodeURIComponent(m.code)}`)
-                        : setDel(m)
+                        : comingSoon()
                     }
                   >
                     <EllipsisVertical />
@@ -913,34 +911,6 @@ function ChartReady({ data }: { data: Awaited<ReturnType<typeof loadChart>> }) {
           onClose={() => setModal(null)}
           onSave={() => setNotice('Account creation is not wired to the API yet.')}
         />
-      )}
-      {del && (
-        <Modal title={`Delete account — ${del.name}`} onClose={() => setDel(null)}>
-          <p style={{ fontSize: 12.5, color: '#334155', lineHeight: 1.6 }}>
-            You are about to delete <b>{del.name}</b> ({del.code}, level {del.level}).
-          </p>
-          <p
-            style={{
-              fontSize: 12.5,
-              color: '#92400e',
-              background: '#FFF7E6',
-              borderRadius: 10,
-              padding: 12,
-              lineHeight: 1.5,
-            }}
-          >
-            ⛔ Account deletion is not available yet — the chart is read-only until the Accounting
-            spec and API ship.
-          </p>
-          <div className="modal-foot">
-            <Button kind="secondary" onClick={() => setDel(null)}>
-              Cancel
-            </Button>
-            <Button kind="danger" disabled>
-              Delete account
-            </Button>
-          </div>
-        </Modal>
       )}
     </>
   )

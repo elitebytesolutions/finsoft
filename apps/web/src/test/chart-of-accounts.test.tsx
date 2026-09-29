@@ -165,18 +165,20 @@ describe('ChartOfAccounts', () => {
   })
 
   // M2-UI brief: the PO now wants account creation in the MVP, so the original screen's
-  // Add/Edit/Move/Activate/Deactivate/Delete affordances are restored to the DOM — but every
-  // one is disabled behind ACCOUNT_CREATE_ENABLED (feature-flags.ts) until a real
-  // POST /api/accounts exists (coa-standard.md §5 is still read-only today). This replaces the
-  // M2-S-era assertion that these buttons were entirely absent — see the M2-UI report's
-  // DECISIONS for why that assertion changed rather than just its selectors.
-  it('shows Add/Edit/Delete as present but disabled — the chart is still read-only server-side', async () => {
+  // Add/Edit/Move/Activate/Deactivate affordances are restored to the DOM — but every one is
+  // disabled behind ACCOUNT_CREATE_ENABLED (feature-flags.ts) until a real POST /api/accounts
+  // exists (coa-standard.md §5 is still read-only today). This replaces the M2-S-era assertion
+  // that these buttons were entirely absent — see the M2-UI report's DECISIONS for why that
+  // assertion changed rather than just its selectors. Delete is not one of them: accounts are
+  // never hard-deleted (CLAUDE.md), so there is no Delete button at all, disabled or otherwise
+  // (coordinator review, M2-UI).
+  it('shows Add/Edit as present but disabled, and no Delete button at all — the chart is still read-only server-side', async () => {
     mockBothCalls()
     renderScreen()
     await waitFor(() => expect(screen.getByText('Cash in Hand')).toBeInTheDocument())
     expect(screen.getByRole('button', { name: /add account/i })).toBeDisabled()
-    expect(screen.getByRole('button', { name: /^delete$/i })).toBeDisabled()
-    expect(screen.getByText(/not available yet/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^delete$/i })).not.toBeInTheDocument()
+    expect(screen.getByText('Adding and editing accounts is coming soon.')).toBeInTheDocument()
   })
 
   it('shows an error state with retry', async () => {
