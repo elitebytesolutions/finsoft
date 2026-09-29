@@ -240,8 +240,6 @@ describe('PartyList (Customer) — real API', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Deactivate' }))
     fireEvent.click(screen.getByRole('button', { name: 'Deactivate' }))
 
-    await waitFor(() =>
-      expect(screen.getByText(/still has a balance of/i)).toBeInTheDocument(),
-    )
+    await waitFor(() => expect(screen.getByText(/still has a balance of/i)).toBeInTheDocument())
   })
 })

@@ -58,7 +58,10 @@ export function previewReceipt(body: PreviewReceiptRequest): Promise<ReceiptPrev
 
 /** R3 `POST /api/receipts` — creates a DRAFT, posts nothing, assigns no number. Permission:
  * `payment.receive`. Idempotency-Key required. */
-export function createReceipt(body: CreateReceiptRequest, idempotencyKey: string): Promise<Receipt> {
+export function createReceipt(
+  body: CreateReceiptRequest,
+  idempotencyKey: string,
+): Promise<Receipt> {
   return apiFetch<Receipt>('/api/receipts', {
     method: 'POST',
     headers: { 'Idempotency-Key': idempotencyKey },

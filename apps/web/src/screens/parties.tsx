@@ -465,9 +465,13 @@ export function PartyList({
                         <div>
                           <Wallet />
                           <span>
-                            <b>{x.balanceMoney ? formatRunningBalance(x.balanceMoney).amount : '—'}</b>
+                            <b>
+                              {x.balanceMoney ? formatRunningBalance(x.balanceMoney).amount : '—'}
+                            </b>
                             <small>
-                              {x.balanceMoney ? `Balance (${formatRunningBalance(x.balanceMoney).side})` : 'Balance'}
+                              {x.balanceMoney
+                                ? `Balance (${formatRunningBalance(x.balanceMoney).side})`
+                                : 'Balance'}
                             </small>
                           </span>
                         </div>
@@ -706,7 +710,11 @@ function CustomerTable({
                         aria-label={`More for ${m.name}`}
                         aria-haspopup={canManage || undefined}
                         aria-expanded={canManage ? menuFor === m.code : undefined}
-                        onClick={canManage ? () => setMenuFor(menuFor === m.code ? null : m.code) : undefined}
+                        onClick={
+                          canManage
+                            ? () => setMenuFor(menuFor === m.code ? null : m.code)
+                            : undefined
+                        }
                       >
                         <Ellipsis />
                       </button>
@@ -818,7 +826,11 @@ function CustomerStatusDialog({
             : `${customer.name} will be offered in customer pickers again.`}
         </p>
         {error && (
-          <div className="empty-state" role="alert" style={{ color: 'var(--money-negative, #b42318)' }}>
+          <div
+            className="empty-state"
+            role="alert"
+            style={{ color: 'var(--money-negative, #b42318)' }}
+          >
             {error}
           </div>
         )}
@@ -1313,7 +1325,9 @@ function PartyWizard({
                     onChange={set('stn')}
                     placeholder="3277876-5"
                     disabled={isCustomer}
-                    title={isCustomer ? 'Sales tax registration is not part of this release.' : undefined}
+                    title={
+                      isCustomer ? 'Sales tax registration is not part of this release.' : undefined
+                    }
                   />
                 </label>
                 <label>
@@ -1877,7 +1891,9 @@ export function CustomerDetail() {
                     <i className={activityTone(ev)} />
                     <div>
                       <b>{humanizeAction(ev.action)}</b>
-                      <small>{ev.entityType} · {entityLabel(ev.entityId)}</small>
+                      <small>
+                        {ev.entityType} · {entityLabel(ev.entityId)}
+                      </small>
                     </div>
                     <span>{actorLabel(ev.actorUserId)}</span>
                   </li>
@@ -2005,7 +2021,8 @@ export function CustomerDetail() {
                     <td className="num">{moneyFromString(l.debit, { zeroAsDash: true })}</td>
                     <td className="num">{moneyFromString(l.credit, { zeroAsDash: true })}</td>
                     <td className="num">
-                      {formatRunningBalance(l.balance).amount} <small>{formatRunningBalance(l.balance).side}</small>
+                      {formatRunningBalance(l.balance).amount}{' '}
+                      <small>{formatRunningBalance(l.balance).side}</small>
                     </td>
                     <td>
                       <span className="pt-status on">{l.status}</span>

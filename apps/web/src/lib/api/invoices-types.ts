@@ -71,7 +71,15 @@ export interface Invoice {
 
 export type InvoiceListItem = Pick<
   Invoice,
-  'id' | 'number' | 'status' | 'settlement' | 'customer' | 'invoiceDate' | 'dueDate' | 'netAmount' | 'outstanding'
+  | 'id'
+  | 'number'
+  | 'status'
+  | 'settlement'
+  | 'customer'
+  | 'invoiceDate'
+  | 'dueDate'
+  | 'netAmount'
+  | 'outstanding'
 >
 
 export interface InvoiceListPage {

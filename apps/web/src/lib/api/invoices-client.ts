@@ -52,7 +52,10 @@ export function listInvoices(query: ListInvoicesQuery = {}): Promise<InvoiceList
 }
 
 /** I2 `POST /api/invoices` — creates a DRAFT. Permission: `invoice.create`. Idempotency-Key required. */
-export function createInvoice(body: CreateInvoiceRequest, idempotencyKey: string): Promise<Invoice> {
+export function createInvoice(
+  body: CreateInvoiceRequest,
+  idempotencyKey: string,
+): Promise<Invoice> {
   return apiFetch<Invoice>('/api/invoices', {
     method: 'POST',
     headers: { 'Idempotency-Key': idempotencyKey },

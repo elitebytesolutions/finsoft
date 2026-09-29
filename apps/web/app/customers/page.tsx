@@ -13,7 +13,12 @@ export default function Page() {
   const { can } = useAuth()
   return (
     <Guard module="Masters">
-      <PartyList data={f.data} kind="Customer" onAdd={f.addMaster} canCreate={can('customer.create')} />
+      <PartyList
+        data={f.data}
+        kind="Customer"
+        onAdd={f.addMaster}
+        canCreate={can('customer.create')}
+      />
     </Guard>
   )
 }

@@ -99,7 +99,8 @@ const AUDIT = {
 
 function mockFetches(overrides: Record<string, unknown> = {}) {
   return (url: string, init?: RequestInit) => {
-    if (url.startsWith('/api/customers/c1/ledger')) return Promise.resolve(jsonResponse(200, LEDGER))
+    if (url.startsWith('/api/customers/c1/ledger'))
+      return Promise.resolve(jsonResponse(200, LEDGER))
     if (url.startsWith('/api/audit')) return Promise.resolve(jsonResponse(200, AUDIT))
     if (url === '/api/customers/c1' && (!init || init.method === undefined)) {
       return Promise.resolve(jsonResponse(200, overrides.customer ?? CUSTOMER))

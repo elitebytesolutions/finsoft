@@ -12,7 +12,12 @@
 import { apiFetch } from './client'
 import type { Customer, CustomerLedger, CustomerListPage } from '@finsoft/shared-types'
 
-export type { Customer, CustomerLedger, CustomerListItem, CustomerListPage } from '@finsoft/shared-types'
+export type {
+  Customer,
+  CustomerLedger,
+  CustomerListItem,
+  CustomerListPage,
+} from '@finsoft/shared-types'
 
 export interface ListCustomersQuery {
   q?: string
@@ -129,7 +134,10 @@ export function reactivateCustomer(id: string, body: VersionOnlyRequest): Promis
  * customer, with an opening and closing balance the server computes. Permission:
  * `customer.view`. `422 LEDGER_RANGE_TOO_LARGE` (`details.maxDays: 366`) over a year.
  */
-export function getCustomerLedger(id: string, query: CustomerLedgerQuery = {}): Promise<CustomerLedger> {
+export function getCustomerLedger(
+  id: string,
+  query: CustomerLedgerQuery = {},
+): Promise<CustomerLedger> {
   const qs = toQueryString({ from: query.from, to: query.to })
   return apiFetch<CustomerLedger>(`/api/customers/${encodeURIComponent(id)}/ledger${qs}`)
 }

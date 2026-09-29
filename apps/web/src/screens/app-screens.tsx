@@ -1754,11 +1754,23 @@ function AuditLogPanel() {
       <div className="toolbar" style={{ flexWrap: 'wrap', gap: 8 }}>
         <label>
           From{' '}
-          <input aria-label="From date" type="date" value={from} onChange={(e) => setFrom(e.target.value)} max={to || todayIso()} />
+          <input
+            aria-label="From date"
+            type="date"
+            value={from}
+            onChange={(e) => setFrom(e.target.value)}
+            max={to || todayIso()}
+          />
         </label>
         <label>
           To{' '}
-          <input aria-label="To date" type="date" value={to} onChange={(e) => setTo(e.target.value)} max={todayIso()} />
+          <input
+            aria-label="To date"
+            type="date"
+            value={to}
+            onChange={(e) => setTo(e.target.value)}
+            max={todayIso()}
+          />
         </label>
         <input
           aria-label="Filter by action"
@@ -1804,7 +1816,9 @@ function AuditLogPanel() {
               humanizeAction(ev.action),
               `${ev.entityType} · ${entityLabel(ev.entityId)}`,
               humanizeAction(ev.action),
-              <Badge tone={outcomeOf(ev)}>{outcomeOf(ev) === 'danger' ? 'Denied' : 'Success'}</Badge>,
+              <Badge tone={outcomeOf(ev)}>
+                {outcomeOf(ev) === 'danger' ? 'Denied' : 'Success'}
+              </Badge>,
             ])}
           />
           {lastPage?.nextCursor && (

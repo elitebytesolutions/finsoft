@@ -70,9 +70,7 @@ test.describe('M4-W customer journey (real API, real tenant)', () => {
 
     const customerName = `E2E Customer ${Date.now()}`
     await page.getByPlaceholder('Ahmed Traders').fill(customerName)
-    await expect(
-      page.locator('input[value="Assigned automatically on save"]'),
-    ).toBeDisabled()
+    await expect(page.locator('input[value="Assigned automatically on save"]')).toBeDisabled()
     await page.getByRole('button', { name: 'Next', exact: true }).click()
     await page.getByRole('button', { name: 'Next', exact: true }).click()
     await page.getByRole('button', { name: /Create Customer/ }).click()
@@ -89,9 +87,7 @@ test.describe('M4-W customer journey (real API, real tenant)', () => {
     await nameInput.fill(`${customerName} (Updated)`)
     await page.getByRole('button', { name: /save changes/i }).click()
     await expect(page.getByRole('button', { name: /saved/i })).toBeVisible({ timeout: 15_000 })
-    await expect(
-      page.getByRole('heading', { name: `${customerName} (Updated)` }),
-    ).toBeVisible()
+    await expect(page.getByRole('heading', { name: `${customerName} (Updated)` })).toBeVisible()
 
     // 4. Ledger — real C7, empty (no postings against a brand-new customer). Never a
     // fabricated running balance: the empty state names the range, not "no data".
