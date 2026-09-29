@@ -101,7 +101,12 @@ export const INVARIANTS: readonly Invariant[] = [
     id: 9,
     statement: 'Subledger totals reconcile to their GL control accounts (AR, AP, Inventory)',
     status: 'pending',
-    note: 'Needs subledgers and control accounts. Wave 4.',
+    note:
+      'AR half: docs/posting-rules/customer-receipt.md §8. The check is written — ' +
+      'tests/accounting/ar-invariant-9.ts, gated by invariant9Available() — and registered in ' +
+      'financial-invariant-suite.spec.ts, but stays pending until M3-P merges migrations 016/017 ' +
+      '(sales_invoices, customer_receipts) and flips SALE_POSTED/CUSTOMER_PAYMENT_RECEIVED to ' +
+      'IMPLEMENTED_EVENTS: there is nothing to run it against yet. AP half: Wave 6 (vendors).',
   },
   {
     id: 10,

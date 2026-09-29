@@ -20,6 +20,7 @@ valuation against the stock ledger.
 | `subledger-to-gl.spec.ts` | Criteria 1-4 below, against fixtures including deliberate breaks |
 | `valuation-to-ledger.spec.ts` | The Wave 6 criteria, including the `9533.3333` vs `9533.3334` case the forbidden recomputation produces |
 | `dormant.spec.ts` | **The tripwire.** Fails the moment a posting rule that can reach AR/AP is enabled, the inventory kernel stops being `export {}`, or a subledger/stock table is migrated (re-armed in M2-A — see below) |
+| `subledger-to-gl-ar.spec.ts` | AR wired to real rows (M3-Q, 2026-09-29): `reconcileSubledgerToGeneralLedger` against `Σ SUB(C, D)` / `Σ GL(C, D)` from `../accounting/ar-invariant-9.ts`, for every tenant. Gated the same way `dormant.spec.ts` re-arms — reports "unavailable" today, reconciles for real the moment M3-P's migrations and kernel flip land |
 
 Nothing here imports a kernel, a repository or a posting engine, and nothing
 ever should. A control that shares an implementation with the thing it checks

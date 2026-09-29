@@ -1,17 +1,20 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { closeDatabase, openDatabase } from '@finsoft/database'
+import { closeDatabase, openDatabase, withGlobal, withTenant } from '@finsoft/database'
 import {
   REPO_ROOT,
   TEST_TARGET,
+  createTenantFixture,
   migrateTestDatabase,
   prepareTestDatabase,
+  runAs,
 } from '@finsoft/database/testing'
 import { constraints, columns } from '../../database/tests/catalog.ts'
 import { GLOBAL_TABLES } from '@finsoft/database'
 import { INVARIANTS, enforcedIds, pendingIds } from './invariants.ts'
 import { registerPostingInvariantChecks } from './posting-invariants.ts'
+import { checkInvariant9, invariant9Available } from './ar-invariant-9.ts'
 
 /*
  * The FinancialInvariantSuite. NON_NEGOTIABLES §3: it runs on every PR, and
@@ -162,6 +165,68 @@ describe('Invariant 7: cross-tenant references are impossible', () => {
       .filter((c) => c.referenced_table !== null && tenantOwned.has(c.referenced_table))
 
     expect(crossTable.length).toBeGreaterThan(0)
+  })
+})
+
+describe('Invariant 9, AR half (M3-Q) — gated on M3-P', () => {
+  /*
+   * docs/posting-rules/customer-receipt.md §8. Genuinely pending on THIS
+   * branch: `sales_invoices` / `customer_receipts` do not exist (M3-P has
+   * not merged — docs/design/M3/README.md §2, migrations 016/017), and
+   * SALE_POSTED / CUSTOMER_PAYMENT_RECEIVED are RULE_NOT_ENABLED
+   * (packages/accounting-kernel/src/events.ts). invariants.ts keeps id 9
+   * `pending` and pending-baseline.json keeps it listed — the ratchet may
+   * only shrink, and shrinking it without a real run would be exactly the
+   * "stub it green" NON_NEGOTIABLES §4 forbids.
+   *
+   * This describe block proves the GATE works — that the check correctly
+   * refuses to claim coverage it does not have — which is itself load-
+   * bearing: a gate that silently reports "available" when it is not would
+   * be worse than no gate. tests/accounting/ar-invariant-9.ts's SQL (the
+   * GL query and the SUB query, built from docs/design/M3/modules.md §7's
+   * column shapes) has never run against real rows on this branch, and
+   * this test says so rather than asserting anything about numbers that
+   * do not exist. The moment M3-P's migrations and kernel flip land, this
+   * block's `available` branch starts running for real, against every
+   * tenant — and ONLY THEN may invariants.ts id 9 move to 'enforced' and
+   * pending-baseline.json drop it, as a deliberate, reviewed commit.
+   */
+  it('the AR-half gate correctly reports unavailable until M3-P lands, or runs for real once it has', async () => {
+    const tenant = await createTenantFixture('INV9')
+    const available = await runAs({ tenantId: tenant.tenantId, userId: tenant.ownerId }, () =>
+      withTenant((tx) => invariant9Available(tx)),
+    )
+
+    if (!available) {
+      // The honest, expected state on this branch today. Asserted, not
+      // skipped, so a change that makes this silently stop checking
+      // anything is itself a visible diff.
+      expect(available).toBe(false)
+      return
+    }
+
+    /*
+     * M3-P HAS LANDED. From here the check is real: every tenant, GL(C, D)
+     * must equal SUB(C, D) exactly, and Σ GL(C, D) must equal the
+     * AR_CONTROL balance at D (structural, README §4.1). This branch is
+     * validated today only via the local, unpushed throwaway merge
+     * described in the M3-Q report — it cannot run on this branch's own
+     * pushed history, because nothing here makes `available` true.
+     */
+    const asOf = new Date().toISOString().slice(0, 10)
+    const tenantIds = (
+      await withGlobal((tx) => tx.selectFrom('tenants').select('id').execute())
+    ).map((row) => row.id)
+
+    let tenantsChecked = 0
+    for (const tenantId of tenantIds) {
+      const result = await runAs({ tenantId, userId: null }, () =>
+        withTenant((tx) => checkInvariant9(tx, tenantId, asOf)),
+      )
+      expect(result.breaks, `tenant ${tenantId}: Invariant 9 AR-half breaks`).toEqual([])
+      tenantsChecked += 1
+    }
+    expect(tenantsChecked).toBeGreaterThan(0)
   })
 })
 

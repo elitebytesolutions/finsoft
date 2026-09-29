@@ -34,15 +34,24 @@ belongs in the commit.
 | [P01](posting-p01-jv-simple.json) | Manual JV, two lines; trial balance | Specified — runner: M2 QA lane |
 | [P02](posting-p02-jv-multi-line.json) | Manual JV, four lines, fractional amounts; account ledger | Specified — runner: M2 QA lane |
 | [P03](posting-p03-jv-rejections.json) | Every JV rejection; no number consumed by a rejection | Specified — runner: M2 QA lane |
-| [P04](posting-p04-service-invoice.json) | Service invoice 10,000.0000; per-line half-up boundary; MVP variant fences | Specified — executable from M3 |
-| [P05](posting-p05-customer-receipt.json) | Partial receipt 6,000.0000; customer ledger 4,000.0000; allocation rejections | Specified — executable from M3 |
-| [P06](posting-p06-reversal.json) | Receipt and invoice reversal; reversal-of-reversal and double reversal rejected; everything to zero | Specified — executable from M3 |
+| [P04](posting-p04-service-invoice.json) | Service invoice 10,000.0000; per-line half-up boundary; MVP variant fences | Specified — executable from M3; runner support built (M3-Q), PENDING on `modules/receivables` |
+| [P05](posting-p05-customer-receipt.json) | Partial receipt 6,000.0000; customer ledger 4,000.0000; allocation rejections | Specified — executable from M3; runner support built (M3-Q), PENDING on `modules/receivables` |
+| [P06](posting-p06-reversal.json) | Receipt and invoice reversal; reversal-of-reversal and double reversal rejected; everything to zero | Specified — executable from M3; runner support built (M3-Q), PENDING on `modules/receivables` |
 | [P07](posting-p07-closed-period.json) | Closed / locked period rejection; reversal of a closed-period entry into today's period; replay after close | Specified — runner: M2 QA lane |
-| [P08](posting-p08-idempotent-retry.json) | Three identical requests → one entry; key reuse; source uniqueness | Specified — M2 (JV steps), M3 (invoice steps) |
-| [P09](posting-p09-mvp-journey.json) | The MVP journey across two tenants; trial balance at each checkpoint | Specified — executable from M3; M4 asserts the same figures through the API |
-| [P10](posting-p10-service-line-rounding.json) | A true half-way tie at the service-line boundary: half-up only | Specified — executable from M3 |
-| [P11](posting-p11-receipt-draft-lifecycle.json) | Receipt drafts: no GL, allocation or numbering effect; a draft in a since-closed period rejected, re-dated, posted; a stale proposal rejected at post; draft → cancel | Specified — executable from M3 |
-| [P12](posting-p12-inactive-customer.json) | An inactive customer cannot be invoiced but is paid in full | Specified — executable from M3 |
+| [P08](posting-p08-idempotent-retry.json) | Three identical requests → one entry; key reuse; source uniqueness | Specified — M2 (JV steps) **executed**; M3 (invoice steps 6-9) runner support built (M3-Q), PENDING on `modules/receivables` |
+| [P09](posting-p09-mvp-journey.json) | The MVP journey across two tenants; trial balance at each checkpoint | Specified — executable from M3; runner support built (M3-Q), PENDING on `modules/receivables`; M4 asserts the same figures through the API |
+| [P10](posting-p10-service-line-rounding.json) | A true half-way tie at the service-line boundary: half-up only | Specified — executable from M3; runner support built (M3-Q), PENDING on `modules/receivables` |
+| [P11](posting-p11-receipt-draft-lifecycle.json) | Receipt drafts: no GL, allocation or numbering effect; a draft in a since-closed period rejected, re-dated, posted; a stale proposal rejected at post; draft → cancel | Specified — executable from M3; runner support built (M3-Q), PENDING on `modules/receivables` |
+| [P12](posting-p12-inactive-customer.json) | An inactive customer cannot be invoiced but is paid in full | Specified — executable from M3; runner support built (M3-Q), PENDING on `modules/receivables`. **A genuine conflict was found between this scenario and `modules/customers`' merged `CUSTOMER_HAS_BALANCE` rule — see the M3-Q report** |
+
+Runner support (M3-Q, 2026-09-29): `tests/accounting/golden-posting-runner.ts` executes every
+verb and expectation key P04-P12 use (`saveDraft`/`editDraft`/`cancelDraft`, `reverseDocument`,
+`customer`, `invoiceOutstanding`, `customerLedger`, `invariant9`, `documentStatuses`,
+`documentNumbersIssued`, a line's `party`, `invariant6.perCustomerResidual`), proved against a
+FAKE `ReceivablesPort` in `tests/accounting/golden-posting-runner-m3.spec.ts` (NOT evidence these
+scenarios pass against the real system — see that file's own header). The REAL gate is
+`tests/accounting/posting-scenarios-m3.spec.ts`, which probes for a real `modules/receivables`
+(`tests/accounting/receivables-real-port.ts`) and reports PENDING, honestly, on this branch.
 
 Thirteen of the promised 50–100. The rest arrive with the waves that make them
 expressible — there is no value in writing a scenario for a posting engine

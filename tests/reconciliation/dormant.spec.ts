@@ -177,6 +177,40 @@ describe('the reconciliation deferral is still valid', () => {
         'own comment above this test for why that is not a widening of the regex.)',
     ).toEqual([])
   })
+
+  /*
+   * M3-Q (2026-09-29): NEITHER PRECONDITION HAS FIRED, SO NOTHING HERE
+   * CHANGES — this note exists so a reader can see this was checked, not
+   * assumed. `sales_invoices` / `customer_receipts` still do not exist
+   * (M3-P has not merged migrations 016/017; as of this writing M3-P's own
+   * branch carries zero commits beyond `develop` — see the M3-Q report),
+   * and `IMPLEMENTED_EVENTS` above is still exactly
+   * `['JOURNAL_VOUCHER_POSTED']`. Both assertions in this describe block
+   * are therefore still correctly PASSING, i.e. the tripwire is still
+   * correctly ARMED — this is not the moment either fires.
+   *
+   * What IS ready, so the tripwire's own instructions ("wire
+   * reconcileSubledgerToGeneralLedger... to real rows") take one PR to
+   * carry out rather than a redesign, once it does fire:
+   *   - tests/accounting/ar-invariant-9.ts: GL(C, D) and SUB(C, D) per
+   *     customer-receipt.md §8, gated by `invariant9Available()` on the
+   *     same two preconditions this file checks.
+   *   - tests/reconciliation/subledger-to-gl-ar.spec.ts: wires
+   *     `reconcileSubledgerToGeneralLedger` (THIS directory's own,
+   *     unchanged comparison) to real rows via ar-invariant-9.ts, gated
+   *     the same way — it reports "unavailable" today, for the same
+   *     reason this file does.
+   *   - tests/accounting/golden-posting-runner.ts and
+   *     tests/accounting/posting-scenarios-m3.spec.ts: the golden-scenario
+   *     runner support for P04-P12, gated on a REAL `modules/receivables`
+   *     (tests/accounting/receivables-real-port.ts), not on this file's
+   *     two preconditions — a third, independent gate, because the golden
+   *     runner needs the MODULE, not only the kernel event flip.
+   *
+   * None of the above weakens this file. Flipping either precondition is
+   * still a deliberate act in M3-P's own PR — this note only says the
+   * follow-through is already built and waiting, not that it has run.
+   */
 })
 
 describe('what is proved today, stated so the suite cannot be over-read', () => {

@@ -1,0 +1,232 @@
+import { sql } from 'kysely'
+import { assertIssuedTenantTx, type TenantTx } from '@finsoft/database'
+import { Money } from '@finsoft/validation'
+
+/*
+ * Invariant 9, AR half. docs/posting-rules/customer-receipt.md §8, verbatim:
+ *
+ *   GL(C, D)  = Σ (debit − credit) over journal lines on the AR_CONTROL account
+ *               with party C and occurred_at ≤ D        — every entry, POSTED or REVERSED
+ *
+ *   SUB(C, D) = Σ netAmount of C's invoices posted on or before D
+ *             − Σ netAmount of C's invoices whose reversal is dated on or before D
+ *             − Σ amount of C's receipts posted on or before D
+ *             + Σ amount of C's receipts whose reversal is dated on or before D
+ *
+ *   GL(C, D) = SUB(C, D)                                  exactly, no tolerance
+ *   Σ over C of GL(C, D) = AR_CONTROL balance at D        (structural: README §4.1)
+ *
+ * THIS FILE IS WRITTEN AGAINST A SCHEMA THAT DOES NOT YET EXIST ON THIS BRANCH.
+ * `sales_invoices` and `customer_receipts` are M3-P's migrations (016, 017 —
+ * docs/design/M3/README.md §2), and SALE_POSTED / CUSTOMER_PAYMENT_RECEIVED
+ * are RULE_NOT_ENABLED until M3-P flips packages/accounting-kernel/src/events.ts.
+ * Column names and the reversal join below follow
+ * docs/design/M3/modules.md §7 exactly, so this is ready to run the moment
+ * both land — but it has NEVER RUN AGAINST REAL ROWS, because none exist yet
+ * on this branch (M3-P's branch carries no commits beyond develop as of
+ * 2026-09-29 — see the M3-Q report). `invariant9Available` is the gate: every
+ * caller checks it first, and nothing here is trusted until it returns true
+ * AND a real run has been observed (which is what flips invariants.ts and
+ * pending-baseline.json, by hand, in a dedicated commit — never automatically).
+ *
+ * `DRAFT` and `CANCELLED` receipts, and `PROPOSED` allocations, contribute to
+ * neither side, by construction: only rows with status IN ('POSTED',
+ * 'REVERSED') are summed, and the allocations tables are never read here at
+ * all (the formula does not need them — it works from the documents'
+ * own netAmount/amount and the kernel's reversal linkage, exactly as §8
+ * states).
+ */
+
+export interface Invariant9Row {
+  readonly customerId: string
+  /** GL side: Σ(debit − credit) on AR_CONTROL for this party, signed debit-positive. */
+  readonly gl: string
+  /** Subledger side, per §8's formula. */
+  readonly sub: string
+  /** sub − gl. Zero when the invariant holds. */
+  readonly difference: string
+}
+
+export interface Invariant9Result {
+  readonly asOf: string
+  /** Every customer with a nonzero GL or SUB balance; empty rows are not reported. */
+  readonly rows: readonly Invariant9Row[]
+  /** Rows where gl !== sub, exactly. Empty = the invariant holds. */
+  readonly breaks: readonly Invariant9Row[]
+  /** Σ GL(C, D) over every customer, for the structural check against AR_CONTROL. */
+  readonly totalGl: string
+}
+
+const REQUIRED_TABLES = ['sales_invoices', 'customer_receipts'] as const
+const REQUIRED_EVENTS = ['SALE_POSTED', 'CUSTOMER_PAYMENT_RECEIVED'] as const
+
+/**
+ * Feature-detection gate. True only once BOTH preconditions the AR half of
+ * `tests/reconciliation/dormant.spec.ts` re-arms on have fired for real:
+ * the document tables exist, and the kernel accepts both events. Checking
+ * table existence via `to_regclass` rather than trying the query and
+ * catching "relation does not exist" — the intent (never run without
+ * looking) should read from the function, not from a caught error.
+ */
+export async function invariant9Available(tx: TenantTx): Promise<boolean> {
+  assertIssuedTenantTx(tx)
+  /*
+   * A plain bound parameter, not sql.lit/sql.id (ADR-0013): to_regclass()
+   * takes its argument as an ordinary text value, exactly like any other
+   * function parameter — there is no identifier being substituted into the
+   * query's structure here, only a value being compared inside Postgres's
+   * own catalog function.
+   */
+  const rows = await sql<{ regclass: string | null }>`
+    SELECT to_regclass(${`public.${REQUIRED_TABLES[0]}`})::text AS regclass
+  `.execute(tx)
+  const first = rows.rows[0]?.regclass !== null
+  if (!first) return false
+  const rows2 = await sql<{ regclass: string | null }>`
+    SELECT to_regclass(${`public.${REQUIRED_TABLES[1]}`})::text AS regclass
+  `.execute(tx)
+  if (rows2.rows[0]?.regclass === null) return false
+
+  const { IMPLEMENTED_EVENTS } = await import('@finsoft/accounting-kernel')
+  return REQUIRED_EVENTS.every((event) => IMPLEMENTED_EVENTS.has(event as never))
+}
+
+/**
+ * The GL side, every customer of the tenant, as of `asOf`. Independent of
+ * `SUB` below: no join to `sales_invoices` or `customer_receipts` at all —
+ * only `journal_lines`/`journal_entries`, matching `partyControlBalance`
+ * (packages/database) in shape but swept over every party rather than one.
+ */
+async function glByCustomer(
+  tx: TenantTx,
+  tenantId: string,
+  asOf: string,
+): Promise<Map<string, { debit: string; credit: string }>> {
+  const result = await sql<{ customer_id: string; debit: string; credit: string }>`
+    SELECT jl.party_id::text AS customer_id,
+           sum(jl.debit)::text  AS debit,
+           sum(jl.credit)::text AS credit
+      FROM journal_lines jl
+      JOIN journal_entries je ON je.tenant_id = jl.tenant_id AND je.id = jl.entry_id
+     WHERE jl.tenant_id = ${tenantId}
+       AND jl.account_control = 'AR'
+       AND jl.party_type = 'CUSTOMER'
+       AND je.occurred_at <= ${asOf}::date
+     GROUP BY jl.party_id
+  `.execute(tx)
+  return new Map(
+    result.rows.map((row) => [row.customer_id, { debit: row.debit, credit: row.credit }]),
+  )
+}
+
+/**
+ * The subledger side, every customer, as of `asOf` — §8's formula exactly.
+ * A document's reversal date is found the way modules.md §7 says it must be
+ * (no journal pointer stored on the document): the document's own
+ * `(source_type, source_id)` finds the ORIGINAL entry via the kernel's
+ * unique index, and the original's `reversed_by` finds the reversal entry,
+ * whose `occurred_at` is the date §8 means by "whose reversal is dated".
+ * Never `reversed_at` (a timestamp of the reversal ACTION, not necessarily
+ * the reversal entry's business date — reversal.md §4: a closed-period
+ * original reverses at TODAY, not at the original's date).
+ */
+async function subByCustomer(
+  tx: TenantTx,
+  tenantId: string,
+  asOf: string,
+): Promise<Map<string, string>> {
+  const result = await sql<{ customer_id: string; sub: string }>`
+    WITH invoices AS (
+      SELECT si.customer_id,
+             coalesce(sum(si.net_amount) FILTER (WHERE si.invoice_date <= ${asOf}::date), 0)
+               AS posted,
+             coalesce(sum(si.net_amount) FILTER (WHERE rev.occurred_at <= ${asOf}::date), 0)
+               AS reversed
+        FROM sales_invoices si
+        LEFT JOIN journal_entries orig
+          ON orig.tenant_id = si.tenant_id
+         AND orig.source_type = 'sales_invoice'
+         AND orig.source_id = si.id
+        LEFT JOIN journal_entries rev
+          ON rev.tenant_id = si.tenant_id
+         AND rev.id = orig.reversed_by
+       WHERE si.tenant_id = ${tenantId}
+         AND si.status IN ('POSTED', 'REVERSED')
+       GROUP BY si.customer_id
+    ),
+    receipts AS (
+      SELECT cr.customer_id,
+             coalesce(sum(cr.amount) FILTER (WHERE cr.receipt_date <= ${asOf}::date), 0)
+               AS posted,
+             coalesce(sum(cr.amount) FILTER (WHERE rev.occurred_at <= ${asOf}::date), 0)
+               AS reversed
+        FROM customer_receipts cr
+        LEFT JOIN journal_entries orig
+          ON orig.tenant_id = cr.tenant_id
+         AND orig.source_type = 'customer_receipt'
+         AND orig.source_id = cr.id
+        LEFT JOIN journal_entries rev
+          ON rev.tenant_id = cr.tenant_id
+         AND rev.id = orig.reversed_by
+       WHERE cr.tenant_id = ${tenantId}
+         AND cr.status IN ('POSTED', 'REVERSED')
+       GROUP BY cr.customer_id
+    )
+    SELECT customer_id,
+           (coalesce(i.posted, 0) - coalesce(i.reversed, 0)
+            - coalesce(r.posted, 0) + coalesce(r.reversed, 0))::text AS sub
+      FROM (
+        SELECT customer_id FROM invoices
+        UNION
+        SELECT customer_id FROM receipts
+      ) all_customers
+      LEFT JOIN invoices i USING (customer_id)
+      LEFT JOIN receipts r USING (customer_id)
+  `.execute(tx)
+  return new Map(result.rows.map((row) => [row.customer_id, row.sub]))
+}
+
+/**
+ * Invariant 9, AR half, for one tenant as of `asOf`. Caller must have
+ * checked `invariant9Available` first — this throws (a real Postgres
+ * "relation does not exist" error) rather than guessing, if it has not.
+ */
+export async function checkInvariant9(
+  tx: TenantTx,
+  tenantId: string,
+  asOf: string,
+): Promise<Invariant9Result> {
+  assertIssuedTenantTx(tx)
+  const [gl, sub] = await Promise.all([
+    glByCustomer(tx, tenantId, asOf),
+    subByCustomer(tx, tenantId, asOf),
+  ])
+
+  const customerIds = new Set([...gl.keys(), ...sub.keys()])
+  const rows: Invariant9Row[] = []
+  let totalGl = Money.zero()
+
+  for (const customerId of customerIds) {
+    const glEntry = gl.get(customerId)
+    const glSigned = glEntry
+      ? Money.subtract(Money.from(glEntry.debit), Money.from(glEntry.credit))
+      : Money.zero()
+    const subSigned = Money.from(sub.get(customerId) ?? '0')
+    totalGl = Money.add(totalGl, glSigned)
+    rows.push({
+      customerId,
+      gl: Money.serialize(glSigned, 4),
+      sub: Money.serialize(subSigned, 4),
+      difference: Money.serialize(Money.subtract(subSigned, glSigned), 4),
+    })
+  }
+
+  rows.sort((a, b) => a.customerId.localeCompare(b.customerId))
+
+  return {
+    asOf,
+    rows,
+    breaks: rows.filter((row) => row.gl !== row.sub),
+    totalGl: Money.serialize(totalGl, 4),
+  }
+}

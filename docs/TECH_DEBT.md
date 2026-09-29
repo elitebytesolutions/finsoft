@@ -375,3 +375,45 @@ onboarding that seeds a second AR-control account (a second AR bank fee
 account, for instance) — at which point `controlAccountLedger` should sum
 every AR-control account for the party, matching `customerSubledgerBalance`'s
 own query shape, rather than resolving a single role.
+
+## TD-012 · The M3-P golden-runner and adversarial adapters guess `modules/receivables`' shape
+
+**What.** `tests/accounting/receivables-real-port.ts` (loaded by
+`tests/accounting/posting-scenarios-m3.spec.ts`) and
+`tests/integration/m3-adversarial/receivables-adversarial.spec.ts` each
+probe for `modules/receivables`/`apps/api/src/receivables/receivables.
+module.ts` at a guessed path and, if found, expect a guessed set of export
+names (`createInvoiceDraft`, `postInvoice`, `reverseInvoice`,
+`ReceivablesModule`, …) built by analogy with `modules/customers/index.ts`
+and `docs/design/M3/modules.md` §4's operation names, which are pseudocode
+(`PostInvoice`), not pinned TypeScript exports. `modules/receivables` has
+zero files as of this writing (M3-P's own branch carries no commits beyond
+`develop`), so none of this has ever run against real code — only against
+a hand-built fake (`tests/accounting/fixtures/fake-receivables-port.ts`,
+which implements the SAME `ReceivablesPort` interface these loaders target,
+proving the interface is usable, not that the guessed loader will connect
+to whatever M3-P actually builds).
+
+**Why it is accepted.** M3-Q's brief (docs/design/M3/README.md §3) asks
+this lane to "build their runner support so [P04-P12] execute as soon as
+M3-P's branch provides the rules," ahead of M3-P starting. Both loaders
+fail CLOSED — a path or export-name mismatch returns `null`/reports
+PENDING, never a crash or a false "available" — so the guess being wrong
+costs a follow-up PR, not a broken gate. The `ReceivablesPort` interface
+(`tests/accounting/receivables-port.ts`) they both target is the actual
+contract `golden-posting-runner.ts` depends on, and it is deliberately
+small and already exercised by the fake, so reconciling it with the real
+module should be a loader update, not a runner redesign.
+
+**Owner.** Architecture seat (`modules/receivables`' actual export shape)
+and QA (the two loader files).
+
+**What would force it.** M3-P's first commits. The moment
+`modules/receivables/index.ts` or `apps/api/src/receivables/*.module.ts`
+exist, run `npx tsx tests/accounting/posting-scenarios-m3.spec.ts`'s gate
+test (or just `npm run test:accounting`) and read its console output: it
+names exactly which required export is missing, if any. Update the two
+loader files' guessed names to match, then flip P04-P12 from PENDING in
+`tests/accounting/golden-posting-registry.ts` and
+`tests/integration/m3-adversarial/receivables-adversarial.spec.ts`'s
+`MODULE_PATH`, each a reviewed, one-line-per-mismatch change.
