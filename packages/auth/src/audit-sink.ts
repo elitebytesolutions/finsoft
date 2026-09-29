@@ -31,15 +31,30 @@ import { recordAudit, TenantContext, type TenantTx } from '@finsoft/database'
 export interface AuthAuditEvent {
   readonly tenantId: string
   readonly actorUserId: string | null
-  readonly action: 'USER_SIGNED_IN' | 'USER_SIGN_IN_FAILED' | 'REFRESH_REUSE_DETECTED'
+  readonly action:
+    | 'USER_SIGNED_IN'
+    | 'USER_SIGN_IN_FAILED'
+    | 'REFRESH_REUSE_DETECTED'
+    /**
+     * M1-X, Council re-review item 4 (Sec F5). ONE per tenant per
+     * failedLoginAuditLayer window — see
+     * shouldMarkFailedLoginAuditSuppression's own doc comment
+     * (throttle.ts). actorUserId is always null (no session did this; the
+     * throttle layer did), entityType 'tenant', entityId the tenant's own
+     * id.
+     */
+    | 'FAILED_LOGIN_AUDIT_SUPPRESSED'
   /**
    * 'user': M1-X, Council Sec 5 — USER_SIGN_IN_FAILED names its TARGET in
    * entityId (the candidate user, if one existed at that email; null
    * otherwise), never its actor. An unverified credential is not proof of
    * who acted, so actorUserId is always null for this action — see
    * authAuditSink's own note.
+   *
+   * 'tenant': M1-X, Council re-review item 4 — FAILED_LOGIN_AUDIT_SUPPRESSED
+   * is about the tenant's audit chain itself, not any one session or user.
    */
-  readonly entityType: 'session' | 'refresh_token_family' | 'user'
+  readonly entityType: 'session' | 'refresh_token_family' | 'user' | 'tenant'
   readonly entityId: string | null
   /** From the verified request context (trusted-proxy `clientIp`), never re-derived here. */
   readonly ip: string | null

@@ -1,10 +1,17 @@
 import { decoyAuditRoundTrip, withLoginAttempt, type LoginTestHooks } from '@finsoft/database/auth'
+import { logCommittedBusinessEvent } from '@finsoft/observability'
 import { noopAuthAuditSink, type AuthAuditSink } from './audit-sink.ts'
 import { atAuthBoundary } from './db-error.ts'
 import { ACCESS_TOKEN_TTL_SECONDS, signAccessToken } from './jwt.ts'
 import { HashingQueueFullError, verifyCredential } from './password.ts'
 import { mintRefreshToken } from './refresh-token.ts'
-import { checkLayers, failedLoginAuditLayer, loginLayers, refundLayers } from './throttle.ts'
+import {
+  checkLayers,
+  failedLoginAuditLayer,
+  loginLayers,
+  refundLayers,
+  shouldMarkFailedLoginAuditSuppression,
+} from './throttle.ts'
 
 /*
  * M1-X, Council Sec 5: a counter mirroring password.ts's
@@ -24,6 +31,25 @@ export function failedLoginAuditWorkCountForTests(): number {
 /** TEST ONLY. */
 export function resetFailedLoginAuditWorkCountForTests(): void {
   failedLoginAuditWorkCount = 0
+}
+
+/*
+ * M1-X, Council re-review item 4 (Sec F5): counts every FAILED_LOGIN_AUDIT_SUPPRESSED
+ * business event actually logged — one per suppressed attempt, regardless of
+ * whether that attempt also won the one-marker-per-window race. Proves "never
+ * drop silently" by counting, the same discipline failedLoginAuditWorkCount
+ * above already uses.
+ */
+let failedLoginAuditSuppressionEventCount = 0
+
+/** TEST ONLY. */
+export function failedLoginAuditSuppressionEventCountForTests(): number {
+  return failedLoginAuditSuppressionEventCount
+}
+
+/** TEST ONLY. */
+export function resetFailedLoginAuditSuppressionEventCountForTests(): void {
+  failedLoginAuditSuppressionEventCount = 0
 }
 
 /*
@@ -102,6 +128,12 @@ export async function login(
 
   const minted = mintRefreshToken()
 
+  // M1-X, Council re-review item 4 (Sec F5): set inside the onOutcome hook
+  // below when failedLoginAuditLayer's cap is exhausted, and read AFTER the
+  // transaction has committed (logCommittedBusinessEvent's own contract:
+  // never call it from inside a transaction that might still roll back).
+  let auditSuppressedForTenantId: string | null = null
+
   try {
     // ADR-0023 §6: any driver error from here on is caught and rethrown
     // carrying only a SQLSTATE code — never detail, hint, table or constraint.
@@ -165,7 +197,31 @@ export async function login(
           const budgetExhausted = await checkLayers([failedLoginAuditLayer(normalisedTenantCode)])
             .then((decision) => decision.throttled)
             .catch(() => false)
-          if (budgetExhausted) return
+          if (budgetExhausted) {
+            // M1-X, Council re-review item 4: never drop silently. Every
+            // suppressed attempt is reported (the business event, logged
+            // after commit below) — but only the FIRST one in this tenant's
+            // current cap window also gets a marker audit row, so the audit
+            // chain still gets exactly one evidentiary record of the
+            // suppression itself, never one per suppressed attempt (which
+            // would recreate the exact contention problem this cap exists
+            // to bound).
+            auditSuppressedForTenantId = outcome.tenantId
+            const shouldMark = await shouldMarkFailedLoginAuditSuppression(
+              normalisedTenantCode,
+            ).catch(() => false)
+            if (shouldMark) {
+              await auditSink.record(tx, {
+                tenantId: outcome.tenantId,
+                actorUserId: null,
+                action: 'FAILED_LOGIN_AUDIT_SUPPRESSED',
+                entityType: 'tenant',
+                entityId: outcome.tenantId,
+                ip: input.ip,
+              })
+            }
+            return
+          }
 
           // actorUserId is ALWAYS null here — an unverified credential is
           // not proof of who acted (Council Sec 5). The candidate user, if
@@ -183,6 +239,24 @@ export async function login(
         testHooks,
       ),
     )
+
+    // M1-X, Council re-review item 4: logged here, AFTER atAuthBoundary has
+    // returned — i.e. after the transaction that decided this has committed
+    // — never from inside the onOutcome hook above (logCommittedBusinessEvent's
+    // own contract). Every suppressed attempt gets this event, independent
+    // of whether it also won the one-marker-per-window race above.
+    if (auditSuppressedForTenantId !== null) {
+      failedLoginAuditSuppressionEventCount += 1
+      logCommittedBusinessEvent({
+        event: 'FAILED_LOGIN_AUDIT_SUPPRESSED',
+        entityType: 'tenant',
+        entityId: auditSuppressedForTenantId,
+        detail: {
+          tenantCode: normalisedTenantCode,
+          windowSeconds: failedLoginAuditLayer(normalisedTenantCode).windowSeconds,
+        },
+      })
+    }
 
     if (attempt === null) {
       // Unknown tenant code: the transaction never ran `decide`, so the one

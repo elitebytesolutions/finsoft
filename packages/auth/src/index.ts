@@ -15,6 +15,8 @@ export {
   ACCESS_TOKEN_TTL_SECONDS,
   failedLoginAuditWorkCountForTests,
   resetFailedLoginAuditWorkCountForTests,
+  failedLoginAuditSuppressionEventCountForTests,
+  resetFailedLoginAuditSuppressionEventCountForTests,
 } from './login.ts'
 export type {
   LoginInput,

@@ -325,3 +325,38 @@ export function refreshLayers(input: {
 export function failedLoginAuditLayer(normalisedTenantCode: string): ThrottleLayer {
   return { key: `login:failed-audit:${normalisedTenantCode}`, limit: 30, windowSeconds: 5 * 60 }
 }
+
+/**
+ * M1-X, Council re-review item 4 (Sec F5). Once `failedLoginAuditLayer`'s
+ * cap is exhausted for a tenant, the caller must not drop the fact silently
+ * — but writing one audit row per SUPPRESSED attempt would defeat the cap's
+ * own purpose (bounding total writes against that tenant's chain). This is
+ * the same atomic `SET NX EX` dedup `shouldAlert` above uses, in its own key
+ * namespace and with its own TTL: exactly one caller, across however many
+ * suppressed attempts land inside `failedLoginAuditLayer`'s 5-minute window
+ * for that tenant, gets `true` back and writes the marker row; every other
+ * caller in the same window sees the key already set. The window length
+ * matches `failedLoginAuditLayer`'s own `windowSeconds` deliberately — this
+ * is "one marker per cap window", not an independent dedup interval.
+ *
+ * Fails CLOSED in the sense that matters here: on a Redis error, this
+ * returns `false` (no marker written) rather than throwing, because a
+ * suppressed login attempt has already 401'd — there is no request outcome
+ * left for a thrown error to protect, only a side effect to skip.
+ */
+export async function shouldMarkFailedLoginAuditSuppression(
+  normalisedTenantCode: string,
+): Promise<boolean> {
+  try {
+    const result = await client().set(
+      `throttle:failed-audit-suppressed-marker:${normalisedTenantCode}`,
+      '1',
+      'EX',
+      failedLoginAuditLayer(normalisedTenantCode).windowSeconds,
+      'NX',
+    )
+    return result === 'OK'
+  } catch {
+    return false
+  }
+}

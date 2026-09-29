@@ -8,6 +8,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
   failedLoginAuditWorkCountForTests,
   resetFailedLoginAuditWorkCountForTests,
+  failedLoginAuditSuppressionEventCountForTests,
+  resetFailedLoginAuditSuppressionEventCountForTests,
 } from '@finsoft/auth'
 import { listAuditEvents, withTenant } from '@finsoft/database'
 import { prepareTestDatabase, runAs, teardownTestDatabase } from '@finsoft/database/testing'
@@ -152,9 +154,21 @@ describe('USER_SIGN_IN_FAILED', () => {
    * limit 10 and 5 respectively) never block the request itself — only the
    * audit-write cap (limit 30) is under test here.
    */
-  it('caps failed-login audit writes per tenant — the response still 401s identically past the cap', async () => {
+  /*
+   * M1-X, Council re-review item 4 (Sec F5), folded into this same 35-attempt
+   * burn rather than a separate test that repeats it: a second independent
+   * burn against a fresh tenant would spend ANOTHER 35 requests against the
+   * shared `login:ip:*` throttle layer (packages/auth/src/throttle.ts,
+   * limit 60/5min) this whole file's other tests already share, which is
+   * exactly the collision that produces a 429 instead of the 401 under
+   * test — not a real regression, just two tests fighting over the same
+   * budget. One burn, both assertions.
+   */
+  it('caps failed-login audit writes per tenant — the response still 401s identically past the cap — and never drops a suppression silently', async () => {
+    resetFailedLoginAuditSuppressionEventCountForTests()
     const user = await createActiveUserFixture('AA2C')
     const attempts = 35
+    const limit = 30
 
     for (let i = 0; i < attempts; i++) {
       const res = await request(app.getHttpServer())
@@ -166,6 +180,18 @@ describe('USER_SIGN_IN_FAILED', () => {
     const page = await eventsFor(user, 'USER_SIGN_IN_FAILED')
     expect(page.items.length).toBeGreaterThan(0)
     expect(page.items.length).toBeLessThanOrEqual(30)
+
+    // Every suppressed attempt (35 - 30 = 5, since the layer's own limit is
+    // 30) fires the business event — counted, not timed, same discipline as
+    // the audit-shaped-DB-round-trip test above — but exactly ONE
+    // FAILED_LOGIN_AUDIT_SUPPRESSED marker row lands in audit_log for this
+    // tenant, not one per suppressed attempt (which would recreate the
+    // exact chain-contention problem the cap exists to bound).
+    expect(failedLoginAuditSuppressionEventCountForTests()).toBe(attempts - limit)
+
+    const suppressionMarkers = await eventsFor(user, 'FAILED_LOGIN_AUDIT_SUPPRESSED')
+    expect(suppressionMarkers.items.length).toBe(1)
+    expect(suppressionMarkers.items[0]?.actorUserId).toBeNull()
   })
 })
 

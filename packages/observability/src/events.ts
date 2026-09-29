@@ -57,6 +57,16 @@ export const BUSINESS_EVENTS = {
   USER_SIGNED_OUT: 'USER_SIGNED_OUT',
   USER_SIGN_IN_FAILED: 'USER_SIGN_IN_FAILED',
   TENANT_CREATED: 'TENANT_CREATED',
+  /*
+   * M1-X, Council re-review item 4 (Sec F5). Raised every time a failed
+   * login's audit write is suppressed by failedLoginAuditLayer's per-tenant
+   * cap (packages/auth/src/throttle.ts) — the login itself still 401s
+   * identically either way; only the audit_log write is skipped. Emitted so
+   * a sustained attack against a tenant's login is visible to an on-call
+   * engineer even in the window where the audit chain itself has
+   * deliberately stopped recording every attempt.
+   */
+  FAILED_LOGIN_AUDIT_SUPPRESSED: 'FAILED_LOGIN_AUDIT_SUPPRESSED',
 } as const
 
 export type BusinessEventName =
