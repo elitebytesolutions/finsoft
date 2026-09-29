@@ -1,7 +1,7 @@
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 
-import { Money, Quantity, UnitCost, AmountError } from './money.ts'
+import { AMOUNT_VALUE, Money, Quantity, UnitCost, AmountError } from './money.ts'
 
 /*
  * Property tests for the money primitives. ADR-0014 deferral D5, closed.
@@ -208,7 +208,7 @@ describe('D5 · finite-value rejection', () => {
         const y = Money.from(b)
 
         for (const result of [Money.add(x, y), Money.subtract(x, y), Money.negate(x)]) {
-          expect(result.value.isFinite()).toBe(true)
+          expect(result[AMOUNT_VALUE].isFinite()).toBe(true)
         }
       }),
       { numRuns: 400 },
@@ -296,7 +296,7 @@ describe('D5 · rounding boundaries', () => {
          * inside the test written to check for it. Worth the comment: the
          * float was in the ASSERTION, which is the last place anyone looks.
          */
-        expect(ours.value.toFixed(scale)).toBe(oracle)
+        expect(ours[AMOUNT_VALUE].toFixed(scale)).toBe(oracle)
       }),
       { numRuns: 600 },
     )

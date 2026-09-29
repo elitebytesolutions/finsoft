@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import { Decimal } from 'decimal.js'
 import { FinDecimal, Rounding } from './decimal.ts'
-import { Amount, AmountError, Money, Percentage, Quantity, UnitCost } from './money.ts'
+import {
+  AMOUNT_VALUE,
+  Amount,
+  AmountError,
+  Money,
+  Percentage,
+  Quantity,
+  UnitCost,
+} from './money.ts'
 
 /*
  * These tests are the Compliance section of ADR-0014, executed.
@@ -286,7 +294,7 @@ describe('kinds carry their own scale (ADR-0011)', () => {
      * rounding boundary. That is the "rounded twice" failure ADR-0011 forbids.
      */
     const unrounded = Money.multiply(Quantity.from('3'), UnitCost.from('86.666667'))
-    expect(unrounded.value.toFixed(6)).toBe('260.000001')
+    expect(unrounded[AMOUNT_VALUE].toFixed(6)).toBe('260.000001')
 
     expect(() => JSON.stringify({ total: unrounded })).toThrow(AmountError)
     expect(() => unrounded.toString()).toThrow(/Rounding once, explicitly, is the rule/)
@@ -308,24 +316,24 @@ describe('kinds carry their own scale (ADR-0011)', () => {
 describe('arithmetic', () => {
   it('does not round intermediates', () => {
     const raw = Money.multiply(Quantity.from('3'), UnitCost.from('86.666667'))
-    expect(raw.value.toFixed(6)).toBe('260.000001')
+    expect(raw[AMOUNT_VALUE].toFixed(6)).toBe('260.000001')
   })
 
   it('negates exactly, so a reversal neutralises the original (ADR-0006)', () => {
     const original = Money.from('1234.5678')
     const reversal = Money.negate(original)
     expect(Money.isZero(Money.add(original, reversal))).toBe(true)
-    expect(Money.serialize(reversal)).toBe('-1234.5678')
+    expect(Money.serialize(reversal, 4)).toBe('-1234.5678')
   })
 
   it('sums a set exactly', () => {
     const lines = ['0.1', '0.2', '0.3'].map(Money.from)
-    expect(Money.serialize(Money.sum(lines))).toBe('0.6000')
+    expect(Money.serialize(Money.sum(lines), 4)).toBe('0.6000')
   })
 
   it('requires an explicit scale for division', () => {
     const third = Money.divide(Money.from('10'), Quantity.from('3'), 4)
-    expect(Money.serialize(third)).toBe('3.3333')
+    expect(Money.serialize(third, 4)).toBe('3.3333')
   })
 
   it('refuses to divide by zero', () => {
@@ -335,7 +343,7 @@ describe('arithmetic', () => {
 
   it('applies a percentage as a percentage, not a fraction', () => {
     const tax = Money.applyPercentage(Money.from('1000'), Percentage.from('17'))
-    expect(Money.serialize(Money.round(tax))).toBe('170.0000')
+    expect(Money.serialize(Money.round(tax), 4)).toBe('170.0000')
   })
 })
 
@@ -363,7 +371,7 @@ describe('Golden Scenario A (NON_NEGOTIABLES §3)', () => {
   const inventoryValue = Money.subtract(totalValue, cogs)
 
   it('reproduces the hand-computed weighted average', () => {
-    expect(UnitCost.serialize(average)).toBe('86.666667')
+    expect(UnitCost.serialize(average, 6)).toBe('86.666667')
   })
 
   it('reproduces the hand-computed figures to the paisa', () => {
@@ -388,7 +396,7 @@ describe('Golden Scenario A (NON_NEGOTIABLES §3)', () => {
      * prove is the figure; the reconciliation waits for Wave 2, and
      * Invariant 10 stays `pending` until then.
      */
-    expect(Money.serialize(Money.subtract(totalValue, cogs))).toBe('9533.3333')
+    expect(Money.serialize(Money.subtract(totalValue, cogs), 4)).toBe('9533.3333')
   })
 
   it('pins quantity × average as the forbidden recomputation', () => {
@@ -399,8 +407,8 @@ describe('Golden Scenario A (NON_NEGOTIABLES §3)', () => {
     const recomputed = Money.round(Money.multiply(closingQuantity, average))
     const carriedValue = Money.subtract(totalValue, cogs)
 
-    expect(Money.serialize(recomputed)).toBe('9533.3334')
-    expect(Money.serialize(Money.subtract(recomputed, carriedValue))).toBe('0.0001')
+    expect(Money.serialize(recomputed, 4)).toBe('9533.3334')
+    expect(Money.serialize(Money.subtract(recomputed, carriedValue), 4)).toBe('0.0001')
     expect(Money.equals(recomputed, carriedValue)).toBe(false)
   })
 })
@@ -438,7 +446,7 @@ describe('a non-finite amount cannot exist', () => {
      * not the only way a non-finite value could arrive here.
      */
     const money = Money.from('1.00')
-    expect(Money.serialize(money)).not.toContain('NaN')
+    expect(Money.serialize(money, 4)).not.toContain('NaN')
     expect(JSON.stringify({ amount: money })).not.toContain('NaN')
   })
 
@@ -446,5 +454,53 @@ describe('a non-finite amount cannot exist', () => {
     for (const good of ['0', '-0.0001', '9999999999999.9999', '2.5']) {
       expect(() => Money.from(good)).not.toThrow()
     }
+  })
+})
+
+describe('ADR-0014 open items, closed by M2-A', () => {
+  it('serialize has no default scale, at runtime as well as in the type', () => {
+    /*
+     * The old `serialize(x)` rounded 260.000001 to "260.0000" silently —
+     * a second, undeclared rounding boundary. The argument is now required;
+     * a caller that bypasses the type (JavaScript, a cast) is refused rather
+     * than handed an unscaled string.
+     */
+    const unrounded = Money.multiply(Quantity.from('3'), UnitCost.from('86.666667'))
+    const serializeLoose = Money.serialize as unknown as (a: Money) => string
+    expect(() => serializeLoose(unrounded)).toThrow(AmountError)
+    expect(() => Money.serialize(unrounded, 1.5)).toThrow(AmountError)
+    expect(() => Money.serialize(unrounded, -1)).toThrow(AmountError)
+    // An explicitly named scale is the documented boundary and still rounds.
+    expect(Money.serialize(unrounded, 4)).toBe('260.0000')
+  })
+
+  it('toJSON and toString still refuse excess decimals instead of rounding', () => {
+    const unrounded = Money.multiply(Quantity.from('3'), UnitCost.from('86.666667'))
+    expect(() => unrounded.toJSON()).toThrow(AmountError)
+    expect(() => unrounded.toString()).toThrow(AmountError)
+  })
+
+  it('the raw decimal is not reachable through a public `value` field', () => {
+    // ADR-0014 BLOCKING PRECONDITION: Amount.value is internal before any
+    // code outside packages/validation consumes an Amount.
+    const amount = Money.from('1.0000')
+    expect(Object.keys(amount)).not.toContain('value')
+    expect((amount as unknown as { value?: unknown }).value).toBeUndefined()
+  })
+
+  it('refusals carry a structured reason, so callers never parse a message', () => {
+    const reasonOf = (input: unknown): string | undefined => {
+      try {
+        Money.from(input as string)
+        return undefined
+      } catch (error) {
+        return error instanceof AmountError ? error.reason : 'not an AmountError'
+      }
+    }
+    expect(reasonOf(100)).toBe('NOT_STRING')
+    expect(reasonOf('0x1f')).toBe('NOTATION')
+    expect(reasonOf('100.00001')).toBe('SCALE')
+    expect(reasonOf('1000000000000000')).toBe('RANGE')
+    expect(reasonOf('999999999999999.9999')).toBeUndefined()
   })
 })
