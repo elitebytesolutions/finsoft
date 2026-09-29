@@ -34,6 +34,7 @@
     "db:migrate:verify": "node packages/database/src/migrate/cli.ts verify",
     "db:checksums": "node packages/database/src/migrate/cli.ts checksums",
     "audit:verify": "node --env-file-if-exists=.env packages/database/src/audit/cli.ts",
+    "seed:demo-tenants": "node --env-file-if-exists=.env tools/seed/demo-tenants.mjs",
     "test:gate": "npm run smoke && npm run test:schema && npm run test:security && npm run test:accounting && npm run test:reconciliation && npm run test:integration && npm run test:performance",
     "test:schema": "vitest run --dir database/tests",
     "test:security": "vitest run --dir tests/security",

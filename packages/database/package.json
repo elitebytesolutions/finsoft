@@ -8,7 +8,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./testing": "./src/testing/harness.ts",
-    "./auth": "./src/auth/index.ts"
+    "./auth": "./src/auth/index.ts",
+    "./provisioning": "./src/provisioning.ts"
   },
   "dependencies": {
     "@finsoft/observability": "*",
