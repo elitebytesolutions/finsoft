@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { randomUUID } from 'node:crypto'
 import {
   closeDatabase,
   openDatabase,
@@ -42,9 +43,47 @@ import {
  * Run locally only (per this lane's task contract) — staging runs happen
  * separately, with the Product Owner's sign-off, by whoever orchestrates
  * that environment.
+ *
+ * Environment guard (Council condition, T3 review): staging and production
+ * both set NODE_ENV=production (docs/INFRASTRUCTURE.md) — NODE_ENV alone
+ * cannot tell them apart. Under NODE_ENV=production this script refuses to
+ * run unless FINSOFT_ENVIRONMENT=staging is ALSO set, and even then only
+ * against a database holding nothing but the known demo tenants — mirroring
+ * the M1-X demo seed's own rule (that script was not available to read from
+ * this worktree at the time this guard was written; reconcile the two rules
+ * once it lands, per this lane's Council follow-up). Local development and
+ * test runs (NODE_ENV unset or anything other than "production") are
+ * unrestricted.
  */
 
 const FISCAL_YEAR = 2027
+
+/** docs/BOARD.md: the only tenants this script may ever touch outside local dev. */
+const DEMO_TENANT_CODES = new Set(['BHATTI1', 'BHATTI2'])
+
+function assertSafeEnvironment(tenants) {
+  if (process.env.NODE_ENV !== 'production') return
+
+  if (process.env.FINSOFT_ENVIRONMENT !== 'staging') {
+    throw new Error(
+      'Refusing to run: NODE_ENV=production without FINSOFT_ENVIRONMENT=staging. Staging and ' +
+        'production both set NODE_ENV=production, so this second, explicit marker is the only ' +
+        'way this script can tell them apart. Set FINSOFT_ENVIRONMENT=staging to confirm this ' +
+        'really is staging.',
+    )
+  }
+
+  const unexpected = tenants.filter((t) => !DEMO_TENANT_CODES.has(t.code))
+  if (unexpected.length > 0) {
+    throw new Error(
+      'Refusing to run: found tenant(s) outside the demo set on a FINSOFT_ENVIRONMENT=staging ' +
+        `target: ${unexpected.map((t) => t.code).join(', ')}. This script only ever runs ` +
+        'against the known demo tenants ' +
+        `(${[...DEMO_TENANT_CODES].join(', ')}) once NODE_ENV=production — a database holding ` +
+        'anything else is not a target it may touch.',
+    )
+  }
+}
 
 function parseArgs(argv) {
   const tenantIndex = argv.indexOf('--tenant')
@@ -113,8 +152,12 @@ async function backfillTenant(tenant, dryRun) {
         return { code: tenant.code, status: 'WOULD_BACKFILL', reason: missing }
       }
 
-      if (!hadCoa) await seedChartOfAccounts(tx, tenant.id)
-      if (!hadFy) await createFiscalYear(tx, tenant.id, FISCAL_YEAR)
+      // `via` names this CLI in the audit record's afterJson (hashed into
+      // the chain); `requestId` must be a uuid, not a label, so a fresh one
+      // is minted per write rather than reused across a whole run.
+      const origin = { via: 'backfill-accounting', requestId: randomUUID() }
+      if (!hadCoa) await seedChartOfAccounts(tx, tenant.id, undefined, origin)
+      if (!hadFy) await createFiscalYear(tx, tenant.id, FISCAL_YEAR, undefined, origin)
 
       return { code: tenant.code, status: 'BACKFILLED', reason: missing }
     }),
@@ -130,6 +173,12 @@ async function main() {
     console.log(tenantCode ? `  no tenant with code ${tenantCode}` : '  no tenants found')
     return 0
   }
+
+  // The environment guard needs the full, unfiltered tenant list to check
+  // for anything outside the demo set — check it against every tenant on
+  // the target database, not just the one named by --tenant.
+  const allTenants = tenantCode ? await listTargetTenants(undefined) : tenants
+  assertSafeEnvironment(allTenants)
 
   let failed = 0
   for (const tenant of tenants) {
