@@ -224,8 +224,8 @@ function ChartReady({ data }: { data: Awaited<ReturnType<typeof loadChart>> }) {
   const [rowsPer, setRowsPer] = useState(50),
     [page, setPage] = useState(1)
   const [notice, setNotice] = useState('')
-  const comingSoon = () =>
-    setNotice('Not available yet — account creation and editing await the Accounting spec and API.')
+  const comingSoon = () => setNotice('Adding and editing accounts is coming soon.')
+  const comingLater = () => setNotice('Deactivating accounts is coming later.')
   const childrenOf = (p: string) => accounts.filter((m) => m.parent === p)
   const matches = (m: AdaptedAccount): boolean => {
     const q = query.toLowerCase()
@@ -296,7 +296,10 @@ function ChartReady({ data }: { data: Awaited<ReturnType<typeof loadChart>> }) {
           </span>
           <div>
             <h1>Chart of Accounts</h1>
-            <p>Organise accounts into a four-level chart. Balances as of {asOf}.</p>
+            <p>Organise accounts into a four-level chart.</p>
+            <small style={{ display: 'block', marginTop: 4, color: 'var(--c-mute)', fontSize: 12 }}>
+              Balances as of {asOf}
+            </small>
           </div>
         </div>
         <div className="coa2-tools">
@@ -374,18 +377,7 @@ function ChartReady({ data }: { data: Awaited<ReturnType<typeof loadChart>> }) {
       </div>
 
       {!ACCOUNT_CREATE_ENABLED && (
-        <Banner tone="info">
-          Adding, editing, moving and deactivating accounts is not available yet — the chart is
-          read-only until the Accounting spec and API ship. See{' '}
-          <a
-            href="https://github.com/elitebytesolutions/finsoft/blob/develop/docs/posting-rules/coa-standard.md"
-            target="_blank"
-            rel="noreferrer"
-          >
-            coa-standard.md §5
-          </a>
-          .
-        </Banner>
+        <Banner tone="info">Adding and editing accounts is coming soon.</Banner>
       )}
 
       <div className="coa2-stats">
@@ -441,33 +433,26 @@ function ChartReady({ data }: { data: Awaited<ReturnType<typeof loadChart>> }) {
         >
           <FolderTree /> Move
         </button>
+        {/* Activate/Deactivate: "coming later", not "coming soon" — deactivation is deferred
+         * past the M2-C accounts-write API, unlike Add/Edit/Move. There is no Delete button:
+         * accounts are never hard-deleted (CLAUDE.md, "No hard deletes of financial or
+         * operational records. Ever.") — deactivate is the only removal path this product will
+         * ever offer, so there is nothing to disable-with-a-tooltip here, only to not build. */}
         <button
           className="coa2-btn"
-          disabled={!selected.size || !ACCOUNT_CREATE_ENABLED}
-          title={!ACCOUNT_CREATE_ENABLED ? 'Coming soon' : undefined}
-          onClick={comingSoon}
+          disabled
+          title="Coming later — deactivation is deferred"
+          onClick={comingLater}
         >
           <Check /> Activate
         </button>
         <button
           className="coa2-btn"
-          disabled={!selected.size || !ACCOUNT_CREATE_ENABLED}
-          title={!ACCOUNT_CREATE_ENABLED ? 'Coming soon' : undefined}
-          onClick={comingSoon}
+          disabled
+          title="Coming later — deactivation is deferred"
+          onClick={comingLater}
         >
           <X /> Deactivate
-        </button>
-        <button
-          className="coa2-btn danger"
-          disabled={selected.size !== 1 || !ACCOUNT_CREATE_ENABLED}
-          title={!ACCOUNT_CREATE_ENABLED ? 'Coming soon' : undefined}
-          onClick={() => {
-            if (!ACCOUNT_CREATE_ENABLED) return comingSoon()
-            const m = accounts.find((a) => selected.has(a.code))
-            if (m) setDel(m)
-          }}
-        >
-          <Trash2 /> Delete
         </button>
         <div className="coa2-toolbar-right">
           <label className="coa2-select plain">
@@ -717,7 +702,14 @@ function ChartReady({ data }: { data: Awaited<ReturnType<typeof loadChart>> }) {
             <span>
               <Filter /> Type <Filter className="f" />
             </span>
-            <span>
+            {/* c-parent/c-mod on the HEADER cells too, not just the body's — kit.css hides both
+             * classes at <=1600px width via `.c-parent,.c-mod{display:none!important}` on the
+             * SAME media query that zeroes their grid track. Without the class here, only the
+             * body cell collapsed; the header cell kept its text in a 0-width track with no
+             * overflow control, which is what actually produced the misaligned/overlapping
+             * header labels — every column from here on read one slot off between header and
+             * body. */}
+            <span className="c-parent">
               <FolderTree /> Parent Account <Filter className="f" />
             </span>
             <span>
@@ -726,10 +718,10 @@ function ChartReady({ data }: { data: Awaited<ReturnType<typeof loadChart>> }) {
             <span className="num">
               <Coins /> Balance (PKR) <ChevronsUpDown />
             </span>
-            <span>
+            <span className="c-change">
               <TrendingUp /> Change
             </span>
-            <span>
+            <span className="c-mod">
               <CalendarDays /> Last Modified
             </span>
             <span>
