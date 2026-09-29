@@ -3,6 +3,7 @@ import {
   computeRequestFingerprint,
   findAccountsByIds,
   findEntryById,
+  findEntryBySource,
   findLinesByEntryId,
   findPeriodById,
   findTenantTimezone,
@@ -53,6 +54,32 @@ export interface ReverseCommand {
   readonly idempotencyKey: string
 }
 
+/**
+ * K2 (docs/design/M3/README.md §4, docs/design/M3/modules.md §4.3/§4.4).
+ * Called by the owning module — "reverse invoice", "reverse receipt" — in
+ * place of `entryId`, which the module does not carry on its own document
+ * row (reversal.md §5: the journal entry is found through the kernel's
+ * `UNIQUE (tenant_id, source_type, source_id)`, never stored a second time).
+ *
+ * `actor` is part of the call shape modules.md §4.3/§4.4 fixes, matching the
+ * `Actor` shape every module command already carries end-to-end from its
+ * controller (modules cannot read `TenantContext` themselves, ADR-0028 S1).
+ * It is NOT read here: exactly like every other kernel entry point, the
+ * kernel's own actor is `requirePostingActor(tx)` — the ambient principal of
+ * the transaction the caller opened (ADR-0028 statement 6: "the actor comes
+ * from TenantContext ... and never from an argument"). The field exists so a
+ * module's `ReverseInvoice`/`ReverseReceipt` can pass the same `actor` value
+ * it threads to its own `recordAudit` call, without the kernel depending on
+ * it matching.
+ */
+export interface ReverseForSourceCommand {
+  readonly referenceType: string
+  readonly referenceId: string
+  readonly reason: string
+  readonly idempotencyKey: string
+  readonly actor: { readonly userId: string }
+}
+
 export interface ReverseResult extends PostResult {
   /**
    * §4 "Disclosure": set when E's period was CLOSED or LOCKED, so R is dated
@@ -93,29 +120,34 @@ function reversalNarration(prefix: string, reason: string): string {
 
 export interface ReversalEngine {
   reverse(command: ReverseCommand, tx: TenantTx): Promise<ReverseResult>
+  /** K2 — see ReverseForSourceCommand. */
+  reverseForSource(command: ReverseForSourceCommand, tx: TenantTx): Promise<ReverseResult>
 }
 
 /** Not exported from the package index — see createPostingEngine. */
 export function createReversalEngine(clock: Clock = systemClock): ReversalEngine {
-  async function reverse(command: ReverseCommand, tx: TenantTx): Promise<ReverseResult> {
-    assertIssuedTenantTx(tx)
+  /**
+   * The shared body of `reverse` and `reverseForSource`: both resolve to a
+   * journal entry id and a reason/key, then run the identical pipeline. The
+   * only behavioural difference is `checkJournalVoucherSource`:
+   *
+   *  - `reverse` (direct, entryId-based): true. reversal.md §3 row 4 / §5 —
+   *    a document-sourced entry reached through the journal API is refused
+   *    with REVERSAL_VIA_SOURCE_REQUIRED; only a manual JV reverses directly.
+   *  - `reverseForSource` (K2, module-based): false. This IS the sanctioned
+   *    via-source path: the caller already identified the entry by its own
+   *    document (`referenceType`/`referenceId`), so the entry is, BY
+   *    CONSTRUCTION, not a journal voucher (a JV's source_type is always
+   *    'journal_voucher', never a module's own referenceType).
+   */
+  async function performReversal(
+    tx: TenantTx,
+    entryId: string,
+    reason: string,
+    idempotencyKey: string,
+    checkJournalVoucherSource: boolean,
+  ): Promise<ReverseResult> {
     const { tenantId, actorUserId } = requirePostingActor(tx)
-
-    // --- 1. Shape. ---------------------------------------------------------------
-    const reason = typeof command.reason === 'string' ? command.reason.trim() : ''
-    if (reason.length === 0 || reason.length > REASON_MAX) {
-      throw new PostingError(
-        'REVERSAL_REASON_REQUIRED',
-        `A reason is required: non-empty after trimming, at most ${REASON_MAX} characters.`,
-      )
-    }
-    assertIdempotencyKey(command.idempotencyKey)
-    // Unknown, malformed and another tenant's id are the same answer (§3 row 1).
-    if (!isUuid(command.entryId)) {
-      throw new PostingError('ENTRY_NOT_FOUND', `Entry ${String(command.entryId)} was not found.`, {
-        entryId: String(command.entryId),
-      })
-    }
 
     /*
      * The request's identity. A reversal request carries no business date —
@@ -127,7 +159,7 @@ export function createReversalEngine(clock: Clock = systemClock): ReversalEngine
     const fingerprint = computeRequestFingerprint({
       event: REVERSAL_RULE_ID,
       referenceType: REVERSAL_SOURCE_TYPE,
-      referenceId: command.entryId,
+      referenceId: entryId,
       occurredAt: '',
       actorUserId,
       payload: { reason },
@@ -138,10 +170,10 @@ export function createReversalEngine(clock: Clock = systemClock): ReversalEngine
     const prior = await lookUpPriorRequest({
       tx,
       tenantId,
-      idempotencyKey: command.idempotencyKey,
+      idempotencyKey,
       fingerprint,
       referenceType: REVERSAL_SOURCE_TYPE,
-      referenceId: command.entryId,
+      referenceId: entryId,
     }).catch((error: unknown) => {
       // A second reversal of E under a NEW key finds R through the source
       // uniqueness ('reversal', E.id). reversal.md §7 names that case
@@ -152,7 +184,7 @@ export function createReversalEngine(clock: Clock = systemClock): ReversalEngine
           'ALREADY_REVERSED',
           `Entry is already REVERSED by ${String(error.details.existingEntry)}.`,
           {
-            entryId: command.entryId,
+            entryId,
             reversedBy: error.details.existingEntry,
           },
         )
@@ -163,10 +195,10 @@ export function createReversalEngine(clock: Clock = systemClock): ReversalEngine
 
     // --- Preconditions (§3), on E held FOR UPDATE (LOCK_REGISTRY 5a) so two
     // concurrent reversals of E serialise; the loser then reads REVERSED. -------
-    const original = await lockEntryForReversal(tx, tenantId, command.entryId)
+    const original = await lockEntryForReversal(tx, tenantId, entryId)
     if (!original) {
-      throw new PostingError('ENTRY_NOT_FOUND', `Entry ${command.entryId} was not found.`, {
-        entryId: command.entryId,
+      throw new PostingError('ENTRY_NOT_FOUND', `Entry ${entryId} was not found.`, {
+        entryId,
       })
     }
     if (original.reversalOf !== null) {
@@ -188,8 +220,11 @@ export function createReversalEngine(clock: Clock = systemClock): ReversalEngine
     }
     // §5: only a manual JV is reversed directly from the journal. A document-
     // sourced entry is reversed through its module, which also undoes the
-    // subledger; a GL-only reversal would break Invariant 9 by itself.
-    if (original.sourceType !== JOURNAL_VOUCHER_SOURCE_TYPE) {
+    // subledger; a GL-only reversal would break Invariant 9 by itself. K2
+    // (reverseForSource) sets checkJournalVoucherSource = false: it IS that
+    // module path, and the entry was found by the module's own source, so it
+    // cannot be a journal voucher (see the jsdoc above performReversal).
+    if (checkJournalVoucherSource && original.sourceType !== JOURNAL_VOUCHER_SOURCE_TYPE) {
       throw new PostingError(
         'REVERSAL_VIA_SOURCE_REQUIRED',
         `${original.entryNumber} comes from a ${original.sourceType}; reverse it through that document (§5).`,
@@ -235,7 +270,7 @@ export function createReversalEngine(clock: Clock = systemClock): ReversalEngine
       referenceType: REVERSAL_SOURCE_TYPE,
       referenceId: original.id,
       occurredAt,
-      idempotencyKey: command.idempotencyKey,
+      idempotencyKey,
       fingerprint,
       reversalOf: original.id,
       reversalReason: reason,
@@ -299,7 +334,77 @@ export function createReversalEngine(clock: Clock = systemClock): ReversalEngine
     return { ...result, disclosure: result.outcome === 'POSTED' ? disclosure : null }
   }
 
-  return { reverse }
+  async function reverse(command: ReverseCommand, tx: TenantTx): Promise<ReverseResult> {
+    assertIssuedTenantTx(tx)
+    requirePostingActor(tx) // fails closed (FORBIDDEN) before any other work if unauthenticated.
+
+    // --- 1. Shape. ---------------------------------------------------------------
+    const reason = typeof command.reason === 'string' ? command.reason.trim() : ''
+    if (reason.length === 0 || reason.length > REASON_MAX) {
+      throw new PostingError(
+        'REVERSAL_REASON_REQUIRED',
+        `A reason is required: non-empty after trimming, at most ${REASON_MAX} characters.`,
+      )
+    }
+    assertIdempotencyKey(command.idempotencyKey)
+    // Unknown, malformed and another tenant's id are the same answer (§3 row 1).
+    if (!isUuid(command.entryId)) {
+      throw new PostingError('ENTRY_NOT_FOUND', `Entry ${String(command.entryId)} was not found.`, {
+        entryId: String(command.entryId),
+      })
+    }
+
+    return performReversal(tx, command.entryId, reason, command.idempotencyKey, true)
+  }
+
+  /**
+   * K2. Resolves the entry by its document's own `(referenceType,
+   * referenceId)` — the module has no `entryId` of its own to hand in
+   * (reversal.md §5) — then runs the identical pipeline as `reverse`, with
+   * `checkJournalVoucherSource = false` (see performReversal's jsdoc).
+   */
+  async function reverseForSource(
+    command: ReverseForSourceCommand,
+    tx: TenantTx,
+  ): Promise<ReverseResult> {
+    assertIssuedTenantTx(tx)
+    const { tenantId } = requirePostingActor(tx)
+
+    const reason = typeof command.reason === 'string' ? command.reason.trim() : ''
+    if (reason.length === 0 || reason.length > REASON_MAX) {
+      throw new PostingError(
+        'REVERSAL_REASON_REQUIRED',
+        `A reason is required: non-empty after trimming, at most ${REASON_MAX} characters.`,
+      )
+    }
+    assertIdempotencyKey(command.idempotencyKey)
+    if (typeof command.referenceType !== 'string' || command.referenceType.length === 0) {
+      throw new PostingError('PAYLOAD_INVALID', 'referenceType is required.', {
+        field: 'referenceType',
+      })
+    }
+    // Unknown, malformed and another tenant's id are the same answer (§3 row 1).
+    if (!isUuid(command.referenceId)) {
+      throw new PostingError(
+        'ENTRY_NOT_FOUND',
+        `${command.referenceType} ${String(command.referenceId)} has no posted entry.`,
+        { referenceType: command.referenceType, referenceId: String(command.referenceId) },
+      )
+    }
+
+    const entry = await findEntryBySource(tx, tenantId, command.referenceType, command.referenceId)
+    if (!entry) {
+      throw new PostingError(
+        'ENTRY_NOT_FOUND',
+        `${command.referenceType} ${command.referenceId} has no posted entry.`,
+        { referenceType: command.referenceType, referenceId: command.referenceId },
+      )
+    }
+
+    return performReversal(tx, entry.id, reason, command.idempotencyKey, false)
+  }
+
+  return { reverse, reverseForSource }
 }
 
 export const reversalEngine: ReversalEngine = createReversalEngine()

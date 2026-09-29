@@ -811,6 +811,53 @@ function tableOwnershipSyntax(table) {
   ]
 }
 
+/**
+ * C8 / S2 (ADR-0028), the receivables variant of `tableOwnershipSyntax`:
+ * `modules/receivables/infrastructure/**` owns FIVE tables (modules.md §2:
+ * `sales_invoices`, `sales_invoice_lines`, `customer_receipts`,
+ * `customer_receipt_draft_allocations`, `customer_receipt_allocations`),
+ * all created by ITS OWN migrations (016, 017) — one module, one
+ * infrastructure directory, five tables it may name. Same literal-only,
+ * fails-closed shape as `tableOwnershipSyntax`.
+ *
+ * Deliberately does NOT restate customers' extra "no sql`` tag at all"
+ * sub-rule (nor KYSELY_SQL_IMPORT_BAN, below): that was a strictness
+ * customers' own repository happened to earn for free, not a C8/S2
+ * requirement — the ADR text itself bans only `sql.table`, `sql.ref`,
+ * `db.dynamic`, `CompiledQuery` and `executeQuery` (all still banned here
+ * via `noDynamicTableEscapeHatchSyntax`, already applied module-wide).
+ * `modules/receivables/infrastructure/**` uses the plain `sql` tag for
+ * non-table-bearing expressions only — `now()`, an ISO date cast
+ * (`${iso}::date`, mirroring `packages/database/src/accounting/
+ * calendar-date.ts`'s own `sqlDate`) and the outstanding aggregate's
+ * `SUM(...)` — never a table name, so the two escapes S2's Security-seat
+ * correction closed (fragment composition, a second comma-joined table)
+ * have nothing to hide inside here: no table identifier ever appears
+ * inside a `sql` template in this directory.
+ */
+function multiTableOwnershipSyntax(tables, moduleName) {
+  const allowedLiteral = `/^(${tables.join('|')})(\\s+as\\s+[A-Za-z_][A-Za-z0-9_]*)?$/`
+  const message =
+    `C8 / S2 (ADR-0028): modules/${moduleName}/infrastructure/** names only its own tables, ` +
+    `${tables.map((t) => `'${t}'`).join(', ')} (optionally aliased, e.g. '${tables[0]} as x'). A ` +
+    'builder call naming any other table, or a non-literal (dynamic) table argument, is a lint ' +
+    'error — the check fails closed.'
+  return [
+    {
+      selector:
+        `CallExpression[callee.property.name=/^(${BUILDER_METHODS})$/]` +
+        `[arguments.0.type='Literal']:not([arguments.0.value=${allowedLiteral}])`,
+      message,
+    },
+    {
+      selector:
+        `CallExpression[callee.property.name=/^(${BUILDER_METHODS})$/]` +
+        `:not([arguments.0.type='Literal'])`,
+      message,
+    },
+  ]
+}
+
 export default tseslint.config(
   {
     ignores: [
@@ -1202,6 +1249,38 @@ export default tseslint.config(
                 'ADR-0028 statement 4 / C6: apps/api/src/customers/** controllers open no ' +
                 'transaction. Call one use case from @finsoft/customers, which opens its own ' +
                 'withTenant unit of work inside modules/customers/application/.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+
+  /* ---------------------------------------------------------------- *
+   * ADR-0028 statement 4 / C6, M3-P: apps/api/src/receivables/** — the
+   * same adapter ban as apps/api/src/customers/** above.
+   * ---------------------------------------------------------------- */
+  {
+    files: ['apps/api/src/receivables/**/*.ts'],
+    ignores: ['apps/api/src/receivables/**/*.spec.ts', 'apps/api/src/receivables/**/*.test.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            ...DECIMAL_LIB_IMPORT_PATHS,
+            REQUEST_SCOPE_IMPORT_BAN,
+            TENANT_CONTEXT_IMPORT_BAN,
+            TESTING_IMPORT_BAN,
+            PROVISIONING_IMPORT_BAN,
+            WITHGLOBAL_MODULES_BAN,
+            {
+              name: '@finsoft/database',
+              importNames: ['withTenant'],
+              message:
+                'ADR-0028 statement 4 / C6: apps/api/src/receivables/** controllers open no ' +
+                'transaction. Call one use case from @finsoft/receivables, which opens its own ' +
+                'withTenant unit of work inside modules/receivables/application/.',
             },
           ],
         },
@@ -1668,6 +1747,52 @@ export default tseslint.config(
         ...noDecoratorsSyntax,
         ...noDynamicTableEscapeHatchSyntax,
         ...tableOwnershipSyntax('customers'),
+      ],
+    },
+  },
+
+  /* ---------------------------------------------------------------- *
+   * C8 / S2 (ADR-0028), M3-P: modules/receivables/infrastructure/** names
+   * only its own FIVE tables — see multiTableOwnershipSyntax's own header
+   * for why this block, unlike customers', keeps `sql` importable.
+   * ---------------------------------------------------------------- */
+  {
+    files: ['modules/receivables/infrastructure/**/*.ts'],
+    ignores: ['modules/receivables/infrastructure/**/*.spec.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [...MODULES_IMPORT_BAN_PATHS, WITHTENANT_OUTSIDE_APPLICATION_BAN],
+          patterns: [
+            {
+              group: ['@nestjs/*', 'express', 'fastify'],
+              message:
+                'ADR-0028 statement 1: modules/** has no NestJS, express or fastify import. ' +
+                'Controllers live in apps/api/src/<module>/.',
+            },
+          ],
+        },
+      ],
+      'no-restricted-syntax': [
+        'error',
+        ...invariantSyntax,
+        ...connectionOwnershipSyntax,
+        ...authLookupIdentifierSyntax,
+        ...financialTruthWriteSyntax,
+        ...stripOnlySyntax,
+        ...noDecoratorsSyntax,
+        ...noDynamicTableEscapeHatchSyntax,
+        ...multiTableOwnershipSyntax(
+          [
+            'sales_invoices',
+            'sales_invoice_lines',
+            'customer_receipts',
+            'customer_receipt_draft_allocations',
+            'customer_receipt_allocations',
+          ],
+          'receivables',
+        ),
       ],
     },
   },

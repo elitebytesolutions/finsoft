@@ -4,6 +4,7 @@ import { AccountingModule } from './accounting/accounting.module'
 import { AuditModule } from './audit/audit.module'
 import { CustomersModule } from './customers/customers.module'
 import { MeModule } from './me/me.module'
+import { ReceivablesModule } from './receivables/receivables.module'
 import { PermissionGuard } from './common/permission.guard'
 import { RouteDecorationCheck } from './common/route-decoration.check'
 import { TenantContextInterceptor } from './common/tenant-context.interceptor'
@@ -46,6 +47,7 @@ import { AuthModule } from './auth/auth.module'
     AuditModule,
     AccountingModule,
     CustomersModule,
+    ReceivablesModule,
     MeModule,
   ],
   providers: [
