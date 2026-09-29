@@ -9,11 +9,22 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { withTenant } from '@finsoft/database'
 import { prepareTestDatabase, runAs, teardownTestDatabase } from '@finsoft/database/testing'
 import { initLogger, resetLoggerForTests } from '@finsoft/observability'
+import { invalidateAccountStateCache } from '@finsoft/auth'
 import { AllExceptionsFilter } from '../../apps/api/src/common/all-exceptions.filter.ts'
 import { AuthModule } from '../../apps/api/src/auth/auth.module.ts'
 import { TenantContextInterceptor } from '../../apps/api/src/common/tenant-context.interceptor.ts'
 import { TenantGuard } from '../../apps/api/src/common/tenant.guard.ts'
 import { createActiveUserFixture, type ActiveUserFixture } from './helpers/auth-seed.ts'
+
+const CSRF = { 'X-Requested-With': 'finsoft' }
+
+function refreshCookieFrom(res: request.Response): string {
+  const raw = res.headers['set-cookie']
+  const setCookies: string[] = Array.isArray(raw) ? raw : raw ? [raw] : []
+  const rt = setCookies.find((c) => c.startsWith('finsoft_rt='))
+  if (!rt) throw new Error('no finsoft_rt cookie in response')
+  return rt.split(';')[0] ?? ''
+}
 
 /*
  * M1-X, L1: the guard refuses a token whose perm_ver claim is behind the
@@ -46,6 +57,19 @@ async function loginAndGetToken(user: ActiveUserFixture): Promise<string> {
     .send({ tenantCode: user.code, email: user.email, password: user.password })
   expect(res.status).toBe(200)
   return res.body.accessToken as string
+}
+
+interface LoginSession {
+  readonly accessToken: string
+  readonly refreshCookie: string
+}
+
+async function login(user: ActiveUserFixture): Promise<LoginSession> {
+  const res = await request(app.getHttpServer())
+    .post('/api/auth/login')
+    .send({ tenantCode: user.code, email: user.email, password: user.password })
+  expect(res.status).toBe(200)
+  return { accessToken: res.body.accessToken as string, refreshCookie: refreshCookieFrom(res) }
 }
 
 async function bumpUsersVersion(user: ActiveUserFixture): Promise<void> {
@@ -178,6 +202,87 @@ describe('the guard refuses a non-ACTIVE tenant, even mid-session', () => {
       .get('/api/auth/me')
       .set('Authorization', `Bearer ${token}`)
     expect(res.status).toBe(401)
+  })
+})
+
+describe('M1-X, Council DB C2/Sec 4: cache invalidation is asserted explicitly, not by timing', () => {
+  /*
+   * users.version is a coarse, shared counter (008_create_rbac.sql's own
+   * header: "not a misuse of optimistic locking ... simply a coarser signal
+   * than a dedicated counter would be"). Its OTHER use, as this file's own
+   * optimistic lock, means an ordinary profile edit or a second login also
+   * bumps it — which the guard cannot distinguish from an actual permission
+   * change. TD entry: docs/TECH_DEBT.md — a dedicated users.permission_version
+   * column, owned by the Database seat, due before role-management UI.
+   *
+   * These tests force the cache to miss on the NEXT read via
+   * invalidateAccountStateCache — exactly what a future status/role-write
+   * call site would do (not wired to any production call site yet; that is
+   * this TD's own job) — rather than waiting out the 15s TTL, so the
+   * assertion is explicit and immediate rather than a timing assumption.
+   */
+  it('after PATCH /me bumps the version, the pre-existing token 401s once the cache is cleared, and refresh recovers', async () => {
+    const user = await createActiveUserFixture('PVC1')
+    const session = await login(user)
+
+    const me = await request(app.getHttpServer())
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${session.accessToken}`)
+      .expect(200)
+
+    await request(app.getHttpServer())
+      .patch('/api/auth/me')
+      .set('Authorization', `Bearer ${session.accessToken}`)
+      .send({ fullName: 'Renamed via PATCH', version: me.body.user.version })
+      .expect(200)
+
+    await invalidateAccountStateCache(user.tenantId, user.ownerId)
+
+    const stale = await request(app.getHttpServer())
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${session.accessToken}`)
+    expect(stale.status).toBe(401)
+
+    const refreshed = await request(app.getHttpServer())
+      .post('/api/auth/refresh')
+      .set('Cookie', session.refreshCookie)
+      .set(CSRF)
+      .send()
+    expect(refreshed.status).toBe(200)
+
+    const recovered = await request(app.getHttpServer())
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${refreshed.body.accessToken}`)
+    expect(recovered.status).toBe(200)
+  })
+
+  it('after a second login bumps the version, the FIRST token 401s once the cache is cleared, and refreshing the first session recovers', async () => {
+    const user = await createActiveUserFixture('PVC2')
+    const first = await login(user)
+
+    // A second, independent login for the same account — its own write also
+    // bumps users.version (login.ts's own optimistic-lock increment), with
+    // no permission change involved at all.
+    await login(user)
+
+    await invalidateAccountStateCache(user.tenantId, user.ownerId)
+
+    const stale = await request(app.getHttpServer())
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${first.accessToken}`)
+    expect(stale.status).toBe(401)
+
+    const refreshed = await request(app.getHttpServer())
+      .post('/api/auth/refresh')
+      .set('Cookie', first.refreshCookie)
+      .set(CSRF)
+      .send()
+    expect(refreshed.status).toBe(200)
+
+    const recovered = await request(app.getHttpServer())
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${refreshed.body.accessToken}`)
+    expect(recovered.status).toBe(200)
   })
 })
 

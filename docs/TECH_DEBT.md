@@ -219,3 +219,54 @@ hooks, ADR-0025) was merged into the audit branch — both lanes claimed TD-006
 independently and only one survived. Recovered from the audit branch's
 pre-merge history (commit c65615e) rather than re-derived, so the wording
 matches what the Database Guardian originally reviewed._
+
+---
+
+## TD-008 · `users.version` doubles as the permission-version signal
+
+**What.** `008_create_rbac.sql`'s header already names this deliberately: it
+bumps `users.version` — the SAME counter migration 002 uses as the row's
+general optimistic lock — on every role/permission change, "not a misuse of
+optimistic locking ... simply a coarser signal than a dedicated counter would
+be." M1-X wires the consuming half: the JWT's `perm_ver` claim snapshots
+`users.version` at mint time (login, refresh), and
+`packages/auth/src/guard.ts`'s `verifyBearerToken` refuses a token whose claim
+is behind the CURRENT `users.version` on every authenticated request
+(`getAccountStateCached`, short-TTL Redis cache in front of Postgres).
+
+Because the counter is shared, ANY write to a user's own row invalidates
+every access token that predates it — not only a role or permission change.
+Two production paths do this today with no permission implication whatsoever:
+`updateOwnFullName` (`PATCH /api/auth/me`) bumps `version` as its own
+optimistic lock, and every login's own write (`writeLoginSuccess`) bumps it
+too. A user who edits their own display name, or who signs in a second time
+from another device, invalidates their OWN currently-held access token the
+moment the account-state cache next misses or is cleared — a 401 on their
+very next request, with nothing about their permissions having changed at
+all. Demonstrated deterministically (not by waiting out the cache's 15s TTL)
+in `tests/integration/account-state-guard.spec.ts`'s "cache invalidation is
+asserted explicitly" cases.
+
+**Why it is accepted.** No new migration is added for this — 010–016 are
+reserved for M2/M3's own numbering, and a permission-versioning schema change
+is exactly the kind of change that needs Database seat review on its own
+merits, not folded into an M1 integration fix. The false-positive 401 is
+self-healing (a refresh, or a fresh login, mints a token against the current
+version and succeeds — both proved in the tests above) and is bounded by the
+same 15-minute access-token lifetime every other staleness case in this
+system already accepts.
+
+**Owner.** Database seat.
+
+**What would force it — and the fix.** A dedicated `users.permission_version`
+column, added in a future forward migration (after M3's own numbers are
+assigned), with 008's `permission_version` cascade functions (the
+`user_roles`/`role_permissions` triggers) repointed to bump the new column
+instead of `version`. `login.ts`'s write and `getAccountState`/
+`getAccountStateCached` would then read the dedicated column, and an ordinary
+profile edit or a second login would stop invalidating other sessions'
+tokens. **Due before role-management UI** ships — the false-positive rate is
+proportional to how often a tenant's users change roles relative to how often
+they edit their own profile or sign in from a second device, and a
+role-management screen is what turns the first number from "rare" to
+"routine."

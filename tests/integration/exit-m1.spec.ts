@@ -348,6 +348,24 @@ describe('W1-006 criterion 2: A cannot reach B by id/tenant-id, each door tested
       ),
     ).toBe(true)
   })
+
+  /*
+   * M1-X, Council DB C2/Sec 4: the PATCH /me calls above (and in criterion 1)
+   * bump A's users.version each time they succeed — the same coarse counter
+   * the guard treats as the permission version (see
+   * tests/integration/account-state-guard.spec.ts's own note, and the TD
+   * entry in docs/TECH_DEBT.md). Every criterion BELOW this point reuses
+   * `a.accessToken` freely; without re-minting it here, those assertions
+   * would only keep passing for as long as the account-state cache's 15s
+   * TTL happens to still be serving the snapshot an earlier GET populated —
+   * a suite that happened to finish fast enough, not a suite whose later
+   * cases are actually independent of cache timing. Re-logging in mints a
+   * token whose OWN claimed version already matches (or exceeds) current,
+   * so nothing below depends on the cache at all.
+   */
+  afterAll(async () => {
+    a = await loginAs(a.user)
+  })
 })
 
 describe('W1-006 criterion 3: missing, tampered, expired and revoked credentials are each rejected', () => {
