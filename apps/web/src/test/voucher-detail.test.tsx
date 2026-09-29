@@ -6,13 +6,40 @@ import { VoucherDetail } from '@/screens/vouchers'
 import { setAccessToken } from '@/lib/api/session'
 
 function jsonResponse(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  })
 }
 
 const ACCOUNTS = {
   accounts: [
-    { id: 'a1110', code: '1110', name: 'Cash in Hand', type: 'ASSET', normalBalance: 'DEBIT', kind: 'POSTABLE', controlKind: 'NONE', role: 'CASH_DEFAULT', restricted: false, parentId: null, isActive: true },
-    { id: 'a3100', code: '3100', name: "Owner's Capital", type: 'EQUITY', normalBalance: 'CREDIT', kind: 'POSTABLE', controlKind: 'NONE', role: null, restricted: false, parentId: null, isActive: true },
+    {
+      id: 'a1110',
+      code: '1110',
+      name: 'Cash in Hand',
+      type: 'ASSET',
+      normalBalance: 'DEBIT',
+      kind: 'POSTABLE',
+      controlKind: 'NONE',
+      role: 'CASH_DEFAULT',
+      restricted: false,
+      parentId: null,
+      isActive: true,
+    },
+    {
+      id: 'a3100',
+      code: '3100',
+      name: "Owner's Capital",
+      type: 'EQUITY',
+      normalBalance: 'CREDIT',
+      kind: 'POSTABLE',
+      controlKind: 'NONE',
+      role: null,
+      restricted: false,
+      parentId: null,
+      isActive: true,
+    },
   ],
 }
 function detail(overrides: Record<string, unknown> = {}) {
@@ -31,8 +58,22 @@ function detail(overrides: Record<string, unknown> = {}) {
     reversedBy: null,
     reversalReason: null,
     lines: [
-      { lineNumber: 1, accountId: 'a1110', debit: '50000.0000', credit: '0.0000', partyId: null, memo: null },
-      { lineNumber: 2, accountId: 'a3100', debit: '0.0000', credit: '50000.0000', partyId: null, memo: null },
+      {
+        lineNumber: 1,
+        accountId: 'a1110',
+        debit: '50000.0000',
+        credit: '0.0000',
+        partyId: null,
+        memo: null,
+      },
+      {
+        lineNumber: 2,
+        accountId: 'a3100',
+        debit: '0.0000',
+        credit: '50000.0000',
+        partyId: null,
+        memo: null,
+      },
     ],
     ...overrides,
   }
@@ -67,7 +108,9 @@ describe('VoucherDetail', () => {
 
     renderScreen()
 
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'JV-2027-000001' })).toBeInTheDocument())
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: 'JV-2027-000001' })).toBeInTheDocument(),
+    )
     expect(screen.getByText('Cash in Hand (1110)')).toBeInTheDocument()
     expect(screen.getByText("Owner's Capital (3100)")).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Reverse' })).toBeInTheDocument()
@@ -83,7 +126,9 @@ describe('VoucherDetail', () => {
     })
 
     renderScreen()
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'JV-2027-000001' })).toBeInTheDocument())
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: 'JV-2027-000001' })).toBeInTheDocument(),
+    )
     expect(screen.queryByRole('button', { name: 'Reverse' })).not.toBeInTheDocument()
   })
 
@@ -92,14 +137,19 @@ describe('VoucherDetail', () => {
     fetchMock.mockImplementation((url: string) => {
       if (url.startsWith('/api/journals/'))
         return Promise.resolve(
-          jsonResponse(200, detail({ entryNumber: 'RV-2027-000001', reversalOf: 'e0', reversalReason: 'oops' })),
+          jsonResponse(
+            200,
+            detail({ entryNumber: 'RV-2027-000001', reversalOf: 'e0', reversalReason: 'oops' }),
+          ),
         )
       if (url.startsWith('/api/accounts')) return Promise.resolve(jsonResponse(200, ACCOUNTS))
       throw new Error(`unexpected fetch: ${url}`)
     })
 
     renderScreen()
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'RV-2027-000001' })).toBeInTheDocument())
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: 'RV-2027-000001' })).toBeInTheDocument(),
+    )
     expect(screen.queryByRole('button', { name: 'Reverse' })).not.toBeInTheDocument()
   })
 
@@ -109,10 +159,14 @@ describe('VoucherDetail', () => {
     fetchMock.mockImplementation((url: string, init?: RequestInit) => {
       if (url.endsWith('/reverse')) {
         reversed = true
-        return Promise.resolve(jsonResponse(200, { ...detail({ status: 'REVERSED' }), disclosure: null }))
+        return Promise.resolve(
+          jsonResponse(200, { ...detail({ status: 'REVERSED' }), disclosure: null }),
+        )
       }
       if (url.startsWith('/api/journals/'))
-        return Promise.resolve(jsonResponse(200, detail({ status: reversed ? 'REVERSED' : 'POSTED' })))
+        return Promise.resolve(
+          jsonResponse(200, detail({ status: reversed ? 'REVERSED' : 'POSTED' })),
+        )
       if (url.startsWith('/api/accounts')) return Promise.resolve(jsonResponse(200, ACCOUNTS))
       throw new Error(`unexpected fetch: ${url} ${init?.method}`)
     })
@@ -136,7 +190,9 @@ describe('VoucherDetail', () => {
     const fetchMock = fetch as ReturnType<typeof vi.fn>
     fetchMock.mockImplementation((url: string) => {
       if (url.startsWith('/api/journals/'))
-        return Promise.resolve(jsonResponse(404, { statusCode: 404, error: 'entry_not_found', message: 'Not found' }))
+        return Promise.resolve(
+          jsonResponse(404, { statusCode: 404, error: 'entry_not_found', message: 'Not found' }),
+        )
       return Promise.resolve(jsonResponse(200, ACCOUNTS))
     })
 

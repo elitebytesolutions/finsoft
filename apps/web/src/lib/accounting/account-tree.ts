@@ -58,19 +58,23 @@ export function postableAccounts(accounts: readonly AccountDto[]): AccountDto[] 
  * — the server re-validates every line regardless.
  */
 export function postableJournalAccounts(accounts: readonly AccountDto[]): AccountDto[] {
-  return postableAccounts(accounts).filter(
-    (a) => a.controlKind === 'NONE' && !a.restricted,
-  )
+  return postableAccounts(accounts).filter((a) => a.controlKind === 'NONE' && !a.restricted)
 }
 
 /** Finds the account holding a given role (e.g. `CASH_DEFAULT`) — coa-standard.md §4:
  * "Each role... is held by exactly one active postable account per tenant." Returns
  * `undefined` if unmapped (`ACCOUNT_ROLE_UNMAPPED` territory — not expected in M2's
  * seeded template, but a screen must not crash if it happens). */
-export function accountByRole(accounts: readonly AccountDto[], role: string): AccountDto | undefined {
+export function accountByRole(
+  accounts: readonly AccountDto[],
+  role: string,
+): AccountDto | undefined {
   return accounts.find((a) => a.role === role && a.isActive)
 }
 
-export function accountByCode(accounts: readonly AccountDto[], code: string): AccountDto | undefined {
+export function accountByCode(
+  accounts: readonly AccountDto[],
+  code: string,
+): AccountDto | undefined {
   return accounts.find((a) => a.code === code)
 }

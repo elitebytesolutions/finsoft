@@ -11,7 +11,11 @@ import { Badge, Banner, Button, moneyFromString } from '@finsoft/ui'
 import { useNavigate } from '@/lib/router'
 import { getJournal, listJournals, listAccounts } from '@/lib/api/accounting-client'
 import { useApiQuery } from '@/lib/api/use-api-query'
-import type { AccountDto, JournalEntryDetail, JournalEntrySummary } from '@/lib/api/accounting-types'
+import type {
+  AccountDto,
+  JournalEntryDetail,
+  JournalEntrySummary,
+} from '@/lib/api/accounting-types'
 
 type StatusFilter = 'All' | 'POSTED' | 'REVERSED'
 
@@ -24,7 +28,10 @@ export function VoucherRegister() {
     () => listJournals(status === 'All' ? {} : { status }),
     [status],
   )
-  const { state: accountsState } = useApiQuery(() => listAccounts().then((r) => [...r.accounts]), [])
+  const { state: accountsState } = useApiQuery(
+    () => listAccounts().then((r) => [...r.accounts]),
+    [],
+  )
 
   return (
     <div className="vg">
@@ -93,7 +100,12 @@ export function VoucherRegister() {
             ) : (
               <div className="vg-timeline">
                 {state.data.items.map((v) => (
-                  <VoucherRow key={v.id} voucher={v} active={sel === v.id} onSelect={() => setSel(v.id)} />
+                  <VoucherRow
+                    key={v.id}
+                    voucher={v}
+                    active={sel === v.id}
+                    onSelect={() => setSel(v.id)}
+                  />
                 ))}
               </div>
             )}
@@ -170,7 +182,9 @@ function Inspector({
       {state.status === 'loading' && <p>Loading entries…</p>}
       {state.status === 'forbidden' && <p>You do not have permission to view this voucher.</p>}
       {state.status === 'error' && <p>{state.message}</p>}
-      {state.status === 'ready' && <InspectorReady entry={state.data} accounts={accounts} onOpen={onOpen} />}
+      {state.status === 'ready' && (
+        <InspectorReady entry={state.data} accounts={accounts} onOpen={onOpen} />
+      )}
     </aside>
   )
 }

@@ -33,7 +33,10 @@ export interface ApiQueryResult<T> {
  * e.g. `[asOf]` or `[accountId, from, to]`). `reload()` re-runs it with the
  * CURRENT closure, for a "Try again" button after an error.
  */
-export function useApiQuery<T>(fetcher: () => Promise<T>, deps: readonly unknown[]): ApiQueryResult<T> {
+export function useApiQuery<T>(
+  fetcher: () => Promise<T>,
+  deps: readonly unknown[],
+): ApiQueryResult<T> {
   const [state, setState] = useState<ApiQueryState<T>>({ status: 'loading' })
   // Guards against a stale response landing after a newer request started
   // (deps changed again, or reload() was clicked twice) — only the latest

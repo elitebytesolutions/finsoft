@@ -5,20 +5,28 @@
  */
 import { useMemo, useState, type FormEvent } from 'react'
 import { ArrowLeft, ChevronRight, Plus, RotateCw, ShieldAlert, Trash2 } from 'lucide-react'
-import { Badge, Banner, Button, Field, Modal, PageHead, TextInput, moneyFromString } from '@finsoft/ui'
-import { useNavigate, useParams } from '@/lib/router'
 import {
-  getJournal,
-  listAccounts,
-  postJournal,
-  reverseJournal,
-} from '@/lib/api/accounting-client'
+  Badge,
+  Banner,
+  Button,
+  Field,
+  Modal,
+  PageHead,
+  TextInput,
+  moneyFromString,
+} from '@finsoft/ui'
+import { useNavigate, useParams } from '@/lib/router'
+import { getJournal, listAccounts, postJournal, reverseJournal } from '@/lib/api/accounting-client'
 import { useApiQuery } from '@/lib/api/use-api-query'
 import { useIdempotencyKey } from '@/lib/api/idempotency-key'
 import { postableJournalAccounts } from '@/lib/accounting/account-tree'
 import { computeVoucherTotals } from '@/lib/accounting/voucher-totals'
 import { ApiError } from '@/lib/api/types'
-import type { AccountDto, JournalEntryDetail, PostJournalLineInput } from '@/lib/api/accounting-types'
+import type {
+  AccountDto,
+  JournalEntryDetail,
+  PostJournalLineInput,
+} from '@/lib/api/accounting-types'
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10)
@@ -32,7 +40,10 @@ export function VoucherDetail() {
   const navigate = useNavigate()
   const { id } = useParams()
   const { state, reload } = useApiQuery(() => getJournal(id!), [id])
-  const { state: accountsState } = useApiQuery(() => listAccounts().then((r) => [...r.accounts]), [])
+  const { state: accountsState } = useApiQuery(
+    () => listAccounts().then((r) => [...r.accounts]),
+    [],
+  )
 
   if (state.status === 'loading') {
     return (
@@ -56,7 +67,10 @@ export function VoucherDetail() {
     )
   }
   if (state.status === 'error') {
-    if (state.message.toLowerCase().includes('not found') || state.message.toLowerCase().includes('entry_not_found')) {
+    if (
+      state.message.toLowerCase().includes('not found') ||
+      state.message.toLowerCase().includes('entry_not_found')
+    ) {
       return (
         <div className="state-page">
           <h1>Record not found</h1>
@@ -137,9 +151,7 @@ function VoucherDetailReady({
       </div>
 
       {entry.status === 'REVERSED' && entry.reversedBy && (
-        <Banner tone="danger">
-          Reversed. See the reversing voucher for the full effect.
-        </Banner>
+        <Banner tone="danger">Reversed. See the reversing voucher for the full effect.</Banner>
       )}
       {isReversal && entry.reversalOf && (
         <Banner tone="info">This voucher reverses an earlier entry. {entry.reversalReason}</Banner>
@@ -366,7 +378,11 @@ function VoucherFormReady({ accounts }: { accounts: AccountDto[] }) {
           setFieldErrors({ narration: err.message })
         } else if (code === 'date_in_future') {
           setFieldErrors({ date: err.message })
-        } else if (code === 'period_closed' || code === 'period_locked' || code === 'period_not_found') {
+        } else if (
+          code === 'period_closed' ||
+          code === 'period_locked' ||
+          code === 'period_not_found'
+        ) {
           setFormError(err.message)
         } else {
           setFormError(err.message)
@@ -380,14 +396,24 @@ function VoucherFormReady({ accounts }: { accounts: AccountDto[] }) {
 
   return (
     <form className="vn-page" onSubmit={submit} noValidate>
-      <PageHead eyebrow="Accounting / Vouchers" title="New Journal Voucher" description="Post a balanced journal entry." />
+      <PageHead
+        eyebrow="Accounting / Vouchers"
+        title="New Journal Voucher"
+        description="Post a balanced journal entry."
+      />
 
       {formError && <Banner tone="danger">{formError}</Banner>}
 
       <section className="vn-card">
         <div className="vn-grid4">
           <Field label="Voucher date" htmlFor="jv-date" required error={fieldErrors.date}>
-            <input id="jv-date" type="date" value={date} max={todayIso()} onChange={(e) => setDate(e.target.value)} />
+            <input
+              id="jv-date"
+              type="date"
+              value={date}
+              max={todayIso()}
+              onChange={(e) => setDate(e.target.value)}
+            />
           </Field>
           <Field label="Reference" htmlFor="jv-reference" helper="Optional, up to 100 characters">
             <TextInput id="jv-reference" value={reference} onChange={setReference} />
@@ -447,7 +473,12 @@ function VoucherFormReady({ accounts }: { accounts: AccountDto[] }) {
                       aria-label={`Debit line ${i + 1}`}
                       inputMode="decimal"
                       value={line.debit}
-                      onChange={(e) => setLine(i, { debit: e.target.value, credit: e.target.value ? '' : line.credit })}
+                      onChange={(e) =>
+                        setLine(i, {
+                          debit: e.target.value,
+                          credit: e.target.value ? '' : line.credit,
+                        })
+                      }
                     />
                   </td>
                   <td>
@@ -455,7 +486,12 @@ function VoucherFormReady({ accounts }: { accounts: AccountDto[] }) {
                       aria-label={`Credit line ${i + 1}`}
                       inputMode="decimal"
                       value={line.credit}
-                      onChange={(e) => setLine(i, { credit: e.target.value, debit: e.target.value ? '' : line.debit })}
+                      onChange={(e) =>
+                        setLine(i, {
+                          credit: e.target.value,
+                          debit: e.target.value ? '' : line.debit,
+                        })
+                      }
                     />
                   </td>
                   <td className="act">
@@ -484,7 +520,11 @@ function VoucherFormReady({ accounts }: { accounts: AccountDto[] }) {
           </div>
           <div className={`vn-bal ${totals.balanced ? 'ok' : 'pending'}`}>
             <b>{totals.balanced ? 'Balanced' : 'Unbalanced'}</b>
-            <small>{totals.balanced ? 'Difference is zero' : `Difference ${moneyFromString(totals.difference)}`}</small>
+            <small>
+              {totals.balanced
+                ? 'Difference is zero'
+                : `Difference ${moneyFromString(totals.difference)}`}
+            </small>
           </div>
         </div>
       </section>

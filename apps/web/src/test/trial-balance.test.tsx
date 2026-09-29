@@ -29,8 +29,22 @@ describe('TrialBalance', () => {
       jsonResponse(200, {
         asOf: '2026-09-29',
         lines: [
-          { accountId: 'a1', code: '1120', name: 'Bank — Current Account', type: 'ASSET', debit: '455000.0000', credit: '0.0000' },
-          { accountId: 'a2', code: '3100', name: "Owner's Capital", type: 'EQUITY', debit: '0.0000', credit: '455000.0000' },
+          {
+            accountId: 'a1',
+            code: '1120',
+            name: 'Bank — Current Account',
+            type: 'ASSET',
+            debit: '455000.0000',
+            credit: '0.0000',
+          },
+          {
+            accountId: 'a2',
+            code: '3100',
+            name: "Owner's Capital",
+            type: 'EQUITY',
+            debit: '0.0000',
+            credit: '455000.0000',
+          },
         ],
         totalDebit: '455000.0000',
         totalCredit: '455000.0000',
@@ -41,7 +55,9 @@ describe('TrialBalance', () => {
 
     expect(screen.getByText(/loading the trial balance/i)).toBeInTheDocument()
 
-    await waitFor(() => expect(screen.getByText(/balanced — total debit equals total credit/i)).toBeInTheDocument())
+    await waitFor(() =>
+      expect(screen.getByText(/balanced — total debit equals total credit/i)).toBeInTheDocument(),
+    )
 
     expect(screen.getByText('Bank — Current Account')).toBeInTheDocument()
     expect(screen.getByText("Owner's Capital")).toBeInTheDocument()
@@ -50,7 +66,12 @@ describe('TrialBalance', () => {
 
   it('shows the empty state when there is no activity yet', async () => {
     ;(fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
-      jsonResponse(200, { asOf: '2026-09-29', lines: [], totalDebit: '0.0000', totalCredit: '0.0000' }),
+      jsonResponse(200, {
+        asOf: '2026-09-29',
+        lines: [],
+        totalDebit: '0.0000',
+        totalCredit: '0.0000',
+      }),
     )
 
     render(<TrialBalance />)
@@ -73,7 +94,12 @@ describe('TrialBalance', () => {
     )
 
     fetchMock.mockResolvedValueOnce(
-      jsonResponse(200, { asOf: '2026-09-29', lines: [], totalDebit: '0.0000', totalCredit: '0.0000' }),
+      jsonResponse(200, {
+        asOf: '2026-09-29',
+        lines: [],
+        totalDebit: '0.0000',
+        totalCredit: '0.0000',
+      }),
     )
     screen.getByRole('button', { name: /try again/i }).click()
 

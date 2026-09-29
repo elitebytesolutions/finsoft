@@ -37,8 +37,7 @@ export function TrialBalance() {
           setState({ status: 'forbidden' })
           return
         }
-        const message =
-          err instanceof ApiError ? err.message : 'Could not load the trial balance.'
+        const message = err instanceof ApiError ? err.message : 'Could not load the trial balance.'
         setState({ status: 'error', message })
       },
     )
@@ -55,7 +54,10 @@ export function TrialBalance() {
         title="Trial Balance"
         description="Every account with activity, its net position, and the two totals — proven equal."
         actions={
-          <label className="al-btn" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+          <label
+            className="al-btn"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
+          >
             <CalendarDays size={16} aria-hidden="true" />
             <span className="sr-only">As of date</span>
             <input
@@ -124,8 +126,18 @@ function TrialBalanceReady({ data }: { data: TrialBalanceResponse }) {
     <>
       <div className="al-stats">
         <Kpi label="Total debit" value={moneyFromString(data.totalDebit)} change="" icon={Scale} />
-        <Kpi label="Total credit" value={moneyFromString(data.totalCredit)} change="" icon={Scale} />
-        <Kpi label="Accounts with activity" value={String(data.lines.length)} change="" icon={Scale} />
+        <Kpi
+          label="Total credit"
+          value={moneyFromString(data.totalCredit)}
+          change=""
+          icon={Scale}
+        />
+        <Kpi
+          label="Accounts with activity"
+          value={String(data.lines.length)}
+          change=""
+          icon={Scale}
+        />
       </div>
 
       <Banner tone={balanced ? 'info' : 'danger'} icon={Scale}>

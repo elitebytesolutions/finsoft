@@ -7,13 +7,40 @@ import { AccountLedger } from '@/screens/account-ledger'
 import { setAccessToken } from '@/lib/api/session'
 
 function jsonResponse(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  })
 }
 
 const ACCOUNTS = {
   accounts: [
-    { id: 'a1110', code: '1110', name: 'Cash in Hand', type: 'ASSET', normalBalance: 'DEBIT', kind: 'POSTABLE', controlKind: 'NONE', role: 'CASH_DEFAULT', restricted: false, parentId: null, isActive: true },
-    { id: 'a1120', code: '1120', name: 'Bank — Current Account', type: 'ASSET', normalBalance: 'DEBIT', kind: 'POSTABLE', controlKind: 'NONE', role: 'BANK_DEFAULT', restricted: false, parentId: null, isActive: true },
+    {
+      id: 'a1110',
+      code: '1110',
+      name: 'Cash in Hand',
+      type: 'ASSET',
+      normalBalance: 'DEBIT',
+      kind: 'POSTABLE',
+      controlKind: 'NONE',
+      role: 'CASH_DEFAULT',
+      restricted: false,
+      parentId: null,
+      isActive: true,
+    },
+    {
+      id: 'a1120',
+      code: '1120',
+      name: 'Bank — Current Account',
+      type: 'ASSET',
+      normalBalance: 'DEBIT',
+      kind: 'POSTABLE',
+      controlKind: 'NONE',
+      role: 'BANK_DEFAULT',
+      restricted: false,
+      parentId: null,
+      isActive: true,
+    },
   ],
 }
 function ledgerResponse(accountId: string) {
@@ -68,7 +95,8 @@ describe('AccountLedger', () => {
     const fetchMock = fetch as ReturnType<typeof vi.fn>
     fetchMock.mockImplementation((url: string) => {
       if (url.startsWith('/api/accounts')) return Promise.resolve(jsonResponse(200, ACCOUNTS))
-      if (url.startsWith('/api/ledgers/')) return Promise.resolve(jsonResponse(200, ledgerResponse('a1110')))
+      if (url.startsWith('/api/ledgers/'))
+        return Promise.resolve(jsonResponse(200, ledgerResponse('a1110')))
       throw new Error(`unexpected fetch: ${url}`)
     })
 
@@ -85,8 +113,10 @@ describe('AccountLedger', () => {
     fetchMock.mockImplementation((url: string) => {
       calledUrls.push(url)
       if (url.startsWith('/api/accounts')) return Promise.resolve(jsonResponse(200, ACCOUNTS))
-      if (url.startsWith('/api/ledgers/a1120')) return Promise.resolve(jsonResponse(200, ledgerResponse('a1120')))
-      if (url.startsWith('/api/ledgers/')) return Promise.resolve(jsonResponse(200, ledgerResponse('a1110')))
+      if (url.startsWith('/api/ledgers/a1120'))
+        return Promise.resolve(jsonResponse(200, ledgerResponse('a1120')))
+      if (url.startsWith('/api/ledgers/'))
+        return Promise.resolve(jsonResponse(200, ledgerResponse('a1110')))
       throw new Error(`unexpected fetch: ${url}`)
     })
 
@@ -124,13 +154,17 @@ describe('AccountLedger', () => {
     fetchMock.mockImplementation((url: string) => {
       if (url.startsWith('/api/accounts')) return Promise.resolve(jsonResponse(200, ACCOUNTS))
       if (url.startsWith('/api/ledgers/'))
-        return Promise.resolve(jsonResponse(403, { statusCode: 403, error: 'forbidden', message: 'nope' }))
+        return Promise.resolve(
+          jsonResponse(403, { statusCode: 403, error: 'forbidden', message: 'nope' }),
+        )
       throw new Error(`unexpected fetch: ${url}`)
     })
 
     renderScreen()
     await waitFor(() =>
-      expect(screen.getByText(/your role does not have permission to view this ledger/i)).toBeInTheDocument(),
+      expect(
+        screen.getByText(/your role does not have permission to view this ledger/i),
+      ).toBeInTheDocument(),
     )
   })
 })

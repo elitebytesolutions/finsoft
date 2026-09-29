@@ -6,14 +6,41 @@ import { PeriodClose } from '@/screens/trade-pages'
 import { setAccessToken } from '@/lib/api/session'
 
 function jsonResponse(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  })
 }
 
 const PERIODS = {
   periods: [
-    { id: 'p1', fiscalYear: 2027, periodIndex: 1, periodStart: '2026-07-01', periodEnd: '2026-07-31', label: '2026-07', status: 'CLOSED' },
-    { id: 'p2', fiscalYear: 2027, periodIndex: 2, periodStart: '2026-08-01', periodEnd: '2026-08-31', label: '2026-08', status: 'OPEN' },
-    { id: 'p3', fiscalYear: 2027, periodIndex: 3, periodStart: '2026-09-01', periodEnd: '2026-09-30', label: '2026-09', status: 'OPEN' },
+    {
+      id: 'p1',
+      fiscalYear: 2027,
+      periodIndex: 1,
+      periodStart: '2026-07-01',
+      periodEnd: '2026-07-31',
+      label: '2026-07',
+      status: 'CLOSED',
+    },
+    {
+      id: 'p2',
+      fiscalYear: 2027,
+      periodIndex: 2,
+      periodStart: '2026-08-01',
+      periodEnd: '2026-08-31',
+      label: '2026-08',
+      status: 'OPEN',
+    },
+    {
+      id: 'p3',
+      fiscalYear: 2027,
+      periodIndex: 3,
+      periodStart: '2026-09-01',
+      periodEnd: '2026-09-30',
+      label: '2026-09',
+      status: 'OPEN',
+    },
   ],
 }
 
@@ -54,9 +81,33 @@ describe('PeriodClose', () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse(200, {
         periods: [
-          { id: 'p1', fiscalYear: 2027, periodIndex: 1, periodStart: '2026-07-01', periodEnd: '2026-07-31', label: '2026-07', status: 'CLOSED' },
-          { id: 'p2', fiscalYear: 2027, periodIndex: 2, periodStart: '2026-08-01', periodEnd: '2026-08-31', label: '2026-08', status: 'CLOSED' },
-          { id: 'p3', fiscalYear: 2027, periodIndex: 3, periodStart: '2026-09-01', periodEnd: '2026-09-30', label: '2026-09', status: 'OPEN' },
+          {
+            id: 'p1',
+            fiscalYear: 2027,
+            periodIndex: 1,
+            periodStart: '2026-07-01',
+            periodEnd: '2026-07-31',
+            label: '2026-07',
+            status: 'CLOSED',
+          },
+          {
+            id: 'p2',
+            fiscalYear: 2027,
+            periodIndex: 2,
+            periodStart: '2026-08-01',
+            periodEnd: '2026-08-31',
+            label: '2026-08',
+            status: 'CLOSED',
+          },
+          {
+            id: 'p3',
+            fiscalYear: 2027,
+            periodIndex: 3,
+            periodStart: '2026-09-01',
+            periodEnd: '2026-09-30',
+            label: '2026-09',
+            status: 'OPEN',
+          },
         ],
       }),
     )
@@ -67,7 +118,8 @@ describe('PeriodClose', () => {
   it('closes the earliest open period and refreshes', async () => {
     const fetchMock = fetch as ReturnType<typeof vi.fn>
     fetchMock.mockImplementation((url: string) => {
-      if (url.endsWith('/close')) return Promise.resolve(jsonResponse(200, { ...PERIODS.periods[1], status: 'CLOSED' }))
+      if (url.endsWith('/close'))
+        return Promise.resolve(jsonResponse(200, { ...PERIODS.periods[1], status: 'CLOSED' }))
       return Promise.resolve(jsonResponse(200, PERIODS))
     })
 
@@ -78,7 +130,9 @@ describe('PeriodClose', () => {
     await waitFor(() =>
       expect(
         fetchMock.mock.calls.some(
-          (call) => (call[0] as string).endsWith('/close') && (call[1] as RequestInit | undefined)?.method === 'POST',
+          (call) =>
+            (call[0] as string).endsWith('/close') &&
+            (call[1] as RequestInit | undefined)?.method === 'POST',
         ),
       ).toBe(true),
     )
@@ -102,7 +156,9 @@ describe('PeriodClose', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Reopen period' }))
     expect(screen.getByText(/a reason is required/i)).toBeInTheDocument()
 
-    fireEvent.change(screen.getByLabelText(/^reason/i), { target: { value: 'Correcting an error' } })
+    fireEvent.change(screen.getByLabelText(/^reason/i), {
+      target: { value: 'Correcting an error' },
+    })
     fireEvent.click(screen.getByRole('button', { name: 'Reopen period' }))
 
     await waitFor(() => expect(reopenBody).toEqual({ reason: 'Correcting an error' }))
@@ -117,7 +173,9 @@ describe('PeriodClose', () => {
 
   it('shows the forbidden state on a 403', async () => {
     const fetchMock = fetch as ReturnType<typeof vi.fn>
-    fetchMock.mockResolvedValueOnce(jsonResponse(403, { statusCode: 403, error: 'forbidden', message: 'nope' }))
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(403, { statusCode: 403, error: 'forbidden', message: 'nope' }),
+    )
     renderScreen()
     await waitFor(() => expect(screen.getByText(/access restricted/i)).toBeInTheDocument())
   })

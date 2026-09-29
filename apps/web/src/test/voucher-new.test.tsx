@@ -6,16 +6,67 @@ import { VoucherForm } from '@/screens/vouchers'
 import { setAccessToken } from '@/lib/api/session'
 
 function jsonResponse(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  })
 }
 
 const ACCOUNTS = {
   accounts: [
-    { id: 'a1110', code: '1110', name: 'Cash in Hand', type: 'ASSET', normalBalance: 'DEBIT', kind: 'POSTABLE', controlKind: 'NONE', role: 'CASH_DEFAULT', restricted: false, parentId: null, isActive: true },
-    { id: 'a3100', code: '3100', name: "Owner's Capital", type: 'EQUITY', normalBalance: 'CREDIT', kind: 'POSTABLE', controlKind: 'NONE', role: null, restricted: false, parentId: null, isActive: true },
+    {
+      id: 'a1110',
+      code: '1110',
+      name: 'Cash in Hand',
+      type: 'ASSET',
+      normalBalance: 'DEBIT',
+      kind: 'POSTABLE',
+      controlKind: 'NONE',
+      role: 'CASH_DEFAULT',
+      restricted: false,
+      parentId: null,
+      isActive: true,
+    },
+    {
+      id: 'a3100',
+      code: '3100',
+      name: "Owner's Capital",
+      type: 'EQUITY',
+      normalBalance: 'CREDIT',
+      kind: 'POSTABLE',
+      controlKind: 'NONE',
+      role: null,
+      restricted: false,
+      parentId: null,
+      isActive: true,
+    },
     // Not selectable: a control account and a header.
-    { id: 'a1200', code: '1200', name: 'Accounts Receivable', type: 'ASSET', normalBalance: 'DEBIT', kind: 'POSTABLE', controlKind: 'AR', role: 'AR_CONTROL', restricted: false, parentId: null, isActive: true },
-    { id: 'a1000', code: '1000', name: 'Assets', type: 'ASSET', normalBalance: 'DEBIT', kind: 'HEADER', controlKind: 'NONE', role: null, restricted: false, parentId: null, isActive: true },
+    {
+      id: 'a1200',
+      code: '1200',
+      name: 'Accounts Receivable',
+      type: 'ASSET',
+      normalBalance: 'DEBIT',
+      kind: 'POSTABLE',
+      controlKind: 'AR',
+      role: 'AR_CONTROL',
+      restricted: false,
+      parentId: null,
+      isActive: true,
+    },
+    {
+      id: 'a1000',
+      code: '1000',
+      name: 'Assets',
+      type: 'ASSET',
+      normalBalance: 'DEBIT',
+      kind: 'HEADER',
+      controlKind: 'NONE',
+      role: null,
+      restricted: false,
+      parentId: null,
+      isActive: true,
+    },
   ],
 }
 
@@ -104,7 +155,8 @@ describe('VoucherForm (New Voucher)', () => {
 
     const findPostCall = () =>
       fetchMock.mock.calls.find(
-        (call) => call[0] === '/api/journals' && (call[1] as RequestInit | undefined)?.method === 'POST',
+        (call) =>
+          call[0] === '/api/journals' && (call[1] as RequestInit | undefined)?.method === 'POST',
       )
 
     await waitFor(() => expect(findPostCall()).toBeTruthy())

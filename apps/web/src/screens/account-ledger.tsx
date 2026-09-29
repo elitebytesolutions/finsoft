@@ -146,7 +146,12 @@ function LedgerBody({
           <div>
             <h2>{account?.name ?? 'Select an account'}</h2>
           </div>
-          {account && <p>{account.code} · {account.type} · {account.normalBalance === 'DEBIT' ? 'Debit' : 'Credit'}</p>}
+          {account && (
+            <p>
+              {account.code} · {account.type} ·{' '}
+              {account.normalBalance === 'DEBIT' ? 'Debit' : 'Credit'}
+            </p>
+          )}
         </div>
         <label className="al-select">
           <select
@@ -168,11 +173,23 @@ function LedgerBody({
       <div className="al-filter" style={{ display: 'flex', gap: 12, margin: '12px 0' }}>
         <label>
           From{' '}
-          <input aria-label="From date" type="date" value={from} onChange={(e) => onFromChange(e.target.value)} max={to} />
+          <input
+            aria-label="From date"
+            type="date"
+            value={from}
+            onChange={(e) => onFromChange(e.target.value)}
+            max={to}
+          />
         </label>
         <label>
           To{' '}
-          <input aria-label="To date" type="date" value={to} onChange={(e) => onToChange(e.target.value)} max={todayIso()} />
+          <input
+            aria-label="To date"
+            type="date"
+            value={to}
+            onChange={(e) => onToChange(e.target.value)}
+            max={todayIso()}
+          />
         </label>
       </div>
 
@@ -239,7 +256,10 @@ function LedgerBody({
                     </td>
                     <td className="num">—</td>
                     <td className="num">—</td>
-                    <td className="num bal">{formatRunningBalance(pages[0].openingBalance).amount}{' '}{formatRunningBalance(pages[0].openingBalance).side}</td>
+                    <td className="num bal">
+                      {formatRunningBalance(pages[0].openingBalance).amount}{' '}
+                      {formatRunningBalance(pages[0].openingBalance).side}
+                    </td>
                   </tr>
                   {allLines.map((line) => {
                     const running = formatRunningBalance(line.runningBalance)
@@ -254,8 +274,12 @@ function LedgerBody({
                           {line.entryStatus === 'REVERSED' && <small> · reversed</small>}
                           {line.reversalOf && <small> · reverses an earlier entry</small>}
                         </td>
-                        <td className="num dr">{moneyFromString(line.debit, { zeroAsDash: true })}</td>
-                        <td className="num cr">{moneyFromString(line.credit, { zeroAsDash: true })}</td>
+                        <td className="num dr">
+                          {moneyFromString(line.debit, { zeroAsDash: true })}
+                        </td>
+                        <td className="num cr">
+                          {moneyFromString(line.credit, { zeroAsDash: true })}
+                        </td>
                         <td className="num bal">
                           {running.amount} <small>{running.side}</small>
                         </td>

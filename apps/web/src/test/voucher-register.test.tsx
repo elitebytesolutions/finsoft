@@ -6,7 +6,10 @@ import { VoucherRegister } from '@/screens/voucher-register'
 import { setAccessToken } from '@/lib/api/session'
 
 function jsonResponse(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  })
 }
 
 const LIST = {
@@ -31,7 +34,19 @@ const LIST = {
 }
 const ACCOUNTS = {
   accounts: [
-    { id: 'a1110', code: '1110', name: 'Cash in Hand', type: 'ASSET', normalBalance: 'DEBIT', kind: 'POSTABLE', controlKind: 'NONE', role: 'CASH_DEFAULT', restricted: false, parentId: null, isActive: true },
+    {
+      id: 'a1110',
+      code: '1110',
+      name: 'Cash in Hand',
+      type: 'ASSET',
+      normalBalance: 'DEBIT',
+      kind: 'POSTABLE',
+      controlKind: 'NONE',
+      role: 'CASH_DEFAULT',
+      restricted: false,
+      parentId: null,
+      isActive: true,
+    },
   ],
 }
 const DETAIL = {
@@ -49,7 +64,14 @@ const DETAIL = {
   reversedBy: null,
   reversalReason: null,
   lines: [
-    { lineNumber: 1, accountId: 'a1110', debit: '50000.0000', credit: '0.0000', partyId: null, memo: null },
+    {
+      lineNumber: 1,
+      accountId: 'a1110',
+      debit: '50000.0000',
+      credit: '0.0000',
+      partyId: null,
+      memo: null,
+    },
   ],
 }
 
@@ -93,8 +115,10 @@ describe('VoucherRegister', () => {
   it('shows the empty state when there are no vouchers', async () => {
     const fetchMock = fetch as ReturnType<typeof vi.fn>
     fetchMock.mockImplementation((url: string) => {
-      if (url.startsWith('/api/journals')) return Promise.resolve(jsonResponse(200, { items: [], nextCursor: null }))
-      if (url.startsWith('/api/accounts')) return Promise.resolve(jsonResponse(200, { accounts: [] }))
+      if (url.startsWith('/api/journals'))
+        return Promise.resolve(jsonResponse(200, { items: [], nextCursor: null }))
+      if (url.startsWith('/api/accounts'))
+        return Promise.resolve(jsonResponse(200, { accounts: [] }))
       throw new Error(`unexpected fetch: ${url}`)
     })
 
@@ -107,8 +131,10 @@ describe('VoucherRegister', () => {
     const urls: string[] = []
     fetchMock.mockImplementation((url: string) => {
       urls.push(url)
-      if (url.startsWith('/api/journals')) return Promise.resolve(jsonResponse(200, { items: [], nextCursor: null }))
-      if (url.startsWith('/api/accounts')) return Promise.resolve(jsonResponse(200, { accounts: [] }))
+      if (url.startsWith('/api/journals'))
+        return Promise.resolve(jsonResponse(200, { items: [], nextCursor: null }))
+      if (url.startsWith('/api/accounts'))
+        return Promise.resolve(jsonResponse(200, { accounts: [] }))
       throw new Error(`unexpected fetch: ${url}`)
     })
 
@@ -122,7 +148,9 @@ describe('VoucherRegister', () => {
     const fetchMock = fetch as ReturnType<typeof vi.fn>
     fetchMock.mockImplementation((url: string) => {
       if (url.startsWith('/api/journals'))
-        return Promise.resolve(jsonResponse(403, { statusCode: 403, error: 'forbidden', message: 'nope' }))
+        return Promise.resolve(
+          jsonResponse(403, { statusCode: 403, error: 'forbidden', message: 'nope' }),
+        )
       return Promise.resolve(jsonResponse(200, { accounts: [] }))
     })
 

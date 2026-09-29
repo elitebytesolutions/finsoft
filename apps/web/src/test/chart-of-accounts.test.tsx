@@ -24,13 +24,46 @@ function jsonResponse(status: number, body: unknown): Response {
 
 const ACCOUNTS = {
   accounts: [
-    { id: 'a1000', code: '1000', name: 'Assets', type: 'ASSET', normalBalance: 'DEBIT', kind: 'HEADER', controlKind: 'NONE', role: null, restricted: false, parentId: null, isActive: true },
-    { id: 'a1110', code: '1110', name: 'Cash in Hand', type: 'ASSET', normalBalance: 'DEBIT', kind: 'POSTABLE', controlKind: 'NONE', role: 'CASH_DEFAULT', restricted: false, parentId: 'a1000', isActive: true },
+    {
+      id: 'a1000',
+      code: '1000',
+      name: 'Assets',
+      type: 'ASSET',
+      normalBalance: 'DEBIT',
+      kind: 'HEADER',
+      controlKind: 'NONE',
+      role: null,
+      restricted: false,
+      parentId: null,
+      isActive: true,
+    },
+    {
+      id: 'a1110',
+      code: '1110',
+      name: 'Cash in Hand',
+      type: 'ASSET',
+      normalBalance: 'DEBIT',
+      kind: 'POSTABLE',
+      controlKind: 'NONE',
+      role: 'CASH_DEFAULT',
+      restricted: false,
+      parentId: 'a1000',
+      isActive: true,
+    },
   ],
 }
 const TRIAL_BALANCE = {
   asOf: '2026-09-29',
-  lines: [{ accountId: 'a1110', code: '1110', name: 'Cash in Hand', type: 'ASSET', debit: '5000.0000', credit: '0.0000' }],
+  lines: [
+    {
+      accountId: 'a1110',
+      code: '1110',
+      name: 'Cash in Hand',
+      type: 'ASSET',
+      debit: '5000.0000',
+      credit: '0.0000',
+    },
+  ],
   totalDebit: '5000.0000',
   totalCredit: '5000.0000',
 }
@@ -73,7 +106,12 @@ describe('ChartOfAccounts', () => {
       if (url.startsWith('/api/accounts')) return Promise.resolve(jsonResponse(200, ACCOUNTS))
       if (url.startsWith('/api/reports/trial-balance'))
         return Promise.resolve(
-          jsonResponse(200, { asOf: '2026-09-29', lines: [], totalDebit: '0.0000', totalCredit: '0.0000' }),
+          jsonResponse(200, {
+            asOf: '2026-09-29',
+            lines: [],
+            totalDebit: '0.0000',
+            totalCredit: '0.0000',
+          }),
         )
       throw new Error(`unexpected fetch: ${url}`)
     })

@@ -8,8 +8,8 @@
  * tooltip when the whole affordance has zero available mutations).
  */
 import { useMemo } from 'react'
-import { RotateCw, ShieldAlert, ChevronRight, Landmark } from 'lucide-react'
-import { Banner, Button, PageHead, moneyFromString } from '@finsoft/ui'
+import { RotateCw, ShieldAlert } from 'lucide-react'
+import { Badge, Banner, Button, PageHead, Table, moneyFromString } from '@finsoft/ui'
 import { useNavigate } from '@/lib/router'
 import { listAccounts, getTrialBalance } from '@/lib/api/accounting-client'
 import { useApiQuery } from '@/lib/api/use-api-query'
@@ -26,7 +26,10 @@ interface ChartData {
 }
 
 async function loadChart(): Promise<ChartData> {
-  const [accountsRes, trialBalance] = await Promise.all([listAccounts(), getTrialBalance(todayIso())])
+  const [accountsRes, trialBalance] = await Promise.all([
+    listAccounts(),
+    getTrialBalance(todayIso()),
+  ])
   return {
     accounts: [...accountsRes.accounts],
     balances: new Map(trialBalance.lines.map((line) => [line.accountId, line])),
@@ -107,26 +110,12 @@ function ChartReady({ data }: { data: ChartData }) {
         </a>
         .
       </Banner>
-      <section className="coa2-table density-comfy">
-        <div className="coa2-tr head">
-          <span className="c-name">Account name</span>
-          <span>Code</span>
-          <span>Type</span>
-          <span>Normal</span>
-          <span className="num">Balance (PKR)</span>
-          <span>Status</span>
-          <span className="c-actions">Actions</span>
-        </div>
-        {rows.map(({ account, depth }) => (
-          <AccountRow
-            key={account.id}
-            account={account}
-            depth={depth}
-            balance={data.balances.get(account.id)}
-            onViewLedger={() => navigate(`/ledgers?account=${encodeURIComponent(account.code)}`)}
-          />
-        ))}
-      </section>
+      <Table
+        headers={['Account name', 'Code', 'Type', 'Normal', 'Balance (PKR)', 'Status', 'Actions']}
+        rows={rows.map(({ account, depth }) =>
+          accountRow(account, depth, data.balances.get(account.id), navigate),
+        )}
+      />
     </>
   )
 }
@@ -140,48 +129,36 @@ function netBalance(line: TrialBalanceLine | undefined): string | null {
   return '0.0000'
 }
 
-function AccountRow({
-  account,
-  depth,
-  balance,
-  onViewLedger,
-}: {
-  account: AccountDto
-  depth: number
-  balance: TrialBalanceLine | undefined
-  onViewLedger: () => void
-}) {
+function accountRow(
+  account: AccountDto,
+  depth: number,
+  balance: TrialBalanceLine | undefined,
+  navigate: (path: string) => void,
+) {
   const net = netBalance(balance)
-  return (
-    <div className={`coa2-tr depth-${depth} ${account.kind === 'HEADER' ? 'root' : ''}`}>
-      <span className="c-name" style={{ paddingLeft: 10 + (depth - 1) * 24 }}>
-        <span className={`coa2-icon ${account.kind === 'HEADER' ? 'green' : 'blue'}`}>
-          <Landmark />
-        </span>
-        <span className="coa2-name">
-          <b>{account.name}</b>
-        </span>
-      </span>
-      <span className="c-code">{account.code}</span>
-      <span>
-        <span className={`coa2-kind ${account.kind.toLowerCase()}`}>
-          {account.kind === 'HEADER' ? 'Header' : 'Postable'}
-        </span>
-      </span>
-      <span>{account.normalBalance === 'DEBIT' ? 'Dr' : 'Cr'}</span>
-      <span className="num c-balance">{net === null ? '—' : moneyFromString(net, { zeroAsDash: true })}</span>
-      <span>
-        <span className={`coa2-status ${account.isActive ? 'on' : 'off'}`}>
-          ● {account.isActive ? 'Active' : 'Inactive'}
-        </span>
-      </span>
-      <span className="c-actions">
-        {account.kind === 'POSTABLE' && (
-          <button type="button" className="linkable" onClick={onViewLedger}>
-            View ledger <ChevronRight size={12} />
-          </button>
-        )}
-      </span>
-    </div>
-  )
+  return [
+    <span style={{ paddingLeft: (depth - 1) * 20 }}>
+      <b>{account.name}</b>
+    </span>,
+    account.code,
+    <Badge tone={account.kind === 'HEADER' ? 'neutral' : 'info'}>
+      {account.kind === 'HEADER' ? 'Header' : 'Postable'}
+    </Badge>,
+    account.normalBalance === 'DEBIT' ? 'Dr' : 'Cr',
+    net === null ? '—' : moneyFromString(net, { zeroAsDash: true }),
+    <Badge tone={account.isActive ? 'good' : 'neutral'}>
+      {account.isActive ? 'Active' : 'Inactive'}
+    </Badge>,
+    account.kind === 'POSTABLE' ? (
+      <button
+        type="button"
+        className="linkable"
+        onClick={() => navigate(`/ledgers?account=${encodeURIComponent(account.code)}`)}
+      >
+        View ledger
+      </button>
+    ) : (
+      ''
+    ),
+  ]
 }

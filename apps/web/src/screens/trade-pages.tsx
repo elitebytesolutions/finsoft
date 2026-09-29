@@ -1,9 +1,28 @@
 'use client'
 import { useState, type FormEvent } from 'react'
 import { useNavigate } from '@/lib/router'
-import { ArrowRight, ClipboardCheck, Clock3, LockKeyhole, TrendingUp, Users, WalletCards } from 'lucide-react'
+import {
+  ArrowRight,
+  ClipboardCheck,
+  Clock3,
+  LockKeyhole,
+  TrendingUp,
+  Users,
+  WalletCards,
+} from 'lucide-react'
 import { employees } from '@/mocks/api'
-import { Badge, Banner, Button, Field, Kpi, Modal, PageHead, Panel, Table, TextInput } from '@finsoft/ui'
+import {
+  Badge,
+  Banner,
+  Button,
+  Field,
+  Kpi,
+  Modal,
+  PageHead,
+  Panel,
+  Table,
+  TextInput,
+} from '@finsoft/ui'
 import { money } from '@finsoft/ui'
 import { useApiQuery } from '@/lib/api/use-api-query'
 import { closePeriod, listPeriods, reopenPeriod } from '@/lib/api/accounting-client'
@@ -276,8 +295,8 @@ function ReopenDialog({
     <Modal title={`Reopen ${period.label}`} onClose={onClose}>
       <form onSubmit={submit} noValidate>
         <p>
-          Reopening {period.label} allows postings into it again. Only the Owner role can do
-          this. State why — this is audited.
+          Reopening {period.label} allows postings into it again. Only the Owner role can do this.
+          State why — this is audited.
         </p>
         <Field label="Reason" htmlFor="reopen-reason" required error={error ?? undefined}>
           <TextInput id="reopen-reason" value={reason} onChange={setReason} required />

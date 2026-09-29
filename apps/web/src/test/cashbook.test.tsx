@@ -6,7 +6,10 @@ import { CashBook } from '@/screens/cashbook'
 import { setAccessToken } from '@/lib/api/session'
 
 function jsonResponse(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  })
 }
 
 beforeEach(() => {
@@ -35,8 +38,32 @@ describe('CashBook', () => {
         return Promise.resolve(
           jsonResponse(200, {
             accounts: [
-              { id: 'a1110', code: '1110', name: 'Cash in Hand', type: 'ASSET', normalBalance: 'DEBIT', kind: 'POSTABLE', controlKind: 'NONE', role: 'CASH_DEFAULT', restricted: false, parentId: null, isActive: true },
-              { id: 'a1120', code: '1120', name: 'Bank', type: 'ASSET', normalBalance: 'DEBIT', kind: 'POSTABLE', controlKind: 'NONE', role: 'BANK_DEFAULT', restricted: false, parentId: null, isActive: true },
+              {
+                id: 'a1110',
+                code: '1110',
+                name: 'Cash in Hand',
+                type: 'ASSET',
+                normalBalance: 'DEBIT',
+                kind: 'POSTABLE',
+                controlKind: 'NONE',
+                role: 'CASH_DEFAULT',
+                restricted: false,
+                parentId: null,
+                isActive: true,
+              },
+              {
+                id: 'a1120',
+                code: '1120',
+                name: 'Bank',
+                type: 'ASSET',
+                normalBalance: 'DEBIT',
+                kind: 'POSTABLE',
+                controlKind: 'NONE',
+                role: 'BANK_DEFAULT',
+                restricted: false,
+                parentId: null,
+                isActive: true,
+              },
             ],
           }),
         )
@@ -86,7 +113,19 @@ describe('CashBook', () => {
         return Promise.resolve(
           jsonResponse(200, {
             accounts: [
-              { id: 'a1110', code: '1110', name: 'Cash in Hand', type: 'ASSET', normalBalance: 'DEBIT', kind: 'POSTABLE', controlKind: 'NONE', role: null, restricted: false, parentId: null, isActive: true },
+              {
+                id: 'a1110',
+                code: '1110',
+                name: 'Cash in Hand',
+                type: 'ASSET',
+                normalBalance: 'DEBIT',
+                kind: 'POSTABLE',
+                controlKind: 'NONE',
+                role: null,
+                restricted: false,
+                parentId: null,
+                isActive: true,
+              },
             ],
           }),
         )
@@ -115,6 +154,8 @@ describe('CashBook', () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(200, { accounts: [] }))
 
     renderScreen()
-    await waitFor(() => expect(screen.getByText(/No account holds the Cash in Hand role/)).toBeInTheDocument())
+    await waitFor(() =>
+      expect(screen.getByText(/No account holds the Cash in Hand role/)).toBeInTheDocument(),
+    )
   })
 })

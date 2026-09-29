@@ -9,7 +9,9 @@ import {
 } from '@/lib/accounting/account-tree'
 import type { AccountDto } from '@/lib/api/accounting-types'
 
-function account(overrides: Partial<AccountDto> & Pick<AccountDto, 'id' | 'code' | 'name'>): AccountDto {
+function account(
+  overrides: Partial<AccountDto> & Pick<AccountDto, 'id' | 'code' | 'name'>,
+): AccountDto {
   return {
     type: 'ASSET',
     normalBalance: 'DEBIT',

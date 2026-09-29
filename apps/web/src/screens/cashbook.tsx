@@ -95,11 +95,20 @@ function CashBookReady({ accounts }: { accounts: AccountDto[] }) {
   return <CashLedger account={cash} usedInterimLookup={!byRole} />
 }
 
-function CashLedger({ account, usedInterimLookup }: { account: AccountDto; usedInterimLookup: boolean }) {
+function CashLedger({
+  account,
+  usedInterimLookup,
+}: {
+  account: AccountDto
+  usedInterimLookup: boolean
+}) {
   const [from] = useState(startOfMonthIso)
   const [to] = useState(todayIso)
   const [pages, setPages] = useState<LedgerResponse[]>([])
-  const { state, reload } = useApiQuery(() => getLedger(account.id, { from, to }), [account.id, from, to])
+  const { state, reload } = useApiQuery(
+    () => getLedger(account.id, { from, to }),
+    [account.id, from, to],
+  )
 
   useEffect(() => {
     if (state.status === 'ready') setPages([state.data])
@@ -157,9 +166,9 @@ function CashLedger({ account, usedInterimLookup }: { account: AccountDto; usedI
     <>
       {usedInterimLookup && (
         <Banner tone="warn">
-          Resolved by code {CASH_CODE_INTERIM}, not by role — no account in this tenant's chart holds
-          the {CASH_ROLE} role. If this tenant's chart ever diverges from the standard template, this
-          page may be looking at the wrong account.
+          Resolved by code {CASH_CODE_INTERIM}, not by role — no account in this tenant's chart
+          holds the {CASH_ROLE} role. If this tenant's chart ever diverges from the standard
+          template, this page may be looking at the wrong account.
         </Banner>
       )}
       <div className="al-stats">
@@ -182,7 +191,9 @@ function CashLedger({ account, usedInterimLookup }: { account: AccountDto; usedI
       </div>
 
       {allLines.length === 0 ? (
-        <div className="empty-state">No cash movements between {from} and {to}.</div>
+        <div className="empty-state">
+          No cash movements between {from} and {to}.
+        </div>
       ) : (
         <div className="table-wrap">
           <table>
