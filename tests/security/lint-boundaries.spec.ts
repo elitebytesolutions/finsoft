@@ -252,6 +252,189 @@ describe('packages/permissions may not construct queries either (Architecture se
   })
 })
 
+const KERNEL_LOGIC = 'packages/accounting-kernel keeps its query bodies in src/queries/**'
+const JOURNAL = 'journal_entries and journal_lines are written only by'
+const PARTIES = 'ADR-0026 Compliance 7'
+
+describe('packages/accounting-kernel: query bodies only in src/queries/** (ADR-0005, ADR-0026, M2-A)', () => {
+  /*
+   * The kernel DOES build queries — ADR-0005 puts the journal writes in it
+   * and ADR-0026 puts registerParty's INSERT in it, not in packages/database.
+   * What it may not do is build them in the posting pipeline, the reversal
+   * engine or a rule. A handle arriving through a callback is invisible to
+   * dependency-cruiser, so this is the only mechanism that sees it.
+   */
+  it('catches a builder query in kernel business logic', async () => {
+    const messages = await messagesFor(
+      'packages/accounting-kernel/src/posting-engine.ts',
+      `import type { TenantTx } from '@finsoft/database'
+       export function post(tx: TenantTx) {
+         return tx.selectFrom('journal_entries').select('id').execute()
+       }`,
+    )
+    expect(matching(messages, KERNEL_LOGIC)).toHaveLength(1)
+  })
+
+  it('catches an sql`` tag in kernel business logic', async () => {
+    const messages = await messagesFor(
+      'packages/accounting-kernel/src/rules/journal-voucher.ts',
+      "import { sql } from 'kysely'\nexport const q = sql`select 1`",
+    )
+    expect(matching(messages, KERNEL_LOGIC)).toHaveLength(1)
+  })
+
+  it('catches the parties INSERT placed in kernel logic rather than src/queries/', async () => {
+    const messages = await messagesFor(
+      'packages/accounting-kernel/src/parties.ts',
+      `export function registerParty(tx: any) { return tx.insertInto('parties').values({}).execute() }`,
+    )
+    expect(matching(messages, KERNEL_LOGIC)).toHaveLength(1)
+  })
+
+  it('leaves src/queries/** alone — the one place the journal and parties are written', async () => {
+    const messages = await messagesFor(
+      'packages/accounting-kernel/src/queries/journal-writes.ts',
+      "import { sql } from 'kysely'\n" +
+        `export async function w(tx: any) {
+           await tx.insertInto('journal_entries').values({}).execute()
+           await tx.insertInto('journal_lines').values({}).execute()
+           await tx.updateTable('journal_entries').set({}).execute()
+           await tx.insertInto('parties').values({}).execute()
+           await sql\`SAVEPOINT s\`.execute(tx)
+         }`,
+    )
+    expect(matching(messages, KERNEL_LOGIC)).toEqual([])
+    expect(matching(messages, JOURNAL)).toEqual([])
+    expect(matching(messages, PARTIES)).toEqual([])
+  })
+
+  it('still bans auth_lookup in the kernel (a later block must restate it, not drop it)', async () => {
+    const messages = await messagesFor(
+      'packages/accounting-kernel/src/reversal.ts',
+      `export const s = 'select * from auth_lookup.resolve_refresh($1)'`,
+    )
+    expect(matching(messages, 'auth_lookup is migration 006')).toHaveLength(1)
+  })
+
+  it('does not fire on a kernel spec file', async () => {
+    const messages = await messagesFor(
+      'packages/accounting-kernel/src/post.spec.ts',
+      `export function w(tx: any) { return tx.selectFrom('journal_entries') }`,
+    )
+    expect(matching(messages, KERNEL_LOGIC)).toEqual([])
+  })
+})
+
+describe('the journal is written only by the kernel (ADR-0005 Compliance)', () => {
+  it.each([
+    [
+      'modules/sales/infrastructure/invoice-repo.ts',
+      `export const w = (tx: any) => tx.insertInto('journal_entries').values({}).execute()`,
+    ],
+    [
+      'modules/sales/infrastructure/invoice-repo.ts',
+      `export const w = (tx: any) => tx.insertInto('journal_lines as jl').values({}).execute()`,
+    ],
+    [
+      'modules/banking/infrastructure/repo.ts',
+      `export const w = (tx: any) => tx.updateTable('journal_entries').set({}).execute()`,
+    ],
+    [
+      'modules/banking/infrastructure/repo.ts',
+      `export const w = (tx: any) => tx.deleteFrom('journal_lines').execute()`,
+    ],
+    [
+      'apps/api/src/admin/fix.ts',
+      "import { sql } from 'kysely'\nexport const q = sql`INSERT INTO journal_lines (debit) VALUES (1)`",
+    ],
+    [
+      'apps/worker/src/jobs/import.ts',
+      `export const q = 'UPDATE journal_entries SET narration = $1'`,
+    ],
+    [
+      'packages/reporting/src/ledger.ts',
+      `export const q = \`delete from public.journal_entries where id = $1\``,
+    ],
+    [
+      'packages/database/src/accounting/customers.ts',
+      `export const w = (tx: any) => tx.insertInto('journal_entries').values({}).execute()`,
+    ],
+    ['tools/seed/backfill.mjs', `export const q = 'insert into journal_entries (id) values ($1)'`],
+  ])('fires in %s', async (file, code) => {
+    expect(matching(await messagesFor(file, code), JOURNAL), `${file}: ${code}`).toHaveLength(1)
+  })
+
+  it('does not fire on a read, or on prose that merely names the table', async () => {
+    const messages = await messagesFor(
+      'modules/sales/infrastructure/invoice-repo.ts',
+      `export const r = (tx: any) => tx.selectFrom('journal_entries').select('id').execute()
+       export const note = 'balances come from journal_lines'`,
+    )
+    expect(matching(messages, JOURNAL)).toEqual([])
+  })
+
+  it('fires inside packages/database too — no production exemption remains (ADR-0005)', async () => {
+    // The former named exemption for packages/database/src/accounting/journal.ts
+    // is gone with insertJournalEntry/markEntryReversed: every module may
+    // import packages/database, so a journal write there is a kernel bypass.
+    for (const file of [
+      'packages/database/src/accounting/journal.ts',
+      'packages/database/src/accounting/ledger.ts',
+    ]) {
+      const messages = await messagesFor(
+        file,
+        `export const w = (tx: any) => tx.insertInto('journal_entries').values({}).execute()`,
+      )
+      expect(matching(messages, JOURNAL), file).toHaveLength(1)
+    }
+  })
+})
+
+describe('the parties register is written only by the kernel (ADR-0026 Compliance 7)', () => {
+  it.each([
+    [
+      'modules/sales/infrastructure/customer-repo.ts',
+      `export const w = (tx: any) => tx.insertInto('parties').values({}).execute()`,
+    ],
+    [
+      'modules/sales/infrastructure/customer-repo.ts',
+      `export const w = (tx: any) => tx.updateTable('parties').set({}).execute()`,
+    ],
+    [
+      'modules/sales/infrastructure/customer-repo.ts',
+      `export const w = (tx: any) => tx.deleteFrom('parties').execute()`,
+    ],
+    // Including inside packages/database, which every module may import.
+    [
+      'packages/database/src/accounting/customers.ts',
+      `export const w = (tx: any) => tx.insertInto('parties').values({}).execute()`,
+    ],
+    [
+      'packages/database/src/accounting/journal.ts',
+      `export const w = (tx: any) => tx.insertInto('parties').values({}).execute()`,
+    ],
+    [
+      'modules/sales/infrastructure/customer-repo.ts',
+      "import { sql } from 'kysely'\nexport const q = sql`select id from parties where tenant_id = ${'x'}`",
+    ],
+    [
+      'apps/api/src/admin/fix.ts',
+      `export const q = 'INSERT INTO parties (tenant_id, party_type) VALUES ($1, $2)'`,
+    ],
+  ])('fires in %s', async (file, code) => {
+    expect(matching(await messagesFor(file, code), PARTIES), `${file}: ${code}`).toHaveLength(1)
+  })
+
+  it('does not fire on a builder read, or on unrelated text', async () => {
+    const messages = await messagesFor(
+      'modules/sales/infrastructure/customer-repo.ts',
+      `export const r = (tx: any) => tx.selectFrom('parties').select('id').execute()
+       export const note = 'third parties are not parties to this contract'`,
+    )
+    expect(matching(messages, PARTIES)).toEqual([])
+  })
+})
+
 describe('connection ownership (ADR-0013, ADR-0004)', () => {
   it('catches a transaction opened outside packages/database', async () => {
     const messages = await messagesFor(
