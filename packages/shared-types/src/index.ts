@@ -23,3 +23,20 @@ export interface AuthContext {
   /** Whether this session completed MFA. */
   readonly mfa: boolean
 }
+
+export type {
+  AccountDto,
+  AccountLedgerLineDto,
+  AccountLedgerResponseDto,
+  AccountsResponseDto,
+  FiscalPeriodDto,
+  JournalEntryDto,
+  JournalEntryWithLinesDto,
+  JournalLineDto,
+  JournalListResponseDto,
+  PeriodsResponseDto,
+  PostJournalVoucherResponseDto,
+  ReverseJournalEntryResponseDto,
+  TrialBalanceLineDto,
+  TrialBalanceResponseDto,
+} from './accounting.ts'

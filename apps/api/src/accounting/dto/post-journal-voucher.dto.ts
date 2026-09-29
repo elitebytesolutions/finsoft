@@ -6,15 +6,27 @@ import { z } from 'zod'
  * This schema validates only the ENVELOPE: occurredAt is a calendar-date
  * shape, narration/reference are strings of the right JS type, lines is a
  * non-empty array. It deliberately does NOT validate line content (exactly
- * one side per line, amount scale/sign, balance, account eligibility) —
+ * one side per line, amount scale/sign, balance, account eligibility) -
  * docs/posting-rules/journal-voucher.md §3 rows 1-14 are the kernel's own
  * validation (validateJournalVoucherPayload / runPostingPipeline), and
  * letting the kernel see the raw payload is what makes its exact
  * PostingErrorCode (AMOUNT_SCALE, JV_ZERO_LINE, JV_UNBALANCED, ...) the
  * thing a caller actually sees, rather than a generic zod rejection that
- * loses the distinction. `.strict()` still gives ADR-0004's "an unknown key
- * is a 400" at the envelope level; the kernel's own requireKnownKeys gives
- * it again one level down, inside `payload`.
+ * loses the distinction. The kernel's own requireKnownKeys gives the same
+ * "unknown key" rejection again one level down, inside `payload`.
+ *
+ * `.strict()` below is a REJECTION, not the silent-drop behaviour
+ * ZodValidationPipe's own header describes for a non-strict schema - every
+ * schema in apps/api/src/accounting/dto is `.strict()`, so an unrecognised
+ * top-level key fails validation outright (400 validation_failed) rather
+ * than being dropped and the request proceeding without it.
+ *
+ * Corrected per the Council review, 2026-09-29: an earlier version of this
+ * comment cited "ADR-0004's 'an unknown key is a 400'". That ADR does not
+ * say that - ADR-0004 is row-level security, and its §76 is specifically
+ * about `tenant_id` never being honoured from a request body, not a general
+ * unknown-key rule. The unknown-key-is-a-400 behaviour here is this
+ * codebase's `.strict()` convention, not something any ADR requires.
  *
  * referenceType/referenceId are never part of this schema: the controller
  * sets referenceType = 'journal_voucher' and mints referenceId itself

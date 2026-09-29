@@ -50,34 +50,43 @@ takes the next three, in this merge order:
 
 | # | File | Lane | Contents |
 |---|---|---|---|
-| **014** | `014_create_customers.sql` | M3-C | `customers`; RLS enabled + forced; composite `UNIQUE (tenant_id, id)` as the FK target; and **the party foreign key from `journal_lines`**, in whichever form ADR-0026 decides (§4) |
-| **015** | `015_create_sales_invoices.sql` | M3-P | `sales_invoices`, `sales_invoice_lines`; status-transition and immutability triggers |
-| **016** | `016_create_customer_receipts.sql` | M3-P | `customer_receipts` (with `DRAFT` and `CANCELLED` states and the cancel columns, M3-Q1), `customer_receipt_draft_allocations` (proposals), `customer_receipt_allocations`; transition triggers |
+| **015** | `015_create_customers.sql` | M3-C | `customers`; RLS enabled + forced; composite `UNIQUE (tenant_id, id)` as the FK target; and **the party foreign key from `journal_lines`**, in whichever form ADR-0026 decides (§4) |
+| **016** | `016_create_sales_invoices.sql` | M3-P | `sales_invoices`, `sales_invoice_lines`; status-transition and immutability triggers |
+| **017** | `017_create_customer_receipts.sql` | M3-P | `customer_receipts` (with `DRAFT` and `CANCELLED` states and the cancel columns, M3-Q1), `customer_receipt_draft_allocations` (proposals), `customer_receipt_allocations`; transition triggers |
 
 The column-level shape of each table is in [modules.md](modules.md) §7. The Database seat owns the
 SQL, the constraint names and the triggers.
 
-**Reservation rule.** 014–016 are reserved for M3 from the date of this pack. M2-A may not claim
+**Reservation rule.** 015–017 are reserved for M3 from the date of this pack. M2-A may not claim
 them. If M2-A needs a fifth migration, that is a Product Owner renumbering decision taken
 **before** M3-C opens its PR, on the precedent of the M1 numbering decision (2026-09-26). No lane
 renumbers on its own, and a number is never changed after review, because `CHECKSUMS` pins it.
 
+**Renumbered 2026-09-29** (Architecture + Database/Security seats, Council review of M2-B): this
+pack originally reserved 014–016. Migration **014** was taken by the M2-B Council ruling's
+permission backfill (`account.view`/`period.view`/`period.close`/`period.reopen`,
+`database/migrations/014_add_account_and_period_permissions.sql`, Owner: `packages/permissions`) —
+not a module migration, so it did not need to wait for M3-C. M3's three migrations move up by one:
+`customers` is now 015, `sales_invoices` is now 016, `customer_receipts` is now 017. See
+[ADR-0028](../../adr/ADR-0028-module-packaging-and-runtime.md) §9's dated amendment and
+[docs/BOARD.md](../../BOARD.md).
+
 ## 3. Lanes
 
 ```
-                 ┌── M3-C  customers module + module platform ──┐ merges first (014)
+                 ┌── M3-C  customers module + module platform ──┐ merges first (015)
 M2-A merged ─────┤                                               ├──► M3 demo ──► M4 UI
 ADR-0026 Accepted│                                               │
-ADR-0028 Accepted└── M3-P  receivables: invoice + receipt ───────┘ merges second (015, 016)
+ADR-0028 Accepted└── M3-P  receivables: invoice + receipt ───────┘ merges second (016, 017)
                       posting, T3, ONE lane
                       M3-Q  invariant 9 + golden runner ── parallel with M3-P, tests only
 ```
 
 | Lane | Worktree | Tier | Delivers | Seats |
 |---|---|---|---|---|
-| **M3-C Customers** | `m3-customers` | T3 by path (`modules/*/domain`, `application`), T2 for 014 | The module platform (§5 conditions) · migration 014 · `modules/customers` · customer endpoints · customer ledger endpoint · `GET /api/me/permissions` ([api-contract.md](api-contract.md) S1) | Architecture · Database/Security |
-| **M3-P Posting** | `m3-posting` | **T3** | Migrations 015, 016 · kernel rules `SALE_POSTED/service@1` and `CUSTOMER_PAYMENT_RECEIVED@1` switched from `RULE_NOT_ENABLED` to implemented · `modules/receivables` · invoice and receipt endpoints · lock-registry entries | Accounting · Architecture · Database/Security |
-| **M3-Q QA** | `m3-qa` | T3 (`tests/accounting/**`) | Invariant 9 AR half in the FinancialInvariantSuite · the `posting-scenario/v1` runner executing P04, P05, P06, P08 (invoice steps), P09, P10 · adversarial tenant-isolation and RBAC suites for 014–016 and every M3 route | Accounting · Database/Security |
+| **M3-C Customers** | `m3-customers` | T3 by path (`modules/*/domain`, `application`), T2 for 015 | The module platform (§5 conditions) · migration 015 · `modules/customers` · customer endpoints · customer ledger endpoint · `GET /api/me/permissions` ([api-contract.md](api-contract.md) S1) | Architecture · Database/Security |
+| **M3-P Posting** | `m3-posting` | **T3** | Migrations 016, 017 · kernel rules `SALE_POSTED/service@1` and `CUSTOMER_PAYMENT_RECEIVED@1` switched from `RULE_NOT_ENABLED` to implemented · `modules/receivables` · invoice and receipt endpoints · lock-registry entries | Accounting · Architecture · Database/Security |
+| **M3-Q QA** | `m3-qa` | T3 (`tests/accounting/**`) | Invariant 9 AR half in the FinancialInvariantSuite · the `posting-scenario/v1` runner executing P04, P05, P06, P08 (invoice steps), P09, P10 · adversarial tenant-isolation and RBAC suites for 015–017 and every M3 route | Accounting · Database/Security |
 
 **Why M3-P is one lane.** Invoice and receipt share the allocation table, the invoice row lock,
 the reversal precondition that couples them (PO-Q1 Option A) and the two kernel rules. Splitting
@@ -87,7 +96,7 @@ them puts two agents on the same lock order and the same kernel files at once, w
 **Why M3-C and M3-P can run side by side.** M3-P depends on customers only through the published
 `CustomerDirectory` interface, which [modules.md](modules.md) §3 fixes now. M3-P codes against it
 from day one and wires the real implementation once M3-C merges. M3-P's PR does not merge before
-M3-C's, because 015 references 014.
+M3-C's, because 016 references 015.
 
 **Why M3-Q is separate.** It writes only under `tests/`, so it cannot collide with M3-P. It also
 keeps the reconciliation independent of the code it reconciles: the author of the subledger does
@@ -137,7 +146,7 @@ M3-C:
 | | Parties registry (kernel-owned) | Direct FK (module-owned `customers`) |
 |---|---|---|
 | `CreateCustomer` application service | Calls the kernel's `parties.register(tx, { id, type: 'CUSTOMER' })` **before** inserting the customer, in the same transaction | Inserts the customer only |
-| Migration 014 | Creates `customers` with `FOREIGN KEY (tenant_id, id) REFERENCES parties (tenant_id, id)`. `parties` itself is in 012 if ADR-0026 is Accepted before 012 merges, and at the head of 014 otherwise | Creates `customers`, then adds the composite FK `journal_lines (tenant_id, party_id) → customers (tenant_id, id)` |
+| Migration 015 | Creates `customers` with `FOREIGN KEY (tenant_id, id) REFERENCES parties (tenant_id, id)`. `parties` itself is in 012 if ADR-0026 is Accepted before 012 merges, and at the head of 015 otherwise | Creates `customers`, then adds the composite FK `journal_lines (tenant_id, party_id) → customers (tenant_id, id)` |
 
 Nothing else in this pack changes: not the receivables module, not the API, not the UI and not
 the invariant test. If ADR-0026 lands a third shape, only this table is revisited.

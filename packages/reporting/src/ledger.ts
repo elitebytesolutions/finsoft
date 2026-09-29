@@ -1,4 +1,5 @@
 import {
+  accountLedgerBalanceThrough,
   accountLedgerLines,
   accountOpeningBalance,
   LEDGER_PAGE_MAX,
@@ -52,13 +53,6 @@ export interface AccountLedgerOptions {
   readonly limit?: number
   /** Pass back `AccountLedgerResult.next` unchanged to fetch the next page. */
   readonly after?: LedgerCursor | null
-  /**
-   * Required when `after` is set: `AccountLedgerResult.closingBalance` from
-   * the previous page. Running balance cannot be recomputed from `from`
-   * alone once paging past it — the opening balance is only correct for
-   * page 1.
-   */
-  readonly carryForwardBalance?: string
 }
 
 export interface AccountLedgerResult {
@@ -97,18 +91,45 @@ export async function accountLedger(
   const limit = options.limit ?? LEDGER_PAGE_MAX
   const after = options.after ?? null
 
+  /*
+   * M2-B Council ruling, 2026-09-29: the carry-forward balance for a resumed
+   * page is RECOMPUTED here from the cursor's POSITION, never trusted from
+   * the caller. It is the SUM OF TWO PARTS, both queried fresh every time:
+   *
+   *   accountOpeningBalance(from)        everything strictly before `from`
+   *   accountLedgerBalanceThrough(from,  everything from `from` through the
+   *     after)                           cursor row, inclusive
+   *
+   * accountLedgerBalanceThrough's own lower bound is `from`, not account
+   * inception — it does NOT already include the opening balance, so both
+   * calls are required on every resumed page. (A defect fixed here, 2026-
+   * 09-29: an earlier version of this comment claimed the through-sum
+   * alone was "exactly" the running balance a single unpaged pass would
+   * accumulate, which is only true when the opening balance is zero — from
+   * page 2 onward with a non-zero opening balance, every running balance
+   * and the closing balance were understated by exactly that opening
+   * balance. Caught by the Accounting seat's re-review;
+   * tests/integration/accounting-api.spec.ts's two-pages-equal-one-page
+   * case now uses a non-zero opening balance specifically so this cannot
+   * regress silently again.)
+   */
+  const opening = await accountOpeningBalance(tx, tenantId, accountId, options.from, partyId)
+  const openingBalanceMoney = Money.subtract(Money.from(opening.debit), Money.from(opening.credit))
+
   let running: MoneyAmount
   if (after === null) {
-    const opening = await accountOpeningBalance(tx, tenantId, accountId, options.from, partyId)
-    running = Money.subtract(Money.from(opening.debit), Money.from(opening.credit))
+    running = openingBalanceMoney
   } else {
-    if (options.carryForwardBalance == null) {
-      throw new Error(
-        'accountLedger: resuming with `after` requires `carryForwardBalance` (the previous ' +
-          "page's closingBalance) — the opening-balance query is only correct for page 1.",
-      )
-    }
-    running = Money.from(options.carryForwardBalance)
+    const through = await accountLedgerBalanceThrough(
+      tx,
+      tenantId,
+      accountId,
+      options.from,
+      after,
+      partyId,
+    )
+    const throughMoney = Money.subtract(Money.from(through.debit), Money.from(through.credit))
+    running = Money.add(openingBalanceMoney, throughMoney)
   }
   const openingBalance = Money.serialize(running, 4)
 

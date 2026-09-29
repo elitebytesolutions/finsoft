@@ -1,7 +1,10 @@
 # M2-B — Accounting HTTP API contract
 
 **Lane:** M2-B · **Branch:** `feature/M2-B-accounting-api` · **Consumes:** `packages/accounting-kernel`,
-`packages/reporting`, read-only additions to `packages/database/src/accounting/**`
+`packages/reporting` (carry-forward balance logic added by the Council ruling below),
+`packages/permissions` (`account.view`/`period.view`/`period.close`/`period.reopen`, added by the same
+ruling), `packages/shared-types` (response DTOs), read-only additions to
+`packages/database/src/accounting/**`, and one migration (`014`, permission backfill).
 
 This is the contract the M2-S screens lane builds against. It is pushed before any endpoint code, per
 the M2-B brief. Later changes land as separate, clearly named commits on top of this one.
@@ -15,14 +18,31 @@ the M2-B brief. Later changes land as separate, clearly named commits on top of 
 | Post a journal voucher and reverse it | **Built** — §2 |
 | See an account's ledger with a running balance | **Built** — §3 |
 | Run a balanced trial balance | **Built** — §4 |
-| View and add accounts in the chart of accounts | **Partially blocked** — §5. Viewing is specified below but not yet wired (no permission code — see §6). Adding an account is **not built**: it conflicts with an APPROVED posting rule and has no permission code. |
-| See the fiscal periods, close/reopen where permitted | **Blocked** — §6. No permission code exists for any of the three actions. |
+| View accounts in the chart of accounts | **Built** — §5 (`GET /api/accounts`, `account.view`) |
+| Add an account | **Not built, staying that way.** Conflicts with `coa-standard.md` §5 ("the MVP ships the chart read-only to users"). See §5. |
+| See the fiscal periods, close/reopen where permitted | **Built** — §6 (`period.view`/`period.close`/`period.reopen`). There is no lock route in M2 (Council ruling). |
 
-§6 is a **STOP AND ASK**, raised to the coordinator rather than guessed at, per this lane's own brief
-("If a needed code is missing … STOP and ask me: the permission model is Council-owned. Do not invent
-one") and per CLAUDE.md ("an invariant appears violated by existing code … two docs contradict each
-other"). Endpoints 1 and 5 below are specified in full so the M2-S screens lane has the shape to build
-against once the blocker clears, but **no route exists for them yet** — calling them 404s.
+**Update, 2026-09-29 — Council ruling closes the permission blocker.** All three Council seats
+(Accounting: changes required · Security: approved with conditions · Architecture: rejected, narrowly)
+reviewed the first version of this API at commit `3daed22`. The posting paths were sound; the review's
+binding fix list is implemented in the commit(s) that follow `3daed22` on this branch. Two changes of
+note for anyone who read the first version of this document:
+
+1. **The ledger cursor no longer carries a financial number.** §3 describes the corrected shape —
+   `packages/reporting` now recomputes a resumed page's carry-forward balance from the cursor's
+   *position*, server-side, every time. The earlier shape (an opaque `closingBalance` round-tripped
+   through the cursor) is gone.
+2. **`account.view`, `period.view`, `period.close`, `period.reopen` are now real, catalogued
+   permissions** (`packages/permissions/src/catalog.ts`), backfilled into every existing tenant's
+   system roles by `database/migrations/014_add_account_and_period_permissions.sql`. §5/§6 below
+   describe the endpoints those codes unblocked. `POST /api/accounts` is the one item that stays
+   not-built — that was a scope ruling, not a permission gap, and the ruling did not change it.
+
+**`3daed22` merged into `develop` before this fix list landed** (PR #35, `develop` is now past that
+commit). Anyone reading `develop` directly between `3daed22` and this branch's own merge is reading the
+UNFIXED ledger cursor described in point 1 above — a cursor whose `closingBalance` a client could forge
+to make a resumed page report a wrong running balance. This branch's merge into `develop` is what
+closes that window.
 
 ---
 
@@ -35,11 +55,15 @@ against once the blocker clears, but **no route exists for them yet** — callin
 - **Permission:** every route below declares exactly one `@RequirePermission(code)` from
   `packages/permissions`' MVP catalogue. A caller lacking it gets `403`.
 - **Validation:** every request body and query string is parsed by a `zod` schema via
-  `ZodValidationPipe`, which **strips** any key the schema does not declare and rejects an unknown key
-  in the schemas below that are `.strict()` with `400 validation_failed`. Money-shaped fields inside a
-  posting payload (`lines[].debit`/`credit`) are left to the kernel's own validator rather than
-  double-validated here, so the kernel's exact `PostingErrorCode` (not a generic zod message) is what
-  a caller sees for a business-rule rejection — see §7.
+  `ZodValidationPipe`. Every schema below is `.strict()`: an unrecognised key **fails validation**
+  (`400 validation_failed`) rather than being silently dropped. (`ZodValidationPipe`'s own strip
+  behaviour applies only to a *non*-strict schema — nothing on this API uses one, so "strips" does not
+  describe what actually happens here; corrected per the Council review, 2026-09-29, which also found
+  and removed a false ADR-0004 citation for this same behaviour — see
+  `post-journal-voucher.dto.ts`'s header.) Money-shaped fields inside a posting payload
+  (`lines[].debit`/`credit`) are left to the kernel's own validator rather than double-validated here,
+  so the kernel's exact `PostingErrorCode` (not a generic zod message) is what a caller sees for a
+  business-rule rejection — see §7.
 - **Money:** every amount crosses the wire as a decimal string at the posting-rule's scale (4 dp for
   journal amounts), never a JSON number (ADR-0011/0014). A JSON number in a money field is rejected.
 - **Dates:** `YYYY-MM-DD` calendar dates, tenant-timezone business dates — never a timestamp, never
@@ -274,6 +298,38 @@ negative string, e.g. `"-6000.0000"`.
 
 `404 account_not_found` for an unknown or foreign `accountId`.
 
+### The cursor carries no financial number (Council ruling, 2026-09-29)
+
+`nextCursor` is opaque base64url JSON, decoded and validated in full on every use
+(`apps/api/src/accounting/cursor.ts`):
+
+```json
+{
+  "occurredAt": "2026-08-02", "createdAt": "2026-08-02T10:15:00.123456Z",
+  "entryNumber": "JV-2027-000004", "lineNumber": 1,
+  "issuedFor": { "accountId": "uuid", "from": "2026-08-01", "to": "2026-08-31", "partyId": null }
+}
+```
+
+- **No `closingBalance` field, ever.** The first version of this endpoint trusted a client-supplied
+  `closingBalance` round-tripped through the cursor to seed the next page's running balance — a client
+  could forge it, and a resumed page would silently report a wrong balance for every line after the
+  first. `packages/reporting`'s `accountLedger` now RECOMPUTES the carry-forward balance from the
+  cursor's *position* alone (`accountLedgerBalanceThrough` in `packages/database`), every time. No
+  balance travels in either direction except in the response body a caller already has permission to see.
+- **Format-validated field by field**: `occurredAt`/`issuedFor.from`/`issuedFor.to` are real calendar
+  dates, `createdAt` is a real ISO instant at microsecond precision, `entryNumber` matches the document
+  number shape, `lineNumber` is a positive integer, `issuedFor.accountId`/`issuedFor.partyId` are uuid-
+  shaped or null. Any failure is `400 invalid_cursor` — never a PostgreSQL type-cast 500.
+- **Bound to the request that presented it.** `issuedFor` must equal the current `accountId` (path) and
+  `from`/`to`/`partyId` (query) exactly. A cursor issued for a different account, or under a different
+  date range or party filter, is `400 invalid_cursor` — the two failure modes (malformed vs.
+  mismatched) are deliberately indistinguishable in the response, so a forger learns nothing either way.
+
+The register cursor (`GET /api/journals`'s `nextCursor`) is validated the same way (format only — it
+carries no `issuedFor`, since the register has no per-request resource context to bind to): `occurredAt`
+a real date, `createdAt` a real ISO instant, `id` a real uuid.
+
 ---
 
 ## 4. Reports
@@ -304,28 +360,29 @@ tolerance to get to green.
 
 ---
 
-## 5. Chart of accounts — SPECIFIED, NOT BUILT (see §6)
+## 5. Chart of accounts
 
 ### `GET /api/accounts`
 
-Would return the full tree (headers and postable accounts), ordered by code — `listAllAccounts` already
-exists in `packages/database/src/accounting/accounts.ts` and needs no new query. Shape:
+**Permission:** `account.view` (Council ruling, 2026-09-29 — `packages/permissions/src/catalog.ts`,
+backfilled to every existing tenant by migration 014)
+
+The full tree (headers and postable accounts), ordered by code. Build the tree client-side from
+`parentId`.
 
 ```json
 {
   "accounts": [
-    { "id": "uuid", "code": "1000", "name": "Assets", "type": "ASSET", "kind": "HEADER", "parentId": null, "isActive": true },
-    { "id": "uuid", "code": "1110", "name": "Cash in Hand", "type": "ASSET", "kind": "POSTABLE", "controlKind": "NONE", "role": "CASH_DEFAULT", "restricted": false, "parentId": "uuid-of-1000", "isActive": true }
+    { "id": "uuid", "code": "1000", "name": "Assets", "type": "ASSET", "normalBalance": "DEBIT", "kind": "HEADER", "controlKind": "NONE", "role": null, "restricted": false, "parentId": null, "isActive": true },
+    { "id": "uuid", "code": "1110", "name": "Cash in Hand", "type": "ASSET", "normalBalance": "DEBIT", "kind": "POSTABLE", "controlKind": "NONE", "role": "CASH_DEFAULT", "restricted": false, "parentId": "uuid-of-1000", "isActive": true }
   ]
 }
 ```
 
-Not wired to a route — no permission code covers it (§6).
+### `POST /api/accounts` — NOT BUILT, staying that way
 
-### `POST /api/accounts` — NOT SPECIFIED FURTHER, NOT BUILT
-
-The brief asks for "create a postable leaf under a group." This is not just missing a permission code;
-it conflicts with an APPROVED posting rule and has no backing capability at any layer:
+The brief asks for "create a postable leaf under a group." This was a scope ruling, not a permission
+gap, and the Council ruling that unblocked `GET /api/accounts` did not revisit it:
 
 - `coa-standard.md` §5: *"The MVP ships the chart **read-only** to users; create, rename and
   deactivate are Wave 2 remainder work, each audited."*
@@ -338,51 +395,88 @@ it conflicts with an APPROVED posting rule and has no backing capability at any 
   lists what is deliberately not exported and account creation is not present anywhere in the kernel.
 
 Building this would mean inventing account-creation domain logic outside kernel/database boundaries
-that this lane is not authorised to add. **Raised in BLOCKED, §6.**
+that this lane is not authorised to add. Unblocking it needs an Accounting-seat amendment to
+`coa-standard.md` §5 — new kernel/database scope, not an `apps/api` task.
 
 ---
 
-## 6. Fiscal periods — BLOCKED, no route built
+## 6. Fiscal periods
 
-### `GET /api/periods`, `POST /api/periods/:id/close`, `POST /api/periods/:id/reopen`
+### `GET /api/periods`
 
-Fully specified by `docs/posting-rules/periods.md` §4/§4.1 and implemented in the kernel
-(`periodEngine.close/reopen/lock`, `packages/accounting-kernel/src/periods.ts`) — the capability
-exists. **No route is built because no permission code exists for any of the three actions**, and this
-lane is explicitly forbidden from changing `packages/permissions`' catalogue (Council-owned):
+**Permission:** `period.view`
 
-```
-packages/permissions/src/catalog.ts:
-  export const PERMISSION_CODES = [
-    'customer.view', 'customer.create', 'invoice.create', 'invoice.post', 'payment.receive',
-    'voucher.view', 'voucher.post', 'voucher.reverse', 'report.financial',
-    'audit.view', 'admin.user_manage',
+Every fiscal period of the caller's tenant, chronological order.
+
+```json
+{
+  "periods": [
+    { "id": "uuid", "fiscalYear": 2027, "periodIndex": 1, "periodStart": "2026-07-01", "periodEnd": "2026-07-31", "label": "2026-07", "status": "OPEN" }
   ]
+}
 ```
 
-The file's own header comment confirms this is deliberate scoping, not an oversight: *"MVP SUBSET, NOT
-THE FULL FUTURE CATALOGUE … lists a larger set (voucher.approve, bank.*, cheque.*, **period.***, …)."*
-Chart-of-accounts viewing is absent from the same comment's MVP slice
-(`login -> tenant membership -> permission check -> customer -> service invoice -> payment -> journal
-entry -> customer ledger -> trial balance -> reversal -> audit trail`), which is further evidence this
-was scoped out deliberately rather than missed.
+### `POST /api/periods/:id/close`
 
-**What would unblock this lane**, decided by the Council/PO, not guessed at here:
+**Permission:** `period.close`
 
-1. Add `period.view`, `period.close`, `period.reopen` (and `account.view`, if `GET /api/accounts` is
-   wanted now rather than with account create/rename/deactivate in Wave 2) to
-   `packages/permissions/src/catalog.ts`, decide which system role(s) hold them
-   (`packages/permissions/src/system-roles.ts`), and decide whether they are `PRIVILEGED_PERMISSIONS`
-   under ADR-0009 (`period.close`/`period.reopen` plausibly are, given MFA is named for both in
-   `periods.md` §8 — currently deferred to GAP-003 regardless).
-2. A ruling on `POST /api/accounts` specifically: either it stays Wave 2 remainder work as
-   `coa-standard.md` §5 already says (recommended — nothing here argues for moving it earlier), or the
-   Accounting seat amends `coa-standard.md` to bring it into M2 with its own validation rules written
-   down, in which case it is new kernel/database scope, not an `apps/api` task.
+`:id` is the period's uuid (from `GET /api/periods`); the controller resolves it to the label
+`periodEngine.close` takes (`periods.md`'s API is by label) and never accepts a label directly from the
+client. No request body. Returns the closed period, same shape as one row of `GET /api/periods`.
 
-Once (1) lands, `GET /api/periods` / `POST /api/periods/:id/{close,reopen}` are a same-shape, low-risk
-addition: thin controllers over the already-built, already-tested `periodEngine`, no kernel change
-needed. Deferred to a follow-up commit on this branch or a new lane, per direction.
+Only when every earlier period of the tenant is `CLOSED` or `LOCKED` (periods.md §4.1) —
+`409 period_close_out_of_order` otherwise. Produces no journal entry (periods.md §7).
+
+### `POST /api/periods/:id/reopen`
+
+**Permission:** `period.reopen` — **Owner only** (Council ruling's role table, §"Permission ruling"
+below). `period.close` does not imply `period.reopen`; Accountant holds the former, not the latter.
+
+```json
+{ "reason": "Correcting a close-process error" }
+```
+
+Only the tenant's **latest** `CLOSED` period may be reopened (periods.md §4.1) —
+`409 period_reopen_out_of_order` for any other `CLOSED` period, `409 PERIOD_LOCKED` for a locked one.
+A reason is required (kernel-enforced, `PERIOD_REOPEN_REASON_REQUIRED`, surfaced as `400
+validation_failed` at the zod layer for an empty/missing one).
+
+### No lock route
+
+There is no `POST /api/periods/:id/lock` and no `period.lock` permission. The Council ruling that added
+`account.view`/`period.view`/`period.close`/`period.reopen` was explicit: *"There is NO `period.lock`,
+and NO lock route in M2: build view, close and reopen only."* `periodEngine.lock` exists in the kernel
+(tested at the kernel level, `tests/accounting/period-transitions.spec.ts`) but nothing in `apps/api`
+calls it.
+
+### Permission ruling — the role grants
+
+| Code | Owner | Accountant | Viewer |
+|---|---|---|---|
+| `account.view` | ✓ | ✓ | ✓ |
+| `period.view` | ✓ | ✓ | ✓ |
+| `period.close` | ✓ | ✓ | — |
+| `period.reopen` | ✓ | — | — |
+
+`period.close` and `period.reopen` are `PRIVILEGED_PERMISSIONS` (ADR-0012:136 names step-up MFA for
+both) — enforcement is the same GAP-003 gap every other privileged permission has today; this only
+records that the answer to "is this privileged" is yes.
+
+### Backfill for existing tenants
+
+`database/migrations/014_add_account_and_period_permissions.sql` inserts the four grants above into
+every **existing** tenant's `is_system` roles, scoped per tenant by joining `roles` on `(code,
+is_system)` within a single INSERT (the migration role holds `BYPASSRLS`, so this join — not RLS — is
+what keeps tenant A's grant from reaching tenant B's role). `created_by`/`updated_by` on each new grant
+is the owning role's own `created_by`. No `audit_log` row is written from SQL (would break the hash
+chain — see the migration's own header). Idempotent by construction
+(`role_permissions_active_unique`'s partial unique index is the `ON CONFLICT` target). A tenant
+provisioned before or after migration 014 ends up with identical grants —
+`tests/integration/accounting-api.spec.ts`'s "Permission backfill" suite proves it by re-running the
+migration's own SQL text against a tenant seeded with the pre-ruling code list.
+
+Migration 014 was the next free number; **M3's reservation moved from 014–016 to 015–017**
+(`docs/BOARD.md`).
 
 ---
 
@@ -395,10 +489,10 @@ and the next lane to call `postingEngine.post` for a different event needs no ne
 
 | HTTP | Codes |
 |---|---|
-| **400** | `PAYLOAD_INVALID`, `AMOUNT_NOT_STRING`, `AMOUNT_SCALE`, `AMOUNT_NEGATIVE`, `AMOUNT_NON_POSITIVE`, `AMOUNT_OUT_OF_RANGE`, `NARRATION_REQUIRED`, `NARRATION_TOO_LONG`, `JV_TOO_FEW_LINES`, `JV_TOO_MANY_LINES`, `JV_LINE_BOTH_SIDES`, `JV_LINE_NO_SIDE`, `JV_ZERO_LINE`, `JV_SAME_ACCOUNT_BOTH_SIDES`, `JV_UNBALANCED`, `ACCOUNT_NOT_FOUND`, `ACCOUNT_NOT_POSTABLE`, `ACCOUNT_INACTIVE`, `ACCOUNT_CONTROL_MANUAL_FORBIDDEN`, `ACCOUNT_RESTRICTED`, `ACCOUNT_ROLE_UNMAPPED`, `ACCOUNT_ROLE_MISCONFIGURED`, `PARTY_NOT_FOUND`, `PARTY_TYPE_MISMATCH`, `DATE_IN_FUTURE`, `PERIOD_NOT_FOUND`, `REVERSAL_REASON_REQUIRED`, `RULE_NOT_ENABLED`, plus every `SALE_*`/`CUSTOMER_*`/`RECEIPT_*`/`ALLOCATION_*`/`INVOICE_*` code (not reachable via this lane's routes) |
+| **400** | `PAYLOAD_INVALID`, `AMOUNT_NOT_STRING`, `AMOUNT_SCALE`, `AMOUNT_NEGATIVE`, `AMOUNT_NON_POSITIVE`, `AMOUNT_OUT_OF_RANGE`, `NARRATION_REQUIRED`, `NARRATION_TOO_LONG`, `JV_TOO_FEW_LINES`, `JV_TOO_MANY_LINES`, `JV_LINE_BOTH_SIDES`, `JV_LINE_NO_SIDE`, `JV_ZERO_LINE`, `JV_SAME_ACCOUNT_BOTH_SIDES`, `JV_UNBALANCED`, `ACCOUNT_NOT_FOUND`, `ACCOUNT_NOT_POSTABLE`, `ACCOUNT_INACTIVE`, `ACCOUNT_CONTROL_MANUAL_FORBIDDEN`, `ACCOUNT_RESTRICTED`, `ACCOUNT_ROLE_UNMAPPED`, `ACCOUNT_ROLE_MISCONFIGURED`, `PARTY_NOT_FOUND`, `PARTY_TYPE_MISMATCH`, `DATE_IN_FUTURE`, `PERIOD_NOT_FOUND`, `REVERSAL_REASON_REQUIRED`, `PERIOD_REOPEN_REASON_REQUIRED`, `RULE_NOT_ENABLED`, plus every `SALE_*`/`CUSTOMER_*`/`RECEIPT_*`/`ALLOCATION_*`/`INVOICE_*` code (not reachable via this lane's routes) |
 | **403** | `FORBIDDEN` (defensive only — `PermissionGuard` already rejects an unauthorised caller before the kernel runs; this is the kernel's own "no service account posts" backstop, rule 22) |
-| **404** | `ENTRY_NOT_FOUND` (route: `GET/POST /journals/:id...`); `ACCOUNT_NOT_FOUND` is **400** when it names a line inside a posting body, but the ledger endpoint's own account-existence check (done in the controller against `findAccountsByIds`, not via `PostingError`) is **404**, because there the account *is* the route's addressed resource |
-| **409** | `PERIOD_CLOSED`, `PERIOD_LOCKED`, `IDEMPOTENCY_KEY_REUSED`, `SOURCE_ALREADY_POSTED`, `ALREADY_REVERSED`, `REVERSAL_OF_REVERSAL`, `REVERSAL_VIA_SOURCE_REQUIRED` |
+| **404** | `ENTRY_NOT_FOUND` (route: `GET/POST /journals/:id...`). `ACCOUNT_NOT_FOUND` is **400** when it names a line inside a posting body, but the ledger endpoint's own account-existence check (against `findAccountsByIds`, not via `PostingError`) is **404**, because there the account *is* the route's addressed resource. Likewise `period_not_found` on `POST /periods/:id/{close,reopen}` is the CONTROLLER's own 404 (a `findPeriodById` miss on the path `:id`), never the kernel's own `PERIOD_NOT_FOUND` — the controller always resolves `:id` to a real label before calling `periodEngine`, so the kernel's `PERIOD_NOT_FOUND` never actually fires from these two routes |
+| **409** | `PERIOD_CLOSED`, `PERIOD_LOCKED`, `IDEMPOTENCY_KEY_REUSED`, `SOURCE_ALREADY_POSTED`, `ALREADY_REVERSED`, `REVERSAL_OF_REVERSAL`, `REVERSAL_VIA_SOURCE_REQUIRED`, `PERIOD_CLOSE_OUT_OF_ORDER`, `PERIOD_REOPEN_OUT_OF_ORDER`, `PERIOD_LOCK_OUT_OF_ORDER` (not reachable — no lock route), `PERIOD_NOT_CLOSED` |
 
 Rationale for the 400/404/409 split: 404 is reserved for "the resource this route addresses does not
 exist in your tenant" (an entry id in the path, an account id in the path); everything else about an
@@ -439,15 +533,38 @@ caught and never corrected."* Converting it to a 4xx here would be exactly that.
 5. **`partyId` is accepted but inert on the ledger endpoint** rather than rejected, so the M2-S screens
    lane can wire the control-account/customer-ledger UI now and have it start working the moment M3
    lands the customer module, with no API contract change. Flagged, not hidden — see §3.
+6. **The ledger cursor carries no financial number** (Council ruling, 2026-09-29). `closingBalance` is
+   gone from the wire shape entirely; `packages/reporting` recomputes a resumed page's carry-forward
+   balance from the cursor's position on every request. See §3.
+7. **`:id` on the two period routes is the period's uuid, not its label.** `periodEngine`'s own API
+   takes a label (`YYYY-MM`); the controller resolves `:id → label` via `findPeriodById` before calling
+   it, so the route stays consistent with `/journals/:id` (always the resource's own uuid) rather than
+   asking the client to know the kernel's internal addressing.
+8. **`deriveReferenceId`'s TECH_DEBT entry (TD-009)** records that the JV posting-identity fix
+   (§2's `POST /journals`) is a kernel-shaped rule currently living in `apps/api` because this lane
+   cannot touch `packages/accounting-kernel/src/**` — flagged for the Accounting seat, not hidden.
 
 ---
 
-## 9. Open items for the Council / PO (§6 restated as an action list)
+## 9. Council ruling status (was: open items for the Council/PO)
 
-1. Approve `period.view`, `period.close`, `period.reopen` (and, if wanted now, `account.view`) into
-   `packages/permissions/src/catalog.ts`, with role assignment and privileged-permission status decided.
-2. Rule on whether `POST /api/accounts` moves into M2 scope (requires amending `coa-standard.md` §5,
-   Accounting-seat-owned) or stays Wave 2 remainder work as already written.
-3. Once (1) is decided, this lane (or a follow-up) adds `GET /api/periods`,
-   `POST /api/periods/:id/close`, `POST /api/periods/:id/reopen` as thin controllers over the existing,
-   tested `periodEngine` — no kernel change needed, small addition.
+All three Council seats (Accounting: changes required · Security: approved with conditions ·
+Architecture: rejected, narrowly) reviewed the branch at `3daed22` and returned a binding fix list,
+2026-09-29. Status of each item that document originally raised:
+
+1. **`period.view`, `period.close`, `period.reopen`, `account.view` are now in the catalogue** —
+   `packages/permissions/src/catalog.ts`. Role assignment: see §6's table. `period.close`/
+   `period.reopen` are `PRIVILEGED_PERMISSIONS`. **Closed.**
+2. **`POST /api/accounts` stays Wave 2 remainder work** — the ruling did not amend `coa-standard.md`
+   §5, so this item's recommended outcome stands. **Closed, as "stays not built."**
+3. **`GET /api/periods`, `POST /api/periods/:id/close`, `POST /api/periods/:id/reopen` are built** —
+   thin controllers over the existing, tested `periodEngine`, no kernel change. **Closed.** See §6.
+
+Nothing is open here as of this document's current revision. Any future change to this contract lands
+as a separate, clearly named commit, per this document's own opening instruction.
+
+**Deferred to M3-P (Accounting seat, 2026-09-29).** The HTTP test for
+`REVERSAL_VIA_SOURCE_REQUIRED` (409) is a **named M3-P acceptance item**. M2
+cannot create a document-sourced entry without the lint-fenced raw insert;
+M3-P's invoices create real ones. The refusal itself is already covered by
+golden scenario P06 and the invariant suite, and the 409 mapping is in place.

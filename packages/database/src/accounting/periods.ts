@@ -222,3 +222,23 @@ export async function findPeriodById(
     .executeTakeFirst()
   return row ? mapRow(row) : null
 }
+
+/**
+ * Every fiscal period of the caller's tenant, chronological order
+ * (fiscal_year, then period_index — contiguous by construction,
+ * periods.md §1). GET /api/periods' one query.
+ */
+export async function listPeriods(
+  tx: TenantTx,
+  tenantId: string,
+): Promise<readonly FiscalPeriodRow[]> {
+  assertIssuedTenantTx(tx)
+  const rows = await tx
+    .selectFrom('fiscal_periods')
+    .selectAll()
+    .where('tenant_id', '=', tenantId)
+    .orderBy('fiscal_year')
+    .orderBy('period_index')
+    .execute()
+  return rows.map(mapRow)
+}
