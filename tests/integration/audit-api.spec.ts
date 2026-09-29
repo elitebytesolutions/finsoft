@@ -63,6 +63,19 @@ class TestTenantContextMiddleware implements NestMiddleware {
       next()
       return
     }
+    // M1-X: the controller now reads req.auth (for the per-caller audit-read
+    // rate limit) as well as relying on TenantContext for the query itself —
+    // set both, matching what the real TenantGuard/PermissionGuard chain
+    // would have populated by this point.
+    if (userId) {
+      req.auth = {
+        userId,
+        tenantId,
+        sessionId: 'test-session',
+        permissionVersion: 0,
+        mfa: false,
+      }
+    }
     TenantContext.run({ tenantId, userId }, next)
   }
 }

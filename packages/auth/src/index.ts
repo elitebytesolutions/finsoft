@@ -58,7 +58,8 @@ export {
 export { hashRefreshToken, mintRefreshToken, REFRESH_TOKEN_TTL_MS } from './refresh-token.ts'
 export type { MintedRefreshToken } from './refresh-token.ts'
 
-export { ThrottleUnavailableError, closeThrottleClient } from './throttle.ts'
+export { ThrottleUnavailableError, checkLayers, closeThrottleClient } from './throttle.ts'
+export type { ThrottleDecision, ThrottleLayer } from './throttle.ts'
 
 export { closeSessionCacheClient, invalidateSessionCache } from './session-cache.ts'
 
