@@ -301,6 +301,22 @@ describe('GET /api/customers', () => {
   it('403s for a user with no customer.view', async () => {
     await request(app.getHttpServer()).get('/api/customers').set(asNoRole(alpha)).expect(403)
   })
+
+  it("never returns another tenant's customer in the list (tenant isolation, rule 8)", async () => {
+    const betaOnly = await request(app.getHttpServer())
+      .post('/api/customers')
+      .set(asOwner(beta))
+      .set('Idempotency-Key', idemKey())
+      .send(createBody({ name: 'Beta Isolation Target' }))
+      .expect(201)
+
+    const res = await request(app.getHttpServer())
+      .get('/api/customers')
+      .set(asOwner(alpha))
+      .expect(200)
+
+    expect(res.body.items.some((i: { id: string }) => i.id === betaOnly.body.id)).toBe(false)
+  })
 })
 
 describe('GET /api/customers/:id', () => {
@@ -506,6 +522,28 @@ describe('POST /api/customers/:id/deactivate and /reactivate', () => {
       .set(asViewer(alpha))
       .send({ version: customer.version })
       .expect(403)
+  })
+
+  it("404s for another tenant's id, for both routes (S5)", async () => {
+    const betaCustomer = (
+      await request(app.getHttpServer())
+        .post('/api/customers')
+        .set(asOwner(beta))
+        .set('Idempotency-Key', idemKey())
+        .send(createBody({ name: 'Beta Status Target' }))
+        .expect(201)
+    ).body
+
+    await request(app.getHttpServer())
+      .post(`/api/customers/${betaCustomer.id}/deactivate`)
+      .set(asOwner(alpha))
+      .send({ version: 0 })
+      .expect(404)
+    await request(app.getHttpServer())
+      .post(`/api/customers/${betaCustomer.id}/reactivate`)
+      .set(asOwner(alpha))
+      .send({ version: 0 })
+      .expect(404)
   })
 })
 
