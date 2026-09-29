@@ -295,7 +295,7 @@ jobs:
       - run: npm ci
 
       - name: environment
-        run: cp .env.example .env
+        run: cp .env.example .env && sed -i 's/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=/' .env
 
       - name: data plane
         run: docker compose up -d --wait
@@ -342,7 +342,7 @@ jobs:
       - run: npm ci
 
       - name: environment
-        run: cp .env.example .env
+        run: cp .env.example .env && sed -i 's/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=/' .env
 
       # INFRASTRUCTURE.md:257 — "docker compose down -v && docker compose up
       # must produce a working system from scratch." --wait blocks until
@@ -418,7 +418,7 @@ jobs:
       - run: npm ci
 
       - name: environment
-        run: cp .env.example .env
+        run: cp .env.example .env && sed -i 's/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=/' .env
 
       - name: data plane
         run: docker compose up -d --wait
@@ -466,7 +466,7 @@ jobs:
       - run: npm ci
 
       - name: environment
-        run: cp .env.example .env
+        run: cp .env.example .env && sed -i 's/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=/' .env
 
       - name: data plane
         run: docker compose up -d --wait
@@ -578,23 +578,32 @@ jobs:
         id: analyze
         with:
           upload: never
+          # An absolute, explicit directory. The action's `sarif-output` output
+          # came back empty on the first real run, so nothing downstream reads it.
+          output: ${{ runner.temp }}/codeql-results
 
       - name: upload SARIF as an artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: codeql-sarif
-          path: ${{ steps.analyze.outputs.sarif-output }}
+          path: ${{ runner.temp }}/codeql-results
           if-no-files-found: warn
           retention-days: 14
 
       - name: fail on error-level findings
         run: |
           set -euo pipefail
-          count=$(jq -s '[.[].runs[].results[]? | select((.level // "warning") == "error")] | length' "${{ steps.analyze.outputs.sarif-output }}"/*.sarif)
-          total=$(jq -s '[.[].runs[].results[]?] | length' "${{ steps.analyze.outputs.sarif-output }}"/*.sarif)
+          shopt -s nullglob
+          files=("${{ runner.temp }}/codeql-results"/*.sarif)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::CodeQL produced no SARIF — the scan did not complete"
+            exit 1
+          fi
+          count=$(jq -s '[.[].runs[].results[]? | select((.level // "warning") == "error")] | length' "${{ runner.temp }}/codeql-results"/*.sarif)
+          total=$(jq -s '[.[].runs[].results[]?] | length' "${{ runner.temp }}/codeql-results"/*.sarif)
           echo "CodeQL: ${total} result(s), ${count} at level error"
-          jq -r '.runs[].results[]? | select((.level // "warning") == "error") | "::error file=\(.locations[0].physicalLocation.artifactLocation.uri),line=\(.locations[0].physicalLocation.region.startLine)::\(.ruleId): \(.message.text)"' "${{ steps.analyze.outputs.sarif-output }}"/*.sarif
+          jq -r '.runs[].results[]? | select((.level // "warning") == "error") | "::error file=\(.locations[0].physicalLocation.artifactLocation.uri),line=\(.locations[0].physicalLocation.region.startLine)::\(.ruleId): \(.message.text)"' "${{ runner.temp }}/codeql-results"/*.sarif
           test "$count" -eq 0
 
   # ------------------------------------------------------------------ #
