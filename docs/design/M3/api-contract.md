@@ -19,7 +19,7 @@ the controllers and must list every error code a route can return.
 | **Dates** | Business dates are `YYYY-MM-DD` in the tenant timezone. Instants are ISO-8601 UTC with `Z` |
 | **Ids** | uuid. A path id that is unknown **or belongs to another tenant** is the same `404` with the same body |
 | **Idempotency** | Every `POST` that creates a document or changes its status requires the header `Idempotency-Key` (1–128 characters, `[A-Za-z0-9._:-]`). Missing → `400 IDEMPOTENCY_KEY_REQUIRED`. A replay returns the original status code, the document's current state and `Idempotent-Replayed: true`. See [modules.md](modules.md) §9 |
-| **Optimistic concurrency** | Draft edits, draft discard, invoice post and customer edits carry the `version` the client last read. Stale → `409 VERSION_CONFLICT` with `details.currentVersion` |
+| **Optimistic concurrency** | Draft edits and draft cancel (invoices and receipts), invoice and receipt post, and customer edits carry the `version` the client last read. Stale → `409 VERSION_CONFLICT` with `details.currentVersion` |
 | **Pagination** | Cursor. `?limit=` 1–200 (default 50), `?cursor=` opaque. Response `{ items, nextCursor }`, where `nextCursor` is null on the last page. No total count |
 | **Errors** | The existing envelope (`apps/api/src/common/all-exceptions.filter.ts`): `{ statusCode, error, message, path, timestamp, details? }`. `error` is the **stable code** from §3. `message` is for logs, not for users; the UI owns the copy per code |
 | **Authorisation** | Every M3 route is `@RequirePermission(…)` except **S1**, which is `@AuthenticatedOnly` (§2). None is `@Public`. Enforced by the global `PermissionGuard` that M1-X registers; M3 routes do not merge before it ([README](README.md) §4) |
@@ -31,8 +31,13 @@ full catalogue will need do not exist yet: an edit permission for customers and 
 for AR documents. Until they do, **customer edits use `customer.create`, and every AR read uses
 `customer.view`**. `customer.view` is what the Viewer role already holds, and it is the natural
 permission for reading a customer's documents and ledger. Adding codes is a catalogue change with
-seeding for existing tenants. It is recorded as debt ([README](README.md) §9), not slipped in
+seeding for existing tenants. It is recorded as debt ([README](README.md) §10), not slipped in
 here. The Security seat confirms this mapping at M3-C's review.
+
+**Receipt drafts and receipt posting both use `payment.receive`** (Product Owner, 2026-09-28).
+Invoices already separate `invoice.create` from `invoice.post`. The matching split for receipts
+would be a new `payment.post`, which is **proposed as debt** ([README](README.md) §10) rather than
+added now. Until it exists, anyone who can prepare a receipt can post it.
 
 Reversal needs **two** permissions: the document's own permission **and** `voucher.reverse`
 ([reversal.md](../../posting-rules/reversal.md) §3 row 6). `voucher.reverse` is privileged
@@ -72,7 +77,7 @@ being refused.
 | I2 | `POST /api/invoices` | `invoice.create` | required | `201` `Invoice` (DRAFT) |
 | I3 | `GET /api/invoices/:id` | `customer.view` | — | `200` `Invoice` |
 | I4 | `PUT /api/invoices/:id` | `invoice.create` | — (`version`) | `200` `Invoice` (DRAFT) |
-| I5 | `POST /api/invoices/:id/discard` | `invoice.create` | — (`version`) | `200` `Invoice` (DISCARDED) |
+| I5 | `POST /api/invoices/:id/cancel` | `invoice.create` | — (`version`) | `200` `Invoice` (CANCELLED) |
 | I6 | `POST /api/invoices/calculate` | `invoice.create` | — | `200` `InvoiceCalculation`. Stateless, writes nothing |
 | I7 | `POST /api/invoices/:id/post` | `invoice.post` | required | `200` `Invoice` (POSTED) |
 | I8 | `POST /api/invoices/:id/reverse` | `invoice.post` **+** `voucher.reverse` | required | `200` `Invoice` (REVERSED) |
@@ -81,17 +86,22 @@ being refused.
 
 | # | Method · path | Permission | Idem. key | Success |
 |---|---|---|---|---|
-| R1 | `GET /api/receipts` | `customer.view` | — | `200` page of `ReceiptListItem` |
+| R1 | `GET /api/receipts` | `customer.view` | — | `200` page of `ReceiptListItem` (drafts included) |
 | R2 | `POST /api/receipts/preview` | `payment.receive` | — | `200` `ReceiptPreview`. Stateless, writes nothing, takes no lock |
-| R3 | `POST /api/receipts` | `payment.receive` | required | `201` `Receipt` (POSTED) — create **and** post |
-| R4 | `GET /api/receipts/:id` | `customer.view` | — | `200` `Receipt`, allocations embedded |
-| R5 | `POST /api/receipts/:id/reverse` | `payment.receive` **+** `voucher.reverse` | required | `200` `Receipt` (REVERSED) |
+| R3 | `POST /api/receipts` | `payment.receive` | required | `201` `Receipt` (**DRAFT**). Posts nothing, no number |
+| R4 | `GET /api/receipts/:id` | `customer.view` | — | `200` `Receipt`: proposals for a draft, allocations once posted |
+| R5 | `PATCH /api/receipts/:id` | `payment.receive` | — (`version`) | `200` `Receipt` (DRAFT). Draft only |
+| R6 | `POST /api/receipts/:id/post` | `payment.receive` | required | `200` `Receipt` (POSTED): number assigned, allocations applied |
+| R7 | `POST /api/receipts/:id/cancel` | `payment.receive` | — (`version`) | `200` `Receipt` (CANCELLED). Draft only |
+| R8 | `POST /api/receipts/:id/reverse` | `payment.receive` **+** `voucher.reverse` | required | `200` `Receipt` (REVERSED) |
 
-**There is no allocation endpoint.** Allocations are embedded in `Receipt` (as allocated from)
-and `Invoice` (as allocated to), including voided ones. They are created only by R3 and voided
-only by R5 ([customer-receipt.md](../../posting-rules/customer-receipt.md) §5: no re-allocation
-and no un-allocation other than reversal). A separate `/allocations` resource would advertise a
-mutation that does not exist.
+**There is no allocation endpoint.** A draft's **proposals** are part of the draft and are edited
+with R5 (`allocations` in the patch replaces the whole proposal set). **Allocations** are embedded
+in `Receipt` (as allocated from) and `Invoice` (as allocated to), including voided ones. They are
+created only by R6 and voided only by R8 ([customer-receipt.md](../../posting-rules/customer-receipt.md)
+§5: no re-allocation and no un-allocation other than reversal). A separate `/allocations`
+resource would advertise a mutation that does not exist. An invoice never shows proposals, only
+allocations: a proposal has not paid anything.
 
 **Why I6 and R2 exist.** The voucher screen must show line nets and a total while the user types,
 and the receipt screen must show "allocated" and "unallocated", plus an oldest-first suggestion.
@@ -110,23 +120,25 @@ posts. Neither is authoritative: posting re-validates everything under locks.
 | *(guard body, unchanged)* | 403 | missing permission: `PermissionGuard`'s existing `{ statusCode: 403, error: 'forbidden', … }` | — |
 | `CUSTOMER_NOT_FOUND` | 404 on C3–C7 · **422** when the id is in a request body | customers, directory | `{ customerId }` on 422 |
 | `INVOICE_NOT_FOUND` | 404 on I3–I8 · **422** when in `allocations[]` | receivables | `{ invoiceId }` on 422 |
-| `RECEIPT_NOT_FOUND` | 404 | R4, R5 | — |
+| `RECEIPT_NOT_FOUND` | 404 | R4–R8 | — |
 | `VERSION_CONFLICT` | 409 | stale `version`; invoice's customer changed under post | `{ currentVersion }` |
 | `IDEMPOTENCY_KEY_REUSED` | 409 | same key, different request | — |
-| `CUSTOMER_CODE_TAKEN` | 409 | C2 | `{ code }` |
 | `CUSTOMER_HAS_BALANCE` | 409 | C5 — deactivation refused while the ledger balance ≠ 0.0000 (customers page doc §6) | `{ balance }` |
 | `INVOICE_NOT_DRAFT` | 409 | I4, I5, I7 on a non-draft | `{ status }` |
-| `INVOICE_NOT_POSTED` | 409 | I8 on a draft or discarded invoice | `{ status }` |
-| `SOURCE_ALREADY_POSTED` | 409 | I7 on an invoice already posted under another key | `{ invoiceNumber, entryNumber }` |
-| `ALREADY_REVERSED` | 409 | I8, R5 under a new key | `{ reversalEntryNumber }` |
+| `INVOICE_NOT_POSTED` | 409 | I8 on a draft or cancelled invoice | `{ status }` |
+| `RECEIPT_NOT_DRAFT` | 409 | R5, R6, R7 on a cancelled receipt; R5 and R7 on a posted one | `{ status }` |
+| `RECEIPT_NOT_POSTED` | 409 | R8 on a draft or cancelled receipt | `{ status }` |
+| `SOURCE_ALREADY_POSTED` | 409 | I7 / R6 on a document already posted under another key | `{ documentNumber, entryNumber }` |
+| `ALREADY_REVERSED` | 409 | I8, R8 under a new key | `{ reversalEntryNumber }` |
 | `INVOICE_HAS_LIVE_ALLOCATIONS` | 409 | I8 (PO-Q1 Option A) | `{ receipts: [{ id, number }] }` |
-| `CUSTOMER_INACTIVE` | 422 | I2, I4, I7, R3 | `{ customerId }` |
+| `CUSTOMER_INACTIVE` | 422 | I2, I4, I7, R3, R5, R6 | `{ customerId }` |
 | `SALE_NO_LINES` · `SALE_TOO_MANY_LINES` · `SALE_LINE_NON_POSITIVE` · `SALE_AMOUNT_MISMATCH` | 422 | I7 (domain first, kernel re-checks). `SALE_AMOUNT_MISMATCH` from the kernel is a **500**, because the module computed the figure with the same function | `{ lineNo }` / `{ lineNo, submitted, expected }` |
-| `AMOUNT_NON_POSITIVE` · `RECEIPT_NO_ALLOCATION` · `ALLOCATION_DUPLICATE_INVOICE` · `RECEIPT_UNALLOCATED_AMOUNT` | 422 | R3 | `{ amount, allocatedTotal }` for the last |
-| `ALLOCATION_PARTY_MISMATCH` · `INVOICE_NOT_OPEN` · `ALLOCATION_INVOICE_AFTER_RECEIPT` | 422 | R3 | `{ invoiceId, invoiceNumber }` |
-| `ALLOCATION_EXCEEDS_OUTSTANDING` | 422 | R3, read under the row lock | `{ invoiceId, invoiceNumber, outstanding, requested }` |
-| `DATE_IN_FUTURE` · `PERIOD_NOT_FOUND` · `PERIOD_CLOSED` · `PERIOD_LOCKED` | 422 | kernel, on I7, R3, I8, R5 | `{ date, period }` |
-| `REVERSAL_REASON_REQUIRED` | 422 | I8, R5 | — |
+| `RECEIPT_INCOMPLETE` | 422 | R6 on a draft with no method or no amount | `{ missing: string[] }` |
+| `AMOUNT_NON_POSITIVE` · `RECEIPT_NO_ALLOCATION` · `ALLOCATION_DUPLICATE_INVOICE` · `RECEIPT_UNALLOCATED_AMOUNT` | 422 | R6. `AMOUNT_NON_POSITIVE` and `ALLOCATION_DUPLICATE_INVOICE` also on R3 and R5, where the value itself is invalid | `{ amount, allocatedTotal }` for the last |
+| `ALLOCATION_PARTY_MISMATCH` · `INVOICE_NOT_OPEN` · `ALLOCATION_INVOICE_AFTER_RECEIPT` | 422 | R6. This is how a **stale draft proposal** surfaces | `{ invoiceId, invoiceNumber }` |
+| `ALLOCATION_EXCEEDS_OUTSTANDING` | 422 | R6, read under the row lock. Likewise for a stale proposal | `{ invoiceId, invoiceNumber, outstanding, requested }` |
+| `DATE_IN_FUTURE` · `PERIOD_NOT_FOUND` · `PERIOD_CLOSED` · `PERIOD_LOCKED` | 422 | kernel, on I7, R6, I8, R8 | `{ date, period }` |
+| `REVERSAL_REASON_REQUIRED` | 422 | I8, R8 | — |
 | `LEDGER_RANGE_TOO_LARGE` | 422 | C7, more than 366 days | `{ maxDays: 366 }` |
 | `ACCOUNT_ROLE_UNMAPPED` · `ACCOUNT_ROLE_MISCONFIGURED` | 422 **and** an `error`-level log line with an alert | kernel. A tenant configuration fault, never retried | `{ role }` |
 | `AUDIT_BUSY` | 503 + `Retry-After: 1` | `AuditLockTimeoutError` (2 s audit lock timeout). Safe to retry **with the same key** | — |
@@ -146,7 +158,7 @@ TypeScript notation. `Money` = 4 dp string, `Qty` / `Price` = 6 dp string, `Loca
 ```ts
 // C2 request                           // C4 request — every field optional except version
 {                                       {
-  code: string        // ^[A-Z0-9][A-Z0-9-]{1,19}$, upper-cased; immutable after create
+  // NO code: it is system-generated (CUST-000001, PO 2026-09-28); sending one is 400
   name: string        // 1–200               version: number
   phone: string | null                  name?, phone?, email?, address?, city?, ntn?, creditDays?
   email: string | null                  // code and status are NOT editable here
@@ -157,7 +169,9 @@ TypeScript notation. `Money` = 4 dp string, `Qty` / `Price` = 6 dp string, `Loca
 }
 
 interface Customer {
-  id: string; code: string; name: string
+  id: string
+  code: string              // CUST-000001 …, from the tenant's CUST series at create; immutable
+  name: string
   phone: string | null; email: string | null; address: string | null; city: string | null
   ntn: string | null; creditDays: number
   status: 'ACTIVE' | 'INACTIVE'
@@ -238,8 +252,8 @@ interface InvoiceCalculation {
 
 interface Invoice {
   id: string
-  number: string | null                          // null while DRAFT / DISCARDED
-  status: 'DRAFT' | 'POSTED' | 'REVERSED' | 'DISCARDED'
+  number: string | null                          // null while DRAFT / CANCELLED
+  status: 'DRAFT' | 'POSTED' | 'REVERSED' | 'CANCELLED'
   settlement: 'OPEN' | 'PARTIALLY_PAID' | 'PAID' | null   // derived; POSTED only
   customer: { id: string; code: string; name: string }
   invoiceDate: LocalDate; dueDate: LocalDate | null
@@ -247,7 +261,7 @@ interface Invoice {
   lines: Array<{ lineNo: number; kind: 'SERVICE'; description: string
                  quantity: Qty; unitPrice: Price; lineNet: Money }>
   netAmount: Money
-  outstanding: Money | null                      // null for DRAFT/DISCARDED; "0.0000" when REVERSED
+  outstanding: Money | null                      // null for DRAFT/CANCELLED; "0.0000" when REVERSED
   allocations: Array<{ receiptId: string; receiptNumber: string; receiptDate: LocalDate
                        amount: Money; status: 'LIVE' | 'VOIDED' }>
   journalEntry: { id: string; number: string } | null          // POSTED / REVERSED
@@ -275,16 +289,18 @@ enforces it under the lock, so the field is advisory.
 ### 4.3 Receipts
 
 ```ts
-// R3 request                                     // R2 request: same, but allocations optional
-{
-  customerId: string
-  receiptDate: LocalDate
-  method: 'CASH' | 'BANK'
-  amount: Money                                    // > 0
-  reference?: string | null                        // ≤ 100
-  narration?: string | null                        // ≤ 500
-  allocations: Array<{ invoiceId: string; amount: Money }>   // ≥ 1; Σ = amount exactly
+// R3 request (create draft)               // R5 request: { version } + any field below;
+{                                            //   `allocations`, if present, replaces all proposals
+  customerId: string                         // R2 request: customerId, receiptDate, amount and
+  receiptDate?: LocalDate                    //   optional allocations — or { receiptId } for a draft
+  method?: 'CASH' | 'BANK' | null            // null allowed on a draft; required to post
+  amount?: Money | null                      // > 0 when present; required to post
+  reference?: string | null                  // ≤ 100
+  narration?: string | null                  // ≤ 500
+  allocations?: Array<{ invoiceId: string; amount: Money }>   // proposals; may be empty on a draft
 }
+// R6 request: { version: number }           R7 request: { version: number }
+// R8 request: { reason: string }            // 1–500 after trim
 
 interface ReceiptPreview {
   openInvoices: Array<{ invoiceId: string; number: string; invoiceDate: LocalDate
@@ -297,21 +313,24 @@ interface ReceiptPreview {
 }
 
 interface Receipt {
-  id: string; number: string
-  status: 'POSTED' | 'REVERSED'
+  id: string
+  number: string | null                            // null while DRAFT / CANCELLED
+  status: 'DRAFT' | 'POSTED' | 'REVERSED' | 'CANCELLED'
   customer: { id: string; code: string; name: string }
   receiptDate: LocalDate
-  method: 'CASH' | 'BANK'
-  amount: Money
+  method: 'CASH' | 'BANK' | null                   // non-null once POSTED
+  amount: Money | null                             // non-null once POSTED
   reference: string | null; narration: string | null
+  proposals: Array<{ invoiceId: string; invoiceNumber: string; amount: Money }>   // DRAFT only
+  proposalProblems: ReceiptPreview['problems']     // DRAFT only: advisory, computed at read, no lock
   allocations: Array<{ invoiceId: string; invoiceNumber: string; invoiceDate: LocalDate
-                       amount: Money; status: 'LIVE' | 'VOIDED' }>
-  journalEntry: { id: string; number: string }
+                       amount: Money; status: 'LIVE' | 'VOIDED' }>   // [] until POSTED
+  journalEntry: { id: string; number: string } | null
   reversal: { entryId: string; entryNumber: string; occurredAt: LocalDate
               reason: string; reversedAt: Instant; reversedBy: string } | null
-  posted: { at: Instant; by: string }
+  posted: { at: Instant; by: string } | null
   version: number
-  createdAt: Instant; createdBy: string
+  createdAt: Instant; createdBy: string; updatedAt: Instant; updatedBy: string
 }
 
 type ReceiptListItem = Pick<Receipt, 'id' | 'number' | 'status' | 'customer' | 'receiptDate'
@@ -323,7 +342,11 @@ up to its outstanding, until `amount` is used up. If the amount exceeds the tota
 remainder shows in `unallocated` with the problem `RECEIPT_UNALLOCATED_AMOUNT`. The server never
 posts a suggestion it was not sent back.
 
-**R1 query:** `customerId`, `status`, `method`, `from` / `to` on `receiptDate`, `q` (number
+A draft's `proposalProblems` is how the screen warns, **before** the user presses Post, that
+another receipt has paid, or a reversal has closed, an invoice the draft proposes to settle. It is
+advisory. R6 decides under the locks.
+
+**R1 query:** `customerId`, `status` (repeatable; drafts included unless filtered), `method`, `from` / `to` on `receiptDate`, `q` (number
 prefix), `limit`, `cursor`. Order: `receiptDate` descending, then `number` descending.
 
 ## 5. OpenAPI and contract tests

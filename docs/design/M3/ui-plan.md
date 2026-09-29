@@ -41,7 +41,7 @@ service invoice is the drift the skill exists to prevent.
 | `/sales` | [sales-register](../../design-system/pages/sales-register/README.md) | I1 | (drafts' home) |
 | `/sales/voucher` and `/sales/voucher/:id` | [sales-voucher](../../design-system/pages/sales-voucher/README.md) | C1 (picker), I2, I4, I5, I6, I7 | service invoice |
 | `/sales/:id` | [sales-invoice-detail](../../design-system/pages/sales-invoice-detail/README.md) | I3, I8 | reversal |
-| `/payments` | [payments-centre](../../design-system/pages/payments-centre/README.md) | C1 (picker), I1 `open=true`, R1–R5 | payment, reversal |
+| `/payments` and `/payments/:id` | [payments-centre](../../design-system/pages/payments-centre/README.md) | C1 (picker), I1 `open=true`, R1–R8 | payment, reversal |
 
 The trial balance, the account ledger, the journal entry view and the audit trail are M2 and M1
 screens. M3 postings appear in them without any change to those screens.
@@ -61,8 +61,10 @@ returns to.
   Area, Salesman.
 - **KpiRow removed.** "Total outstanding" and "Over limit" are sums and credit-limit figures that
   have no endpoint.
-- **Create:** the four-step wizard becomes **one form**: code, name, phone, email, address, city,
-  NTN, credit days. **Removed:** type, filer status, STRN, route, area, salesman, price list,
+- **Create:** the four-step wizard becomes **one form**: name, phone, email, address, city, NTN,
+  credit days. **There is no code field.** The code is system-generated (`CUST-000001`, Product
+  Owner 2026-09-28) and shown in the success toast and on the record. Neither the browser nor the
+  user proposes one, and the Identity step's "code (auto-suggested)" is removed. **Removed:** type, filer status, STRN, route, area, salesman, price list,
   credit limit, **opening balance** (`OPENING_BALANCE_LOADED` has no posting rule, so it cannot be
   offered), Import and Export.
 - **Actions:** View · Ledger (→ detail, Ledger tab) · New invoice (→ `/sales/voucher?customer=:id`)
@@ -70,8 +72,8 @@ returns to.
   confirms, and on `CUSTOMER_HAS_BALANCE` quotes the balance. Delete is still never offered.
 - **Status tones:** Active `good` · Inactive `neutral`. "On hold" is removed; holds are not in
   the MVP.
-- **Answers its open question 1:** code is user-entered, upper-cased and immutable (Q2 in
-  [open-questions.md](open-questions.md), default). Answers **3:** a single `AR_CONTROL` account
+- **Answers its open question 1:** the code is system-generated at create and never editable
+  ([open-questions.md](open-questions.md) M3-Q2, decided 2026-09-28). Answers **3:** a single `AR_CONTROL` account
   with a party dimension (ADR-0026), and no GL account per customer.
 
 ### customer-detail (`/customers/:code` → **`/customers/:id`**)
@@ -99,7 +101,7 @@ returns to.
 - **Permission:** create needs `invoice.create`; guard `Sales & POS` unchanged.
 - **Columns (M4):** Invoice (number, or "Draft") · Date · Customer · Net · Outstanding ·
   Settlement (`OPEN` `neutral` · `PARTIALLY_PAID` `warn` · `PAID` `good`) · Status (`DRAFT` `warn`
-  · `POSTED` `good` · `REVERSED` `danger` · `DISCARDED` `neutral`). **Removed:** Mode,
+  · `POSTED` `good` · `REVERSED` `danger` · `CANCELLED` `neutral`). **Removed:** Mode,
   Product/lines, Quantity, KpiRow, salesman and branch filters, Export, Print.
 
 ### sales-voucher (`/sales/voucher`) — **service line mode**
@@ -129,7 +131,7 @@ returns to.
   failure names itself. The server re-checks all of them.
 - **Actions:** Save Draft (I2/I4) · **Save & Post** (I4 then I7, one idempotency key for the post;
   the confirm dialog quotes the server's net amount, customer, date and period verbatim) ·
-  Discard draft (I5, confirm). **Removed:** Print, Estimate.
+  Cancel draft (I5, confirm). **Removed:** Print, Estimate.
 - **States (§8)** become the service set in §4 below. Stock, expiry and credit-limit states are
   removed.
 
@@ -147,9 +149,9 @@ returns to.
 - **LedgerImpact:** the **actual** journal entry lines, from M2's entry endpoint by
   `journalEntry.id`, and after a reversal the reversal entry beside it. It is never derived.
 - **Removed:** StockPanel, Create return, Print, Export, Attachments.
-- **Actions by status:** Draft → Edit (→ `/sales/voucher/:id`), Post, Discard. Posted → Record
+- **Actions by status:** Draft → Edit (→ `/sales/voucher/:id`), Post, Cancel. Posted → Record
   receipt (→ `/payments?customer=…&invoice=…`), **Reverse**. Reversed → banner linking RV-….
-  Discarded → no actions.
+  Cancelled → no actions.
 - **Reverse dialog:** requires a reason (1–500), and needs `invoice.post` + `voucher.reverse`. If
   `reversalBlockedBy` is non-empty, the button is disabled and says so: "Receipts RCT-… are
   allocated to this invoice. Reverse them first." Each receipt number links to it (PO-Q1 Option A).
@@ -160,10 +162,13 @@ returns to.
   compute the date itself.
 - Its open question 1 (partial return) and 3 (dispatch status) remain open; neither is M4.
 
-### payments-centre (`/payments`) — **receipt mode only**
+### payments-centre (`/payments`, `/payments/:id`) — **receipt mode only, with drafts**
 
 - **Permission:** `payment:create` → `payment.receive`. Reverse → `payment.receive` +
   `voucher.reverse`.
+- **Routes:** `/payments` (new; `?customer=:id&invoice=:id` pre-selects) and **`/payments/:id`**
+  (a draft opens editable; a posted, reversed or cancelled receipt opens read-only with its
+  allowed actions).
 - **ModeSwitch removed.** Supplier payments are Wave 6. The page is titled "Receipts" in M4, and
   the Payment mode returns with AP.
 - **FormSection:** customer (picker) · receipt date · **method: Cash / Bank** (segmented; Cheque
@@ -180,11 +185,19 @@ returns to.
   receipt date cannot be allocated.* The **on-account remainder, and the "no open invoices → post
   as on-account credit" state, are removed.** With no open invoices the page says "This customer
   has nothing outstanding. Receipts are recorded against invoices." and disables posting.
-- **Actions:** **Save & post** (R3; the confirm dialog quotes customer, amount, method, date,
-  period and each allocation from R2 verbatim). **Save draft removed**: receipts have no draft
-  state (Q1 in [open-questions.md](open-questions.md), default). Print removed.
-- **Register** below: R1 with Number · Date · Customer · Method · Amount · Status, and a row
-  action **Reverse** (confirm with reason). The confirm notes that the receipt's allocations will
+- **Actions** (drafts decided by the Product Owner, 2026-09-28, [open-questions.md](open-questions.md) M3-Q1):
+  **Save draft** (R3 the first time, then R5 with `version`). The allocation cells are saved as
+  **proposals**, and the page says so in words: "Proposed. Nothing is applied until you post."
+  **Post** (on an unsaved form: R3, then R6; on a draft: R5 if there are unsaved changes, then R6.
+  One idempotency key for the post. The confirm dialog quotes customer, amount, method, date,
+  period and each allocation from R2 verbatim.) **Cancel draft** (R7, confirm). Print removed.
+- **Stale proposals.** A draft opened later shows the server's `proposalProblems` against each
+  affected row, for example "INV-2027-000004 now has 1,000.0000 outstanding; this draft proposes
+  4,000.0000", before the user presses Post. Posting a stale draft is refused by R6 with the
+  allocation error, and the page reloads the open-invoice table. Nothing is partially applied.
+- **Register** below: R1 with Number (or "Draft") · Date · Customer · Method · Amount · Status
+  (`DRAFT` `warn` · `POSTED` `good` · `REVERSED` `danger` · `CANCELLED` `neutral`). Row actions:
+  **Open** (→ `/payments/:id`) for every row; **Reverse** on a posted receipt (confirm with reason). The confirm notes that the receipt's allocations will
   be voided and the invoices' outstanding restored.
 
 ## 4. Required states
@@ -202,7 +215,8 @@ went wrong" (sales-voucher §8 already demands this).
 | `CUSTOMER_INACTIVE` | voucher, receipts | Names the customer; links to reactivate for holders of `customer.create` |
 | `PERIOD_CLOSED` / `PERIOD_LOCKED` / `PERIOD_NOT_FOUND` / `DATE_IN_FUTURE` | voucher, receipts, both reversals | Names the date and period. Post is disabled up front when M2's period endpoint says the period is not open; drafts stay allowed |
 | `SALE_*` | voucher | Per line, on the offending line; `SALE_AMOUNT_MISMATCH` from the kernel is shown as an internal error, because it is a bug |
-| `ALLOCATION_EXCEEDS_OUTSTANDING` | receipts | On the cell, with the server's current outstanding. Another receipt got there first, so the table reloads |
+| `ALLOCATION_EXCEEDS_OUTSTANDING` | receipts | On the cell, with the server's current outstanding. Another receipt got there first, or the draft's proposal went stale, so the table reloads |
+| `RECEIPT_NOT_DRAFT` / `RECEIPT_INCOMPLETE` | receipts | "Already posted or cancelled", then reload read-only / name the missing method or amount |
 | `INVOICE_NOT_OPEN` / `ALLOCATION_*` / `RECEIPT_UNALLOCATED_AMOUNT` | receipts | On the row or in the totals bar |
 | `INVOICE_HAS_LIVE_ALLOCATIONS` | invoice detail | Pre-empted by `reversalBlockedBy`. If raised anyway (race), the same copy with the receipt links |
 | `ALREADY_REVERSED` / `SOURCE_ALREADY_POSTED` | detail pages, voucher | "Already done", then reload into the current state. Not an error tone |
@@ -239,7 +253,9 @@ through the screens:
 3. `/sales/voucher?customer=…` → two service lines (1 × 7,500.000000; 3 × 833.333333). The server
    shows 7,500.0000 and 2,500.0000, net 10,000.0000 → Save & Post → `/sales/:id` shows
    `INV-2027-000001`, Posted, Open, JE-2027-00000n.
-4. `/payments?customer=…` → 6,000.0000 by Bank, allocated to the invoice → post → `RCT-…`.
+4. `/payments?customer=…` → 6,000.0000 by Bank, allocated to the invoice → **Save draft**. The
+   invoice is still Open at 10,000.0000, because a proposal pays nothing. Reopen the draft from the
+   register → **Post** → `RCT-…`.
    The invoice shows Partially paid, outstanding 4,000.0000.
 5. `/customers/:id` Ledger tab → closing 4,000.0000 Dr, equal to the KPI.
 6. Trial balance (M2) balances. 1200 shows 4,000.0000 Dr.

@@ -16,7 +16,7 @@ choice a lane would otherwise make on its own is made here, with the reason.
 | [modules.md](modules.md) | The two modules, their layers, what each owns, the one published interface between them, the posting transaction, status machines, allocation, idempotency, numbering, locks, audit |
 | [api-contract.md](api-contract.md) | Every M3 endpoint: request, response, permission, errors, pagination |
 | [ui-plan.md](ui-plan.md) | For M4: which mock screens become API-backed, what changes in each page document, required states, what stays prototype |
-| [open-questions.md](open-questions.md) | Two Product Owner decisions, each with a default that coding proceeds on, and one document contradiction referred to the Accounting seat |
+| [open-questions.md](open-questions.md) | The two Product Owner decisions (M3-Q1 receipt drafts, M3-Q2 system-generated customer codes), both decided 2026-09-28, and the contradictions referred elsewhere |
 
 ---
 
@@ -25,11 +25,13 @@ choice a lane would otherwise make on its own is made here, with the reason.
 **In.** The MVP-slice segment `customer → service invoice → payment → journal entry → customer
 ledger → reversal` ([PRD](../../PRD.md) §6.1, [IMPLEMENTATION](../../IMPLEMENTATION.md) §13 M3):
 
-- **Customers** — create, list, view, edit a limited field set, deactivate and reactivate.
-- **Sales invoice, service lines only** — draft create / edit / discard, post
+- **Customers** — create (with a **system-generated code**, `CUST-000001`, PO 2026-09-28), list,
+  view, edit a limited field set, deactivate and reactivate.
+- **Sales invoice, service lines only** — draft create / edit / cancel, post
   (`SALE_POSTED/service@1`), reverse.
-- **Customer receipt** — record and post in one step (`CUSTOMER_PAYMENT_RECEIVED@1`), method
-  `CASH` or `BANK`, allocated in full to open invoices of the same customer; reverse.
+- **Customer receipt** — draft create / edit / cancel with **proposed** allocations (PO
+  2026-09-28), post (`CUSTOMER_PAYMENT_RECEIVED@1`), method `CASH` or `BANK`, allocated in full to
+  open invoices of the same customer; reverse. Allocations take effect only at post.
 - **Customer ledger** — the `AR_CONTROL` account ledger filtered to one customer
   ([ledger-and-trial-balance.md](../../posting-rules/ledger-and-trial-balance.md) §2).
 - **Invariant 9, AR half** ([customer-receipt.md](../../posting-rules/customer-receipt.md) §8)
@@ -50,7 +52,7 @@ takes the next three, in this merge order:
 |---|---|---|---|
 | **014** | `014_create_customers.sql` | M3-C | `customers`; RLS enabled + forced; composite `UNIQUE (tenant_id, id)` as the FK target; and **the party foreign key from `journal_lines`**, in whichever form ADR-0026 decides (§4) |
 | **015** | `015_create_sales_invoices.sql` | M3-P | `sales_invoices`, `sales_invoice_lines`; status-transition and immutability triggers |
-| **016** | `016_create_customer_receipts.sql` | M3-P | `customer_receipts`, `customer_receipt_allocations`; transition triggers |
+| **016** | `016_create_customer_receipts.sql` | M3-P | `customer_receipts` (with `DRAFT` and `CANCELLED` states and the cancel columns, M3-Q1), `customer_receipt_draft_allocations` (proposals), `customer_receipt_allocations`; transition triggers |
 
 The column-level shape of each table is in [modules.md](modules.md) §7. The Database seat owns the
 SQL, the constraint names and the triggers.
@@ -96,7 +98,7 @@ not write the check that the subledger agrees with the GL.
 ### On M2-A — the kernel surface M3 consumes
 
 M3 imports only `@finsoft/accounting-kernel`'s public index (`modules-do-not-reach-into-kernels`).
-It needs these six things. The names are the ones this pack uses; M2-A may name them differently,
+It needs these seven things. The names are the ones this pack uses; M2-A may name them differently,
 and M3 adapts to M2-A's names. It may not work around an absent capability.
 
 | # | Capability | Used for | If M2-A does not ship it |
@@ -104,12 +106,15 @@ and M3 adapts to M2-A's names. It may not work around an absent capability.
 | K1 | `postingEngine.post(command, tx)` with a rule registry to which a rule can be **added** without touching the engine | Invoice and receipt posting | Blocker. M3 does not start |
 | K2 | Reversal of a document-sourced entry, called by the owning module: `reverseForSource({ referenceType, referenceId, reason, idempotencyKey, actor }, tx)`. The direct journal reversal rejects document-sourced entries with `REVERSAL_VIA_SOURCE_REQUIRED` ([reversal.md](../../posting-rules/reversal.md) §5). This is the call shape README §5 leaves to this seat, **decided here** | Invoice and receipt reversal | M3-P adds it, with Accounting seat review |
 | K3 | Document numbering from `document_sequences` for a **document** series: `documentNumbers.next(tx, { series: 'INV' \| 'RCT', occurredAt })`, row-locked, same FY rule as the entry series | Invoice and receipt numbers | M3-P adds it |
+| K7 | A **tenant-lifetime** series in `document_sequences`, with no fiscal-year scope: `documentNumbers.next(tx, { series: 'CUST' })` → `CUST-000001` ([modules.md](modules.md) §10). **Migration 013 must allow a series row with no fiscal year**, for example a nullable `fiscal_year` with its own partial unique index, or a `scope` column. The Database seat chooses the shape | Customer codes (M3-Q2) | **Requirement on M2-A's 013**, raised 2026-09-28. If 013 merges without it, the fix is a forward kernel migration, and M3-C cannot start until it lands |
 | K4 | `command.referenceNumber` — the source document's number, stored on the entry and shown in every ledger's "source document number" column ([ledger-and-trial-balance.md](../../posting-rules/ledger-and-trial-balance.md) §2) | Customer ledger lines show `INV-…` / `RCT-…` | M3-P adds it |
 | K5 | Ledger queries with a party filter: account ledger of a role for one party over `[from, to]`, and party balances as of a date | Customer ledger, customer balance | M3-C adds the party filter to M2's ledger query |
 | K6 | The tenant clock (today, tenant timezone) and a typed `PostingError { code, details }` | Draft date defaults; HTTP error mapping | Blocker. M3 does not start |
 
 K2–K5 are small, but they are kernel changes. The kernel is never parallelised, so each one lands
-**after** M2-A merges, inside M3-P (or M3-C for K5), reviewed as T3.
+**after** M2-A merges, inside M3-P (or M3-C for K5), reviewed as T3. **K7 is the exception.** It
+is a property of the `document_sequences` schema, so it belongs in M2-A's migration 013 itself,
+and not in a later change to a released kernel table.
 
 **Rules switched on in M3, not M2.** [service-sale.md](../../posting-rules/service-sale.md) and
 [customer-receipt.md](../../posting-rules/customer-receipt.md) say "Implemented in: M3". M2-A
@@ -201,6 +206,11 @@ Every item applies to both lanes unless marked. "The endpoint returns 200" is no
       number; the same holds for receipts and both reversals. A reused key with a different body
       returns `IDEMPOTENCY_KEY_REUSED`.
 - [ ] A rejected posting consumes no `INV`, `RCT`, `JE` or `RV` number (P05 steps 2–5, P06 step 3).
+      A draft, saved or cancelled, consumes none either. A rolled-back customer create consumes
+      no `CUST` number.
+- [ ] A receipt draft's proposed allocations change no invoice's outstanding, and do not appear
+      in Invariant 9's SUB. Posting a draft whose proposal went stale (the invoice was paid or
+      reversed meanwhile) is refused with the specific allocation error, not partially applied.
 - [ ] Concurrency, with two real connections: two receipts allocating the full outstanding of
       one invoice → exactly one succeeds and the other returns `ALLOCATION_EXCEEDS_OUTSTANDING`;
       a receipt racing an invoice reversal → one of the two orders, never both; a deactivation
@@ -223,7 +233,7 @@ Every item applies to both lanes unless marked. "The endpoint returns 200" is no
 
 - [ ] **M3 demo, on staging, for `BHATTI1` and `BHATTI2`:** a scripted HTTP client (committed
       under `tests/e2e/`) runs the P09 journey through the real API: create a customer, draft and
-      post a 10,000.0000 invoice, receive 6,000.0000, show the customer ledger at 4,000.0000 Dr,
+      post a 10,000.0000 invoice, save a 6,000.0000 receipt as a draft and show the invoice still open, post it, show the customer ledger at 4,000.0000 Dr,
       show that invoice reversal is refused, reverse the receipt, reverse the invoice, and show the
       ledger at 0.0000 and the trial balance balanced, then the audit trail. The other tenant sees
       none of it. Shown through the API because the screens are M4. The Product Owner accepts the
@@ -235,7 +245,7 @@ Every item applies to both lanes unless marked. "The endpoint returns 200" is no
 |---|---|
 | customer | `POST /api/customers`, `GET /api/customers[/:id]` |
 | service invoice | `POST /api/invoices`, `PUT /api/invoices/:id`, `POST /api/invoices/calculate`, `POST /api/invoices/:id/post` |
-| payment | `GET /api/invoices?customerId=…&open=true`, `POST /api/receipts/preview`, `POST /api/receipts` |
+| payment | `GET /api/invoices?customerId=…&open=true`, `POST /api/receipts/preview`, `POST /api/receipts` (draft), `PATCH /api/receipts/:id`, `POST /api/receipts/:id/post` |
 | journal entry | `journalEntry { id, number }` on every posted document, resolved by M2's journal endpoint |
 | customer ledger | `GET /api/customers/:id/ledger` |
 | trial balance | M2 (unchanged; M3 postings appear in it) |
@@ -245,7 +255,14 @@ Every item applies to both lanes unless marked. "The endpoint returns 200" is no
 The Playwright journey in M4 asserts the same figures as P09, through the screens, for both
 tenants.
 
-## 9. Debt this design accepts
+## 9. Cost of the Product Owner's 2026-09-28 decisions
+
+| Decision | Effect on the plan |
+|---|---|
+| M3-Q1 — receipt drafts | **+2 days on M3-P**: draft state, proposed-allocation revisions, draft edit / cancel, post-time re-validation of stale proposals, three more audit actions and their tests. **+1 day in M4**: Save draft, resume, and the stale-proposal state on `/payments` |
+| M3-Q2 — system-generated customer codes | **+0.5 day**, split between M2-A (the non-fiscal-year series in 013, K7) and M3-C. M4 is slightly simpler, because the form loses a field. Wave 10 later needs a `legacy_code` (debt below) |
+
+## 10. Debt this design accepts
 
 To be entered in [TECH_DEBT.md](../../TECH_DEBT.md) by the lane that creates it, each with its
 forcing condition:
@@ -253,5 +270,7 @@ forcing condition:
 | Debt | Accepted because | Forced by | Lane |
 |---|---|---|---|
 | Customer edits use `customer.create`, and AR reads use `customer.view` ([api-contract.md](api-contract.md) §2) | The MVP catalogue has no `customer.update` or `invoice.view`. Adding codes means seeding existing tenants' system roles, which is a catalogue task of its own | The first tenant that needs a role able to create customers but not edit them, or to read documents without seeing customers. At the latest, the full-catalogue task | M3-C |
-| Superseded draft-line revisions are kept and never read ([modules.md](modules.md) §7) | Keeps `sales_invoice_lines` insert-only, with no `DELETE` grant and no money in `jsonb` | Draft-line storage becoming measurable, well beyond MVP volumes | M3-P |
+| Superseded draft revisions (invoice lines and receipt proposed allocations) are kept and never read ([modules.md](modules.md) §7) | Keeps both tables insert-only, with no `DELETE` grant and no money in `jsonb` | Draft storage becoming measurable, well beyond MVP volumes | M3-P |
+| Receipt drafts and receipt posting share `payment.receive` ([api-contract.md](api-contract.md) §2) | The MVP catalogue has one receipt code. Invoices already split `invoice.create` / `invoice.post`. The matching split for receipts is a proposed `payment.post`, which needs a catalogue change and seeding | The first tenant that wants a clerk to prepare receipts that someone else posts (maker–checker, after the MVP per PO-Q2 of M2) | M3-P |
+| Customer codes are system-generated, so Bhatti's existing codes cannot be carried over as the code | Product Owner decision, 2026-09-28 | Wave 10 migration: add a searchable `legacy_code` on `customers` then | Wave 10 |
 | The customer ledger is unpaginated, capped at 366 days ([api-contract.md](api-contract.md) §4.1) | MVP volumes; a correct running balance across pages needs an opening balance per page | A customer with more than about 2,000 lines in a year | M3-C |

@@ -70,10 +70,10 @@ forbidding it. A depcruise rule confines the edge to `application/ports.ts` and 
 
 | | `customers` | `receivables` |
 |---|---|---|
-| **Tables** (write) | `customers` | `sales_invoices`, `sales_invoice_lines`, `customer_receipts`, `customer_receipt_allocations` |
+| **Tables** (write) | `customers` | `sales_invoices`, `sales_invoice_lines`, `customer_receipts`, `customer_receipt_draft_allocations`, `customer_receipt_allocations` |
 | **Tables** (read) | its own | its own. **Never `customers`**: through `CustomerDirectory` only |
-| **Kernel calls** | ledger queries (K5); `parties.register` if ADR-0026 chooses a registry | `postingEngine.post`, `reverseForSource`, `documentNumbers.next`, tenant clock |
-| **Use cases** | `CreateCustomer`, `UpdateCustomer`, `DeactivateCustomer`, `ReactivateCustomer`, `ListCustomers`, `GetCustomer`, `GetCustomerLedger` | `CreateInvoiceDraft`, `UpdateInvoiceDraft`, `DiscardInvoiceDraft`, `CalculateInvoice`, `PostInvoice`, `ReverseInvoice`, `ListInvoices`, `GetInvoice`, `PreviewReceipt`, `RecordReceipt`, `ReverseReceipt`, `ListReceipts`, `GetReceipt` |
+| **Kernel calls** | `documentNumbers.next` for the `CUST` series (K7); ledger queries (K5); `parties.register` if ADR-0026 chooses a registry | `postingEngine.post`, `reverseForSource`, `documentNumbers.next`, tenant clock |
+| **Use cases** | `CreateCustomer`, `UpdateCustomer`, `DeactivateCustomer`, `ReactivateCustomer`, `ListCustomers`, `GetCustomer`, `GetCustomerLedger` | `CreateInvoiceDraft`, `UpdateInvoiceDraft`, `CancelInvoiceDraft`, `CalculateInvoice`, `PostInvoice`, `ReverseInvoice`, `ListInvoices`, `GetInvoice`, `PreviewReceipt`, `CreateReceiptDraft`, `UpdateReceiptDraft`, `CancelReceiptDraft`, `PostReceipt`, `ReverseReceipt`, `ListReceipts`, `GetReceipt` |
 | **Publishes** | `CustomerDirectory` (§3) | nothing in M3 |
 | **Consumes** | kernel only | `CustomerDirectory`, kernel |
 
@@ -158,7 +158,7 @@ withTenant(tx =>
   1  customer ← customerDirectory.requireActiveForPosting(tx, customerId)   FOR SHARE  (1a)
   2  invoice  ← repo.lockInvoice(tx, id)                        FOR UPDATE          (1c)
      └ POSTED/REVERSED, post_idempotency_key = key, fingerprint matches → REPLAY (return it)
-     └ POSTED/REVERSED otherwise → SOURCE_ALREADY_POSTED;  DISCARDED → INVOICE_NOT_DRAFT
+     └ POSTED/REVERSED otherwise → SOURCE_ALREADY_POSTED;  CANCELLED → INVOICE_NOT_DRAFT
      └ invoice.version ≠ version, or customer_id ≠ customerId       → VERSION_CONFLICT
   3  domain: invoice.assertPostable(today)  — 1..200 lines, qty > 0, price > 0,
             lineNet = round_half_up(qty × price, 4), net = Σ lineNet            (Money)
@@ -181,45 +181,65 @@ The payload is built by the **domain** (`toSalePostedPayload`), from the same `M
 the kernel re-runs. The kernel verifies the figures and never substitutes its own
 ([service-sale.md](../../posting-rules/service-sale.md) §4 rows 5–6).
 
-### 4.2 `RecordReceipt(command, idempotencyKey, actor)` — create and post, atomically
+### 4.2 Receipt drafts, then `PostReceipt(receiptId, { version }, idempotencyKey, actor)`
+
+**Receipts have drafts** (Product Owner, 2026-09-28, M3-Q1). A draft is a normal row with status
+`DRAFT`. It posts nothing to the GL, has no number, and holds **proposed** allocations. A
+proposal reserves nothing: it takes no lock, changes no invoice's outstanding, and is not in
+Invariant 9's SUB. Proposals become allocations only inside `PostReceipt`, under the invoice
+locks, after being re-validated there.
+
+| Use case | Transaction | Notes |
+|---|---|---|
+| `CreateReceiptDraft(command, key)` | insert the receipt (`DRAFT`) + proposal revision 1 | Only `customerId` and `receiptDate` are required. `method`, `amount` and the proposals may be empty. Advisory checks (R2's `problems`) come back with the response; nothing is refused for being incomplete |
+| `UpdateReceiptDraft(id, patch, version)` | receipt `FOR UPDATE` (1b), check `DRAFT` and `version`, update the header, and insert a new proposal revision when `allocations` is in the patch | Optimistic lock. No invoice lock, because proposals do not touch invoices |
+| `CancelReceiptDraft(id, version)` | receipt `FOR UPDATE`, `DRAFT → CANCELLED` | Terminal. No number is ever assigned |
 
 ```
-0  (outside the transaction) domain: command.assertWellFormed() — amount > 0, ≥ 1 allocation,
-   each > 0, no invoice twice, Σ allocations = amount exactly     (Money; cheap rejections first)
+PostReceipt:
 withTenant(tx =>
-  1  existing ← repo.findReceiptByIdempotencyKey(tx, key)
-     └ found, same fingerprint → REPLAY; found, different → IDEMPOTENCY_KEY_REUSED
-  2  customer ← customerDirectory.requireActiveForPosting(tx, customerId)             FOR SHARE
-  3  invoices ← repo.lockInvoicesForAllocation(tx, invoiceIds)   FOR UPDATE, ascending id, ONE AT A TIME
-     └ re-run step 1 now that the locks are held → REPLAY if a concurrent twin committed meanwhile
-  4  outstanding ← repo.outstandingOf(tx, invoiceIds)             net − Σ LIVE allocations, under the locks
-  5  domain: receipt.assertAllocatable(invoices, outstanding)     — same tenant (RLS) and same
-            customer, status POSTED, invoiceDate ≤ receiptDate, allocation ≤ outstanding
-  6  number ← documentNumbers.next(tx, { series: 'RCT', occurredAt: receiptDate })
-  7  repo.insertReceipt(tx, { id, number, status: 'POSTED', … }) + repo.insertAllocations(… LIVE)
-  8  entry  ← postingEngine.post({ event: CUSTOMER_PAYMENT_RECEIVED, referenceType: 'customer_receipt',
+  0  customerId ← repo.customerIdOfReceipt(tx, id)              plain read, no lock
+  1  customer ← customerDirectory.requireActiveForPosting(tx, customerId)   FOR SHARE  (1a)
+  2  receipt  ← repo.lockReceipt(tx, id)                        FOR UPDATE          (1b)
+     └ POSTED/REVERSED, post_idempotency_key = key, fingerprint matches → REPLAY
+     └ POSTED/REVERSED otherwise → SOURCE_ALREADY_POSTED;  CANCELLED → RECEIPT_NOT_DRAFT
+     └ receipt.version ≠ version, or customer_id ≠ customerId        → VERSION_CONFLICT
+  3  domain: receipt.assertComplete() — method set, amount > 0, ≥ 1 proposal, each > 0,
+            no invoice twice, Σ proposals = amount exactly           (Money)
+  4  invoices ← repo.lockInvoicesForAllocation(tx, proposedInvoiceIds)   FOR UPDATE, ascending id,
+                                                                          ONE AT A TIME       (1c)
+  5  outstanding ← repo.outstandingOf(tx, proposedInvoiceIds)     net − Σ LIVE allocations, under the locks
+  6  domain: receipt.assertAllocatable(invoices, outstanding)     — same customer, invoice POSTED,
+            invoiceDate ≤ receiptDate, proposal ≤ outstanding. A stale proposal fails HERE with
+            its specific error, naming the invoice; nothing is partially applied
+  7  number ← documentNumbers.next(tx, { series: 'RCT', occurredAt: receiptDate })    (5a)
+  8  repo.markPosted(tx, id, { number, postedBy, postIdempotencyKey, fingerprint })
+     repo.insertAllocations(tx, id, proposals → LIVE)
+  9  entry  ← postingEngine.post({ event: CUSTOMER_PAYMENT_RECEIVED, referenceType: 'customer_receipt',
                 referenceId: id, referenceNumber: number, occurredAt: receiptDate,
                 idempotencyKey: key, actor, payload: { customerId, method, amount, allocations } }, tx)
-  9  recordAudit(tx, 'customer_receipt.posted', …)
+                                                                                     (5b, 6)
+ 10  recordAudit(tx, 'customer_receipt.posted', …)                                  (6)
 )
 ```
 
-- The receipt id is generated in the application (`crypto.randomUUID()`) before step 7, so the
-  row and the entry's `referenceId` agree.
-- **The concurrent twin.** Two first-time requests with the same key both miss at step 1 and
-  serialise on the invoice locks at step 3. The loser gets the locks only after the winner has
-  committed. Under `READ COMMITTED` its re-check at step 3 then sees the winner's row, so it
-  returns a replay. Without the re-check it would carry on to step 4, see the winner's
-  allocations, and fail with `ALLOCATION_EXCEEDS_OUTSTANDING`: an error returned to a retry. The
-  unique index on `(tenant_id, idempotency_key)` is the backstop. If step 7 ever violates it, the
-  application retries the whole unit once and returns the replay. Any other unique violation is
-  re-thrown.
-- The receipt has **no stored `DRAFT` state**. The form is the draft. That is what
-  [customer-receipt.md](../../posting-rules/customer-receipt.md) §1 describes as the
-  `DRAFT → POSTED` transition, done in one request. The reason: allocations are only meaningful
-  under the invoice locks at posting time, and a saved draft would hold allocations that go stale.
-  PO question Q1 in [open-questions.md](open-questions.md) is whether the MVP needs saved receipt
-  drafts anyway.
+- **This matches the numbering rule.** The number is assigned in the posting transaction, after
+  validation, and a failure rolls it back ([posting-rules README](../../posting-rules/README.md) §4
+  "Numbering"; [customer-receipt.md](../../posting-rules/customer-receipt.md) §1, which already
+  describes a `DRAFT → POSTED` trigger that assigns `RCT-…`). Nothing needs flagging. The
+  Accounting seat is adding the draft wording to customer-receipt.md on
+  `feature/M3-000c-posting-rules`. This pack does not edit posting rules.
+- **The concurrent twin** (the same post sent twice) is serialised by the receipt's own row lock
+  at step 2. The second request sees `POSTED` with its own key and returns the replay. No
+  re-check is needed, which is simpler than the one-step design this replaces.
+- **Why proposals are a separate table.** `customer_receipt_allocations` keeps one meaning,
+  "this money settled this invoice" (`LIVE`), or "it did until the receipt was reversed"
+  (`VOIDED`). If proposals shared the table with a `PROPOSED` status, every outstanding query and
+  the Invariant 9 test would need to exclude them, and forgetting that once would under-state
+  receivables. See §7.
+- **Save and post from a fresh form** is two requests: create the draft, then post it. The UI
+  does this for its "Post" button on an unsaved form ([ui-plan.md](ui-plan.md) §3). There is no
+  one-shot create-and-post route, so there is exactly one posting path.
 
 ### 4.3 `ReverseInvoice(invoiceId, { reason }, key, actor)`
 
@@ -227,7 +247,7 @@ withTenant(tx =>
 withTenant(tx =>
   1  invoice ← repo.lockInvoice(tx, id)                        FOR UPDATE
      └ REVERSED with reverse_idempotency_key = key (same fingerprint) → REPLAY
-     └ REVERSED otherwise → ALREADY_REVERSED;  DRAFT/DISCARDED → INVOICE_NOT_POSTED
+     └ REVERSED otherwise → ALREADY_REVERSED;  DRAFT/CANCELLED → INVOICE_NOT_POSTED
   2  live ← repo.liveAllocationsTo(tx, id)                      under the invoice lock
      └ any → INVOICE_HAS_LIVE_ALLOCATIONS { receipts: [RCT-…] }  (PO-Q1 Option A)
   3  domain: assertReason(reason)                               non-empty after trim, ≤ 500
@@ -244,7 +264,7 @@ kernel refuses (for example `PERIOD_CLOSED` for today's period,
 `POSTED` again, as if nothing happened.
 
 Step 2 is safe without locking the allocation rows. Every writer of a LIVE allocation to this
-invoice (`RecordReceipt` step 3) must hold this invoice's row lock first, so while this
+invoice (`PostReceipt` step 4) must hold this invoice's row lock first, so while this
 transaction holds the lock, no LIVE allocation can appear. `ReverseReceipt` only ever turns
 allocations `VOIDED`. At worst, then, step 2 refuses a reversal that a moment later would have
 been allowed, and that is safe.
@@ -254,7 +274,7 @@ been allowed, and that is safe.
 ```
 withTenant(tx =>
   1  receipt ← repo.lockReceipt(tx, id)                        FOR UPDATE          (1b)
-     └ replay / ALREADY_REVERSED as in 4.3
+     └ replay / ALREADY_REVERSED as in 4.3;  DRAFT/CANCELLED → RECEIPT_NOT_POSTED
   2  repo.lockInvoicesForAllocation(tx, receipt.allocatedInvoiceIds)   ascending id, one at a time (1c)
   3  domain: assertReason(reason)
   4  repo.voidAllocations(tx, id)                               LIVE → VOIDED, never deleted
@@ -278,15 +298,19 @@ row without first holding the receipt's lock (1b), so these locks cannot wait.
 ```
 sales_invoices.status
 
-    ┌─────── DiscardInvoiceDraft ───────► DISCARDED    (terminal; never numbered)
+    ┌─────── CancelInvoiceDraft ───────► CANCELLED    (terminal; never numbered)
     │
   DRAFT ──── PostInvoice ────► POSTED ──── ReverseInvoice ────► REVERSED   (terminal)
     ▲  │
     └──┘ UpdateInvoiceDraft (version + 1)
 
-customer_receipts.status
+customer_receipts.status   (drafts: Product Owner, 2026-09-28)
 
-  (form) ── RecordReceipt ──► POSTED ──── ReverseReceipt ────► REVERSED   (terminal)
+    ┌─────── CancelReceiptDraft ───────► CANCELLED    (terminal; never numbered)
+    │
+  DRAFT ──── PostReceipt ────► POSTED ──── ReverseReceipt ────► REVERSED   (terminal)
+    ▲  │
+    └──┘ UpdateReceiptDraft (version + 1; a new proposal revision when allocations change)
 
 customer_receipt_allocations.status
 
@@ -294,10 +318,11 @@ customer_receipt_allocations.status
 ```
 
 - **No other transition exists.** A trigger in 015 and 016 rejects any other `status` change, any
-  change to a non-`DRAFT` invoice other than the one `POSTED → REVERSED` update of its reversal
-  columns, and any change to a posted invoice's lines ([ADR-0006](../../adr/ADR-0006-immutable-posted-transactions.md)).
-- **Discard, not delete.** ADR-0006 allows an audited deletion of a draft. M3 uses the stricter
-  form, a terminal `DISCARDED` status, because the base repository has no delete and no role is
+  change to a non-`DRAFT` invoice or receipt other than the one `POSTED → REVERSED` update of its
+  reversal columns, and any change to a posted invoice's lines or a posted receipt's proposals ([ADR-0006](../../adr/ADR-0006-immutable-posted-transactions.md)).
+- **Cancel, not delete.** ADR-0006 allows an audited deletion of a draft. M3 uses the stricter
+  form, a terminal `CANCELLED` status, for invoices and receipts alike (the Product Owner's word
+  for receipts, and used for invoices too so that one concept has one name), because the base repository has no delete and no role is
   granted `DELETE` (FND-005). Nothing is gained by being the first code in the repository that
   needs one.
 - **Settlement is derived, never stored.** For display, a `POSTED` invoice is `OPEN`
@@ -316,11 +341,14 @@ customer_receipt_allocations.status
 - **Outstanding** = `invoice.net_amount − Σ amount of LIVE allocations to it`. It is computed in
   SQL, never stored and never computed in the browser. For a `REVERSED` invoice it is reported as
   `0.0000`, and a reversed invoice cannot have LIVE allocations (§4.3 step 2).
-- **Manual.** The server accepts exactly the allocations submitted. Oldest-first is a
+- **Proposed on the draft, applied at post.** A draft receipt carries **proposals** in
+  `customer_receipt_draft_allocations`, which reserve nothing and are re-validated under the
+  invoice locks at post (§4.2). Only posting creates rows in `customer_receipt_allocations`.
+- **Manual.** The server applies exactly the proposals on the draft being posted. Oldest-first is a
   **suggestion** returned by `POST /api/receipts/preview`, computed server-side, so the browser
   never subtracts money (rule 19). It is never applied implicitly.
 - **No other mutation.** There is no endpoint to add, change or remove an allocation. Allocations
-  are created by `RecordReceipt` and voided by `ReverseReceipt`, and by nothing else.
+  are created by `PostReceipt` and voided by `ReverseReceipt`, and by nothing else.
 - `UNIQUE (tenant_id, receipt_id, invoice_id)`. Index `(tenant_id, invoice_id) WHERE status = 'LIVE'`
   for the outstanding computation.
 
@@ -336,7 +364,7 @@ triggers and grants belong to the Database seat.
 
 | Column | Type / rule |
 |---|---|
-| `code` | text, `^[A-Z0-9][A-Z0-9-]{1,19}$`, stored upper-case, `UNIQUE (tenant_id, code)`, immutable once created (Q2) |
+| `code` | text not null, **system-generated** at create from the tenant's `CUST` series (§10, Product Owner 2026-09-28), `^CUST-[0-9]{6,}$`, `UNIQUE (tenant_id, code)`, immutable (trigger). The API never accepts it |
 | `name` | text, 1–200 after trim |
 | `phone`, `email`, `address`, `city` | text, nullable; length-capped; `email` format-checked by the API schema, not the database |
 | `ntn` | text, nullable, `^[0-9]{7}-?[0-9]?$`. Stored only: no tax logic in the MVP |
@@ -349,15 +377,15 @@ triggers and grants belong to the Database seat.
 | Column | Type / rule |
 |---|---|
 | `customer_id` | FK `(tenant_id, customer_id) → customers` |
-| `status` | `DRAFT` \| `POSTED` \| `REVERSED` \| `DISCARDED` |
-| `number` | text, null while `DRAFT`/`DISCARDED`; `UNIQUE (tenant_id, number)`; `CHECK (status in ('POSTED','REVERSED')) = (number is not null)` |
+| `status` | `DRAFT` \| `POSTED` \| `REVERSED` \| `CANCELLED` |
+| `number` | text, null while `DRAFT`/`CANCELLED`; `UNIQUE (tenant_id, number)`; `CHECK (status in ('POSTED','REVERSED')) = (number is not null)` |
 | `invoice_date`, `due_date` | date (business date, tenant timezone). `due_date ≥ invoice_date` |
 | `narration` | text, nullable, ≤ 500 |
 | `net_amount` | numeric(19,4) ≥ 0, recomputed server-side on every draft save; > 0 enforced at post |
 | `lines_revision` | int — which revision of `sales_invoice_lines` is current (below) |
 | `posted_at`, `posted_by` | set exactly once, at post |
 | `reversed_at`, `reversed_by`, `reversal_reason` | set exactly once, at reversal |
-| `discarded_at`, `discarded_by` | set exactly once, at discard |
+| `cancelled_at`, `cancelled_by` | set exactly once, at cancel |
 | `create_idempotency_key`, `post_idempotency_key`, `reverse_idempotency_key` (+ `_fingerprint` each) | each `UNIQUE (tenant_id, …)` where not null |
 
 **015 `sales_invoice_lines`** — **insert-only**. `(tenant_id, invoice_id, revision, line_no)`
@@ -372,21 +400,30 @@ the parent is `DRAFT` and only at `lines_revision + 1`. Posting freezes the revi
 
 | Column | Type / rule |
 |---|---|
-| `customer_id` | FK → customers |
-| `number` | text not null, `UNIQUE (tenant_id, number)` |
-| `receipt_date` | date |
-| `method` | `CASH` \| `BANK` |
-| `amount` | numeric(19,4) > 0 |
+| `customer_id` | FK → customers, not null (a draft needs a customer) |
+| `status` | `DRAFT` \| `POSTED` \| `REVERSED` \| `CANCELLED` |
+| `number` | text, null while `DRAFT`/`CANCELLED`; `UNIQUE (tenant_id, number)`; `CHECK (status in ('POSTED','REVERSED')) = (number is not null)` |
+| `receipt_date` | date, not null (defaults to today on create) |
+| `method` | `CASH` \| `BANK`, **nullable while `DRAFT`**, not null once posted (CHECK) |
+| `amount` | numeric(19,4) > 0, **nullable while `DRAFT`**, not null once posted (CHECK) |
 | `reference` | text, nullable, ≤ 100 — bank reference or slip number |
 | `narration` | text, nullable, ≤ 500 |
-| `status` | `POSTED` \| `REVERSED` |
+| `proposals_revision` | int — the current revision of `customer_receipt_draft_allocations` |
 | `posted_at/by`, `reversed_at/by`, `reversal_reason` | as invoices |
-| `idempotency_key` (+ fingerprint) not null, `reverse_idempotency_key` (+ fingerprint) | `UNIQUE (tenant_id, …)` |
+| `cancelled_at`, `cancelled_by` | set exactly once, at cancel |
+| `create_idempotency_key`, `post_idempotency_key`, `reverse_idempotency_key` (+ `_fingerprint` each) | each `UNIQUE (tenant_id, …)` where not null |
+
+**016 `customer_receipt_draft_allocations`** — **insert-only**, the proposals.
+`(tenant_id, receipt_id, revision, invoice_id)` unique; `invoice_id` FK → invoices (composite);
+`amount` numeric(19,4) > 0. Same revision scheme as invoice lines: an insert is allowed only while
+the parent is `DRAFT` and only at `proposals_revision + 1`, and the current proposals are those
+at `revision = proposals_revision`. Never read by any outstanding or reconciliation query.
 
 **016 `customer_receipt_allocations`** — `receipt_id` FK → receipts, `invoice_id` FK → invoices
 (both composite), `amount` numeric(19,4) > 0, `status` `LIVE` | `VOIDED`, `voided_at`,
-`voided_by`. A trigger allows `LIVE → VOIDED` only while the parent receipt is transitioning to
-`REVERSED` in the same transaction. **A deferred constraint trigger asserts
+`voided_by`. Rows are inserted only by `PostReceipt`, while the parent goes `DRAFT → POSTED` in
+the same transaction. A trigger allows `LIVE → VOIDED` only while the parent receipt is
+transitioning to `REVERSED` in the same transaction. **A deferred constraint trigger asserts
 Σ allocations = receipt.amount at commit.** This is the one subledger rule the database can check
 for itself, so it does.
 
@@ -403,14 +440,16 @@ addition to the kernel's ([reversal.md](../../posting-rules/reversal.md) §8).
 
 | `action` | `entityType` | before → after |
 |---|---|---|
-| `customer.created` | `customer` | null → full record |
+| `customer.created` | `customer` | null → full record, including the generated `code` |
 | `customer.updated` | `customer` | changed fields only → changed fields only |
 | `customer.deactivated` / `customer.reactivated` | `customer` | `{status}` → `{status}` |
 | `sales_invoice.draft_created` / `draft_updated` | `sales_invoice` | header + lines of the previous / new revision |
-| `sales_invoice.draft_discarded` | `sales_invoice` | `{status: DRAFT}` → `{status: DISCARDED}` |
+| `sales_invoice.draft_cancelled` | `sales_invoice` | `{status: DRAFT}` → `{status: CANCELLED}` |
 | `sales_invoice.posted` | `sales_invoice` | `{status: DRAFT}` → `{status, number, netAmount, journalEntryId}` |
 | `sales_invoice.reversed` | `sales_invoice` | `{status: POSTED}` → `{status, reason, reversalEntryId}` |
-| `customer_receipt.posted` | `customer_receipt` | null → `{number, customerId, method, amount, allocations[], journalEntryId}` |
+| `customer_receipt.draft_created` / `draft_updated` | `customer_receipt` | header + proposals of the previous / new revision |
+| `customer_receipt.draft_cancelled` | `customer_receipt` | `{status: DRAFT}` → `{status: CANCELLED}` |
+| `customer_receipt.posted` | `customer_receipt` | `{status: DRAFT}` → `{status, number, customerId, method, amount, allocations[], journalEntryId}` |
 | `customer_receipt.reversed` | `customer_receipt` | `{status: POSTED}` → `{status, reason, reversalEntryId, voidedAllocations[]}` |
 
 The audit call is the **last** statement of every unit of work, as position 6 requires.
@@ -422,11 +461,15 @@ The audit call is the **last** statement of every unit of work, as position 6 re
 | Create customer | `Idempotency-Key` header | `customers.create_idempotency_key` | the created customer, `201` | `409 IDEMPOTENCY_KEY_REUSED` |
 | Create invoice draft | header | `sales_invoices.create_idempotency_key` | the draft, `201` | `409 IDEMPOTENCY_KEY_REUSED` |
 | Post invoice | header | `sales_invoices.post_idempotency_key` **and** the kernel's key table | the posted invoice, `200` | `409 IDEMPOTENCY_KEY_REUSED` |
-| Record receipt | header | `customer_receipts.idempotency_key` **and** the kernel | the receipt, `201` | `409 IDEMPOTENCY_KEY_REUSED` |
+| Create receipt draft | header | `customer_receipts.create_idempotency_key` | the draft, `201` | `409 IDEMPOTENCY_KEY_REUSED` |
+| Post receipt | header | `customer_receipts.post_idempotency_key` **and** the kernel | the posted receipt, `200` | `409 IDEMPOTENCY_KEY_REUSED` |
 | Reverse invoice / receipt | header | `*.reverse_idempotency_key` **and** the kernel | the reversed document, `200` | `409 IDEMPOTENCY_KEY_REUSED` |
-| Update / discard draft, update customer | none; optimistic `version` | — | — | `409 VERSION_CONFLICT` on a stale version |
+| Update / cancel draft, update customer | none; optimistic `version` | — | — | `409 VERSION_CONFLICT` on a stale version |
 
-- The **module** answers a replay before it reaches the kernel (§4, step 1 of each). The kernel's
+- **Customer create depends on its key.** With system-generated codes, the key is the only thing
+  that stops a double-click from creating `CUST-000007` and `CUST-000008` for the same business.
+  There is no natural key left to collide on.
+- The **module** answers a replay before it reaches the kernel (§4, at the step that locks the document). The kernel's
   own idempotency (step 2 of ADR-0005) is the second line of defence. Both use the same client
   key, so a module bug that let a retry through would get the kernel's `REPLAYED`, never a second
   entry.
@@ -445,8 +488,27 @@ The audit call is the **last** statement of every unit of work, as position 6 re
 kernel (K3), in the posting transaction, after the module's own validation. A rejection anywhere
 later, including inside the kernel, rolls the transaction back, so no number is consumed and the
 series is gapless on the success path (rule 12; [posting-rules README](../../posting-rules/README.md)
-§4 "Numbering"). Drafts and discarded drafts are never numbered. Customer codes are not document
-numbers and do not use `document_sequences`.
+§4 "Numbering"). Drafts and cancelled drafts, invoice and receipt alike, are never numbered.
+
+**Customer codes — decided.** The Product Owner decided on 2026-09-28 (M3-Q2) that codes are
+system-generated. `CreateCustomer` takes the next number of the tenant's **`CUST`** series from
+`document_sequences` through the kernel's facility (K7) in the create transaction:
+`CUST-000001`, `CUST-000002`, …. A rolled-back create consumes no number. The code is immutable
+and unique per tenant.
+
+- **One series per tenant, not per fiscal year.** A customer code is the permanent identity of a
+  master record. It is not a document dated inside a period. With a per-year series, `CUST-000001`
+  would recur every July, and the code would need the year in it to stay unique (`CUST-2027-…`).
+  A customer created in 2026 would then still read "2027" a decade later, a date that means
+  nothing about the customer. Creating a customer is also not a posting, so it has no period to
+  resolve and nothing to gain from the FY facility. This is why K7 needs a series with no
+  fiscal-year scope in migration 013.
+- **Six digits, like every other series.** The PO's example was `CUST-0001`. Six digits match
+  the `NNNNNN` width of every document series ([posting-rules README](../../posting-rules/README.md)
+  §4), give 999,999 codes before the width grows, and keep lexical order equal to creation order.
+  Past `CUST-999999` the number simply gets longer. It is never truncated and never wraps.
+- Using the kernel's numbering facility from `customers` is a module calling a kernel, which is
+  allowed. It is the same row-locked counter, so it is at lock position 5a (below).
 
 **Lock order — to be entered in [LOCK_REGISTRY.md](../../LOCK_REGISTRY.md) by M3-P's PR** (this
 seat owns the register; the Database seat reviews the SQL):
@@ -454,23 +516,23 @@ seat owns the register; the Database seat reviews the SQL):
 | New position (before today's #2) | Lock | Mode | Taken by |
 |---|---|---|---|
 | **1a** | `customers` row | `FOR SHARE` (posting) · `FOR UPDATE` (deactivate, reactivate, update) | `requireActiveForPosting`, customer mutations |
-| **1b** | `customer_receipts` row | `FOR UPDATE` | `ReverseReceipt` |
-| **1c** | `sales_invoices` rows | `FOR UPDATE`, **ascending `id`, one statement per row** (the migration-008 lesson: `ORDER BY … FOR UPDATE` does not fix acquisition order) | `PostInvoice`, `RecordReceipt`, `ReverseInvoice`, `ReverseReceipt`, draft update and discard |
+| **1b** | `customer_receipts` row | `FOR UPDATE` | `PostReceipt`, `ReverseReceipt`, receipt draft update and cancel |
+| **1c** | `sales_invoices` rows | `FOR UPDATE`, **ascending `id`, one statement per row** (the migration-008 lesson: `ORDER BY … FOR UPDATE` does not fix acquisition order) | `PostInvoice`, `PostReceipt`, `ReverseInvoice`, `ReverseReceipt`, draft update and cancel |
 | **1d** | `customer_receipt_allocations` rows of one receipt | row locks of the `LIVE → VOIDED` `UPDATE` (a single statement) | `ReverseReceipt` only, and only while holding 1b |
 | 2–4 | stock (future) | | Wave 5+. Document rows come first, so a Wave 7 stock sale keeps this order |
-| **5a** | `document_sequences` row of a **document** series (`INV`, `RCT`) | `FOR UPDATE` | `documentNumbers.next` |
+| **5a** | `document_sequences` row of a **document** series (`INV`, `RCT`) or of the master series `CUST` | `FOR UPDATE` | `documentNumbers.next` (`CUST` only in `CreateCustomer`, which takes no other 5a row) |
 | **5b** | `document_sequences` row of an **entry** series (`JE`, `RV`, `JV`) | `FOR UPDATE` | inside `post` / `reverseForSource` |
 | 6 | audit, terminal | | `recordAudit` |
 
 A transaction takes at most one 5a row and one 5b row, 5a first. No transaction in §4 takes any
 lock out of this order. Two reads are not locks and so are not ordered: §4.1 step 0 and the
-unlocked outstanding sum in §4.2 step 4, which runs under the 1c locks. Note that
+unlocked outstanding sum in §4.2 step 5, which runs under the 1c locks. Note that
 `FOR SHARE` on `customers` (1a) conflicts with the `FOR UPDATE` of a deactivation. That is the
 point: a deactivation waits for in-flight postings, then reads the balance they produced. The concurrency tests in [README](README.md) §7 prove it with two
 connections.
 
 **Isolation.** `READ COMMITTED` with the explicit locks above ([ARCHITECTURE](../../ARCHITECTURE.md)
-§7). The outstanding computation (§4.2 step 4) runs **after** the invoice locks, so it sees every
+§7). The outstanding computation (§4.2 step 5) runs **after** the invoice locks, so it sees every
 committed allocation to those invoices.
 
 ## 11. Where the query code lives — ruling
