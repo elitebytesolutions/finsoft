@@ -114,3 +114,5 @@ The signed body is not edited; this note overrides it where the two differ.
    and a failing fixture for a directory that does not exist.
 
 Database/Security seat — 2026-09-29 — accepts point 2 (S4 owner widening).
+
+Architecture seat — 2026-09-29 — countersigns the amendment (points 1 and 2).
