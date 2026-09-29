@@ -63,11 +63,41 @@ function requireUuidPathParam(id: string): void {
   }
 }
 
+/**
+ * Only `getOne` below calls this — it is the one route with no mutation of
+ * its own, so it is the only place a FRESH `withTenant` read is correct.
+ * Every mutating route (create/update/cancel/post/reverse) instead reads its
+ * DTO fields off the use case's OWN result (R1, Architecture seat, Council
+ * review of efb7e3f — one request, one transaction; see
+ * `loadInvoiceReadModel` in `modules/receivables/application/get-invoice.ts`).
+ */
 async function buildInvoiceDto(
   id: string,
   journalEntry: { readonly id: string; readonly number: string } | null = null,
 ) {
   const result = await receivables.getInvoice(id)
+  return toInvoiceDto(
+    result.invoice,
+    result.customer,
+    result.lines,
+    result.outstanding,
+    result.allocations,
+    result.reversalBlockedBy,
+    journalEntry,
+  )
+}
+
+function invoiceDtoFromReadModel(
+  result: {
+    readonly invoice: Parameters<typeof toInvoiceDto>[0]
+    readonly customer: Parameters<typeof toInvoiceDto>[1]
+    readonly lines: Parameters<typeof toInvoiceDto>[2]
+    readonly outstanding: Parameters<typeof toInvoiceDto>[3]
+    readonly allocations: Parameters<typeof toInvoiceDto>[4]
+    readonly reversalBlockedBy: Parameters<typeof toInvoiceDto>[5]
+  },
+  journalEntry: { readonly id: string; readonly number: string } | null = null,
+) {
   return toInvoiceDto(
     result.invoice,
     result.customer,
@@ -123,7 +153,7 @@ export class InvoicesController {
         idempotencyKey,
         actor: { userId: auth.userId },
       })
-      return buildInvoiceDto(result.invoice.id)
+      return invoiceDtoFromReadModel(result)
     } catch (error) {
       if (isReceivablesRoutableError(error)) throw mapReceivablesError(error)
       throw error
@@ -164,7 +194,7 @@ export class InvoicesController {
         expectedVersion: body.version,
         actor: { userId: auth.userId },
       })
-      return buildInvoiceDto(result.id)
+      return invoiceDtoFromReadModel(result)
     } catch (error) {
       if (isReceivablesRoutableError(error)) throw mapReceivablesError(error, true)
       throw error
@@ -188,7 +218,7 @@ export class InvoicesController {
         expectedVersion: body.version,
         actor: { userId: auth.userId },
       })
-      return buildInvoiceDto(result.id)
+      return invoiceDtoFromReadModel(result)
     } catch (error) {
       if (isReceivablesRoutableError(error)) throw mapReceivablesError(error, true)
       throw error
@@ -223,7 +253,10 @@ export class InvoicesController {
         idempotencyKey,
         actor: { userId: auth.userId },
       })
-      return buildInvoiceDto(id, { id: result.journalEntryId, number: result.journalEntryNumber })
+      return invoiceDtoFromReadModel(result, {
+        id: result.journalEntryId,
+        number: result.journalEntryNumber,
+      })
     } catch (error) {
       if (isReceivablesRoutableError(error)) throw mapReceivablesError(error, true)
       throw error
@@ -249,7 +282,10 @@ export class InvoicesController {
         idempotencyKey,
         actor: { userId: auth.userId },
       })
-      return buildInvoiceDto(id, { id: result.journalEntryId, number: result.journalEntryNumber })
+      return invoiceDtoFromReadModel(result, {
+        id: result.journalEntryId,
+        number: result.journalEntryNumber,
+      })
     } catch (error) {
       if (isReceivablesRoutableError(error)) throw mapReceivablesError(error, true)
       throw error

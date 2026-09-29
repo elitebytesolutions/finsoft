@@ -6,13 +6,13 @@ import {
   normalizeNarration,
   normalizeReference,
   type AllocationInput,
-  type Receipt,
   type ReceiptMethod,
 } from '../domain/receipt.ts'
 import { ReceivablesError } from '../domain/errors.ts'
 import type { Actor } from './actor.ts'
 import { computeCommandFingerprint } from './fingerprint.ts'
-import type { ReceiptsRepository } from './ports.ts'
+import { loadReceiptReadModel, type GetReceiptResult } from './get-receipt.ts'
+import type { InvoicesRepository, ReceiptsRepository } from './ports.ts'
 
 /*
  * CreateReceiptDraft (R3). customer-receipt.md §1.1 rule 4: "a draft may be
@@ -35,13 +35,13 @@ export interface CreateReceiptDraftCommand {
   readonly actor: Actor
 }
 
-export interface CreateReceiptDraftResult {
-  readonly receipt: Receipt
+export interface CreateReceiptDraftResult extends GetReceiptResult {
   readonly replayed: boolean
 }
 
 export function createCreateReceiptDraft(
   repo: ReceiptsRepository,
+  invoicesRepo: InvoicesRepository,
   customerDirectory: CustomerDirectory,
 ) {
   return async function createReceiptDraft(
@@ -74,10 +74,36 @@ export function createCreateReceiptDraft(
             `idempotencyKey "${command.idempotencyKey}" was already used for a different request.`,
           )
         }
-        return { receipt: prior.receipt, replayed: true }
+        const readModel = await loadReceiptReadModel(
+          tx,
+          prior.receipt,
+          repo,
+          invoicesRepo,
+          customerDirectory,
+        )
+        return { ...readModel, replayed: true }
       }
 
       await customerDirectory.requireForPayment(tx, command.customerId)
+
+      // S-D (Security seat, Council review of efb7e3f): a foreign-tenant
+      // (or simply unknown) invoiceId in a proposal must be a typed
+      // INVOICE_NOT_FOUND (422, api-contract.md §3 "in allocations[]"), not
+      // a raw 23503 from the composite FK when the proposal row is
+      // inserted. `existingIds` is scoped to the tenant, so an id from
+      // another tenant is indistinguishable from an unknown one.
+      if (command.allocations.length > 0) {
+        const invoiceIds = [...new Set(command.allocations.map((a) => a.invoiceId))]
+        const found = await invoicesRepo.existingIds(tx, invoiceIds)
+        for (const invoiceId of invoiceIds) {
+          if (!found.has(invoiceId)) {
+            throw new ReceivablesError('INVOICE_NOT_FOUND', `invoice ${invoiceId} was not found.`, {
+              invoiceId,
+            })
+          }
+        }
+      }
+
       const receiptDate = command.receiptDate ?? (await repo.today(tx))
 
       const receipt = await repo.createDraft(tx, {
@@ -112,7 +138,14 @@ export function createCreateReceiptDraft(
         },
       })
 
-      return { receipt, replayed: false }
+      const readModel = await loadReceiptReadModel(
+        tx,
+        receipt,
+        repo,
+        invoicesRepo,
+        customerDirectory,
+      )
+      return { ...readModel, replayed: false }
     })
   }
 }

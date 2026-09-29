@@ -152,6 +152,16 @@ export interface InvoicesRepository {
   /** invoice.net_amount − Σ amount of LIVE allocations, computed in SQL (modules.md §6). */
   outstandingOf(tx: TenantTx, ids: readonly string[]): Promise<ReadonlyMap<string, string>>
 
+  /**
+   * Which of `ids` name an invoice IN THIS TENANT — no lock, existence only.
+   * S-D (Security seat, Council review of efb7e3f): a receipt draft's
+   * proposed allocations name invoices by id from the request body; an id
+   * belonging to another tenant (or no invoice at all) must be a typed
+   * INVOICE_NOT_FOUND (422) at save time, not a raw 23503 from the
+   * composite FK when the proposal row is inserted.
+   */
+  existingIds(tx: TenantTx, ids: readonly string[]): Promise<ReadonlySet<string>>
+
   /** Every allocation (LIVE and VOIDED) ever made to this invoice, for the detail view. */
   allocationsOf(tx: TenantTx, id: string): Promise<readonly InvoiceAllocationView[]>
 

@@ -276,7 +276,7 @@ CREATE INDEX sales_invoice_lines_tenant_invoice_revision_idx
   ON sales_invoice_lines (tenant_id, invoice_id, revision);
 
 COMMENT ON TABLE sales_invoice_lines IS
-  'Insert-only, revisioned invoice lines (modules.md §7). The CURRENT lines of an invoice are those at revision = sales_invoices.lines_revision — earlier revisions are kept and never read. There is no UPDATE or DELETE privilege on this table for any role — see sales_invoice_lines_enforce_revision.';
+  'Insert-only, revisioned invoice lines (modules.md §7). The CURRENT lines of an invoice are those at revision = sales_invoices.lines_revision — earlier revisions are kept and never read. UPDATE, DELETE and TRUNCATE are forbidden for every role, including the table owner, by sales_invoice_lines_forbid_mutation — grants alone are not the enforcement point.';
 
 -- ---------------------------------------------------------------------------
 -- A line insert is allowed only while the parent is DRAFT, and only at
@@ -323,6 +323,33 @@ CREATE TRIGGER sales_invoice_lines_enforce_revision
   FOR EACH ROW EXECUTE FUNCTION sales_invoice_lines_enforce_revision();
 
 -- ---------------------------------------------------------------------------
+-- INSERT-only: no UPDATE, no DELETE, no TRUNCATE, for any role including the
+-- owner. Security seat, Council review of efb7e3f (S-A): the privilege
+-- layer (below) stops finsoft_app; this stops the migration role and
+-- anything else that owns or is granted the table — the same doctrine as
+-- parties_forbid_mutation (migration 012) and journal_lines' own trigger.
+-- ---------------------------------------------------------------------------
+CREATE FUNCTION sales_invoice_lines_forbid_mutation() RETURNS trigger
+LANGUAGE plpgsql AS $fn$
+BEGIN
+  RAISE EXCEPTION 'sales_invoice_lines is insert-only (modules.md §7): % is forbidden, on every role including the table owner.', TG_OP
+    USING ERRCODE = 'insufficient_privilege';
+END;
+$fn$;
+
+CREATE TRIGGER sales_invoice_lines_no_update
+  BEFORE UPDATE ON sales_invoice_lines
+  FOR EACH ROW EXECUTE FUNCTION sales_invoice_lines_forbid_mutation();
+
+CREATE TRIGGER sales_invoice_lines_no_delete
+  BEFORE DELETE ON sales_invoice_lines
+  FOR EACH ROW EXECUTE FUNCTION sales_invoice_lines_forbid_mutation();
+
+CREATE TRIGGER sales_invoice_lines_no_truncate
+  BEFORE TRUNCATE ON sales_invoice_lines
+  FOR EACH STATEMENT EXECUTE FUNCTION sales_invoice_lines_forbid_mutation();
+
+-- ---------------------------------------------------------------------------
 -- Row level security
 -- ---------------------------------------------------------------------------
 ALTER TABLE sales_invoices ENABLE ROW LEVEL SECURITY;
@@ -346,14 +373,27 @@ COMMENT ON POLICY tenant_isolation ON sales_invoice_lines IS
   'ADR-0004. USING filters reads; WITH CHECK stops a row being written under another tenant_id. Both are always present.';
 
 -- ---------------------------------------------------------------------------
--- Grants. DELETE to nobody, anywhere (rule 4). sales_invoice_lines has no
--- UPDATE grant either — insert-only (modules.md §7).
+-- Grants. Security seat, Council review of efb7e3f (S-A): REVOKE before
+-- every narrow GRANT, on every table finsoft_app touches — the bootstrap
+-- role's own default-privilege setting (FND-005; see e.g. migration 010's
+-- own header note) hands every new table table-level SELECT/INSERT/UPDATE,
+-- so a narrow GRANT with no REVOKE ahead of it is a no-op: the ambient
+-- table-level grant is still there underneath it.
+-- `REVOKE INSERT, UPDATE ... FROM finsoft_app` (not `REVOKE ALL`) is the one
+-- idiom S-GRANT's REVOKE_SHAPE accepts (database/tests/migration-ownership.
+-- spec.ts) — it is also sufficient: DELETE is never in the default
+-- privileges FND-005 sets (SELECT/INSERT/UPDATE only), so there is nothing
+-- else to strip. DELETE to nobody, anywhere (rule 4).
 -- ---------------------------------------------------------------------------
 REVOKE INSERT, UPDATE ON sales_invoices FROM finsoft_app;
 
 GRANT SELECT ON sales_invoices TO finsoft_app;
+-- No `id` in this list — sales_invoices.id is DEFAULT gen_random_uuid(),
+-- never caller-supplied (unlike customers.id, which comes from the
+-- kernel's registerParty and needs INSERT). S-A: keep the grant to the
+-- columns the code actually writes.
 GRANT INSERT (
-  tenant_id, id, customer_id, status, invoice_date, due_date, narration,
+  tenant_id, customer_id, status, invoice_date, due_date, narration,
   net_amount, lines_revision, create_idempotency_key, create_fingerprint,
   created_by, updated_by
 ) ON sales_invoices TO finsoft_app;
@@ -367,9 +407,15 @@ GRANT UPDATE (
 
 GRANT SELECT ON sales_invoices TO readonly_support;
 
+-- sales_invoice_lines: insert-only (modules.md §7) — REVOKE UPDATE strips
+-- the ambient default-privilege grant; there is no re-grant, because there
+-- is no legitimate UPDATE at all (sales_invoice_lines_forbid_mutation,
+-- above, is the second, role-independent line of defence).
+REVOKE INSERT, UPDATE ON sales_invoice_lines FROM finsoft_app;
+
 GRANT SELECT ON sales_invoice_lines TO finsoft_app;
 GRANT INSERT (
-  tenant_id, id, invoice_id, revision, line_no, kind, description, quantity,
+  tenant_id, invoice_id, revision, line_no, kind, description, quantity,
   unit_price, line_net, created_by, updated_by
 ) ON sales_invoice_lines TO finsoft_app;
 

@@ -818,22 +818,18 @@ function tableOwnershipSyntax(table) {
  * `customer_receipt_draft_allocations`, `customer_receipt_allocations`),
  * all created by ITS OWN migrations (016, 017) — one module, one
  * infrastructure directory, five tables it may name. Same literal-only,
- * fails-closed shape as `tableOwnershipSyntax`.
+ * fails-closed shape as `tableOwnershipSyntax`, PLUS the same "no sql`` tag
+ * at all" sub-rule customers has.
  *
- * Deliberately does NOT restate customers' extra "no sql`` tag at all"
- * sub-rule (nor KYSELY_SQL_IMPORT_BAN, below): that was a strictness
- * customers' own repository happened to earn for free, not a C8/S2
- * requirement — the ADR text itself bans only `sql.table`, `sql.ref`,
- * `db.dynamic`, `CompiledQuery` and `executeQuery` (all still banned here
- * via `noDynamicTableEscapeHatchSyntax`, already applied module-wide).
- * `modules/receivables/infrastructure/**` uses the plain `sql` tag for
- * non-table-bearing expressions only — `now()`, an ISO date cast
- * (`${iso}::date`, mirroring `packages/database/src/accounting/
- * calendar-date.ts`'s own `sqlDate`) and the outstanding aggregate's
- * `SUM(...)` — never a table name, so the two escapes S2's Security-seat
- * correction closed (fragment composition, a second comma-joined table)
- * have nothing to hide inside here: no table identifier ever appears
- * inside a `sql` template in this directory.
+ * Security seat, Council review of efb7e3f (S-B): the earlier version of
+ * this function argued the plain `sql` tag was safe here because every use
+ * was non-table-bearing (`now()`, an ISO date cast, the outstanding
+ * aggregate's `SUM(...)`). Rejected — the point of banning the tag ENTIRELY,
+ * not auditing each use, is exactly that a reviewer must not have to keep
+ * proving every call site is still safe as the file changes; the repository
+ * has since been rewritten to use Kysely helpers instead
+ * (`eb.fn('now', [])`, `eb.cast(eb.val(iso), 'date')`, `eb.fn.sum(...)`,
+ * `eb('version', '+', 1)`), so the ban now costs nothing real here either.
  */
 function multiTableOwnershipSyntax(tables, moduleName) {
   const allowedLiteral = `/^(${tables.join('|')})(\\s+as\\s+[A-Za-z_][A-Za-z0-9_]*)?$/`
@@ -854,6 +850,17 @@ function multiTableOwnershipSyntax(tables, moduleName) {
         `CallExpression[callee.property.name=/^(${BUILDER_METHODS})$/]` +
         `:not([arguments.0.type='Literal'])`,
       message,
+    },
+    {
+      // S2 (Security seat): no sql`` tag at all in this directory, under
+      // any spelling — see tableOwnershipSyntax's identical clause and its
+      // own header note on the two escapes ("fragment composition" and "a
+      // second comma-joined table") that a per-use audit cannot close.
+      selector: "TaggedTemplateExpression[tag.name='sql']",
+      message:
+        `S2 (ADR-0028): modules/${moduleName}/infrastructure/** does not use the sql\`\` tag at all — ` +
+        'every read and write goes through the Kysely builder, whose table argument the ' +
+        'selectors above check literally and fail closed on.',
     },
   ]
 }
@@ -1753,8 +1760,8 @@ export default tseslint.config(
 
   /* ---------------------------------------------------------------- *
    * C8 / S2 (ADR-0028), M3-P: modules/receivables/infrastructure/** names
-   * only its own FIVE tables — see multiTableOwnershipSyntax's own header
-   * for why this block, unlike customers', keeps `sql` importable.
+   * only its own FIVE tables, and — Security seat, Council review of
+   * efb7e3f (S-B) — bans the sql`` tag exactly as customers' block does.
    * ---------------------------------------------------------------- */
   {
     files: ['modules/receivables/infrastructure/**/*.ts'],
@@ -1763,7 +1770,11 @@ export default tseslint.config(
       'no-restricted-imports': [
         'error',
         {
-          paths: [...MODULES_IMPORT_BAN_PATHS, WITHTENANT_OUTSIDE_APPLICATION_BAN],
+          paths: [
+            ...MODULES_IMPORT_BAN_PATHS,
+            WITHTENANT_OUTSIDE_APPLICATION_BAN,
+            KYSELY_SQL_IMPORT_BAN,
+          ],
           patterns: [
             {
               group: ['@nestjs/*', 'express', 'fastify'],

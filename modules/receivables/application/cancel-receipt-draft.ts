@@ -1,8 +1,9 @@
 import { recordAudit, withTenant } from '@finsoft/database'
-import type { Receipt } from '../domain/receipt.ts'
+import type { CustomerDirectory } from '@finsoft/customers/published'
 import { ReceivablesError } from '../domain/errors.ts'
 import type { Actor } from './actor.ts'
-import type { ReceiptsRepository } from './ports.ts'
+import { loadReceiptReadModel, type GetReceiptResult } from './get-receipt.ts'
+import type { InvoicesRepository, ReceiptsRepository } from './ports.ts'
 
 /** CancelReceiptDraft (R7). Terminal; never numbered (customer-receipt.md §1.1). */
 export interface CancelReceiptDraftCommand {
@@ -11,8 +12,14 @@ export interface CancelReceiptDraftCommand {
   readonly actor: Actor
 }
 
-export function createCancelReceiptDraft(repo: ReceiptsRepository) {
-  return async function cancelReceiptDraft(command: CancelReceiptDraftCommand): Promise<Receipt> {
+export function createCancelReceiptDraft(
+  repo: ReceiptsRepository,
+  invoicesRepo: InvoicesRepository,
+  customerDirectory: CustomerDirectory,
+) {
+  return async function cancelReceiptDraft(
+    command: CancelReceiptDraftCommand,
+  ): Promise<GetReceiptResult> {
     return withTenant(async (tx) => {
       const existing = await repo.lockForUpdate(tx, command.id)
       if (!existing) {
@@ -39,7 +46,7 @@ export function createCancelReceiptDraft(repo: ReceiptsRepository) {
         afterJson: { status: 'CANCELLED' },
       })
 
-      return updated
+      return loadReceiptReadModel(tx, updated, repo, invoicesRepo, customerDirectory)
     })
   }
 }

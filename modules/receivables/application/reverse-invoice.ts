@@ -1,9 +1,11 @@
 import { recordAudit, withTenant } from '@finsoft/database'
 import { reversalEngine } from '@finsoft/accounting-kernel'
-import { assertReasonValid, type Invoice } from '../domain/invoice.ts'
+import type { CustomerDirectory } from '@finsoft/customers/published'
+import { assertReasonValid } from '../domain/invoice.ts'
 import { ReceivablesError } from '../domain/errors.ts'
 import type { Actor } from './actor.ts'
 import { computeCommandFingerprint } from './fingerprint.ts'
+import { loadInvoiceReadModel, type GetInvoiceResult } from './get-invoice.ts'
 import type { InvoicesRepository } from './ports.ts'
 
 /*
@@ -24,14 +26,16 @@ export interface ReverseInvoiceCommand {
   readonly actor: Actor
 }
 
-export interface ReverseInvoiceResult {
-  readonly invoice: Invoice
+export interface ReverseInvoiceResult extends GetInvoiceResult {
   readonly journalEntryId: string
   readonly journalEntryNumber: string
   readonly replayed: boolean
 }
 
-export function createReverseInvoice(repo: InvoicesRepository) {
+export function createReverseInvoice(
+  repo: InvoicesRepository,
+  customerDirectory: CustomerDirectory,
+) {
   return async function reverseInvoice(
     command: ReverseInvoiceCommand,
   ): Promise<ReverseInvoiceResult> {
@@ -107,8 +111,9 @@ export function createReverseInvoice(repo: InvoicesRepository) {
         })
       }
 
+      const readModel = await loadInvoiceReadModel(tx, reversedInvoice, repo, customerDirectory)
       return {
-        invoice: reversedInvoice,
+        ...readModel,
         journalEntryId: rev.journalEntryId,
         journalEntryNumber: rev.entry.entryNumber,
         replayed: rev.outcome === 'REPLAYED',

@@ -52,7 +52,7 @@ export interface CustomerLedgerLine {
   readonly entryNumber: string
   readonly sourceType: 'sales_invoice' | 'customer_receipt' | 'journal_voucher' | null
   readonly sourceId: string | null
-  /** INV-… / RCT-… (K4). Null until M3-P's documents carry a referenceNumber. */
+  /** INV-… / RCT-… (K4). Null for a journal voucher, which has no source document number of its own. */
   readonly sourceNumber: string | null
   readonly narration: string
   readonly debit: string

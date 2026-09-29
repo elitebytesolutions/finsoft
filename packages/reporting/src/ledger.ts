@@ -34,6 +34,8 @@ export interface AccountLedgerLine {
   readonly narration: string
   readonly sourceType: string
   readonly sourceId: string
+  /** K4: the source document's own number (INV-…/RCT-…). Null for a JV, which has no separate document number of its own. */
+  readonly sourceNumber: string | null
   /** Set when this entry is itself a reversal of another. */
   readonly reversalOf: string | null
   /** Set when this entry has since been reversed by another. */
@@ -73,6 +75,7 @@ function toLine(row: LedgerLineRow, runningBalance: string): AccountLedgerLine {
     narration: row.narration,
     sourceType: row.sourceType,
     sourceId: row.sourceId,
+    sourceNumber: row.reference,
     reversalOf: row.reversalOf,
     reversedBy: row.reversedBy,
     debit: row.debit,

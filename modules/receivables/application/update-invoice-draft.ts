@@ -3,11 +3,11 @@ import type { CustomerDirectory } from '@finsoft/customers/published'
 import {
   computeInvoiceLines,
   normalizeNarration,
-  type Invoice,
   type InvoiceLineInput,
 } from '../domain/invoice.ts'
 import { ReceivablesError } from '../domain/errors.ts'
 import type { Actor } from './actor.ts'
+import { loadInvoiceReadModel, type GetInvoiceResult } from './get-invoice.ts'
 import type { InvoicesRepository } from './ports.ts'
 
 /** UpdateInvoiceDraft (I4) — full replacement of a DRAFT's header + lines. */
@@ -34,8 +34,19 @@ export function createUpdateInvoiceDraft(
   repo: InvoicesRepository,
   customerDirectory: CustomerDirectory,
 ) {
-  return async function updateInvoiceDraft(command: UpdateInvoiceDraftCommand): Promise<Invoice> {
+  return async function updateInvoiceDraft(
+    command: UpdateInvoiceDraftCommand,
+  ): Promise<GetInvoiceResult> {
     return withTenant(async (tx) => {
+      // LOCK_REGISTRY 1a before 1c (Security seat, Council review of
+      // efb7e3f, S-C): the customer is locked FOR SHARE before the invoice
+      // row, exactly as PostInvoice does — a lock order with an exception
+      // for drafts is a lock order the next change forgets. CUSTOMER_INACTIVE
+      // on I4 (api-contract.md §3) is re-checked even when customerId is
+      // unchanged — a customer can be deactivated between two edits of the
+      // same draft.
+      const customer = await customerDirectory.requireActiveForPosting(tx, command.customerId)
+
       const existing = await repo.lockForUpdate(tx, command.id)
       if (!existing) {
         throw new ReceivablesError('INVOICE_NOT_FOUND', `invoice ${command.id} was not found.`, {
@@ -45,10 +56,6 @@ export function createUpdateInvoiceDraft(
       existing.assertVersion(command.expectedVersion)
       existing.assertDraft()
 
-      // CUSTOMER_INACTIVE on I4 (api-contract.md §3): re-checked even when
-      // customerId is unchanged — a customer can be deactivated between two
-      // edits of the same draft.
-      const customer = await customerDirectory.requireActiveForPosting(tx, command.customerId)
       const calculation = computeInvoiceLines(command.lines, { requireAtLeastOne: false })
       const narration = normalizeNarration(command.narration)
       const invoiceDate = command.invoiceDate ?? (await repo.today(tx))
@@ -99,7 +106,7 @@ export function createUpdateInvoiceDraft(
         },
       })
 
-      return updated
+      return loadInvoiceReadModel(tx, updated, repo, customerDirectory)
     })
   }
 }

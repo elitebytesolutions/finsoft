@@ -1,5 +1,5 @@
-import { sql, type RawBuilder } from 'kysely'
-import { BaseRepository, findTenantTimezone, type TenantTx } from '@finsoft/database'
+import { expressionBuilder } from 'kysely'
+import { BaseRepository, findTenantTimezone, type Database, type TenantTx } from '@finsoft/database'
 import {
   Receipt,
   type ReceiptMethod,
@@ -25,6 +25,10 @@ import type { AllocationInput } from '../domain/receipt.ts'
  */
 
 const LIST_PAGE_MAX = 200
+
+/** See invoices.repository.ts's identical constant for why this is a standalone expression builder. */
+const eb = expressionBuilder<Database, never>()
+const nowExpr = eb.fn<Date>('now', [])
 
 interface ReceiptDbRow {
   id: string
@@ -74,9 +78,6 @@ function toDate(value: string | Date): string {
   const match = ISO_DATE_PREFIX.exec(value)
   if (match?.[1] !== undefined) return match[1]
   throw new Error(`toDate: not a date value: ${String(value)}`)
-}
-function sqlDate(iso: string): RawBuilder<Date> {
-  return sql<Date>`${iso}::date`
 }
 
 function mapRow(row: ReceiptDbRow): Receipt {
@@ -236,6 +237,11 @@ export class ReceiptsRepository
       .where('cda.tenant_id', '=', this.tenantId)
       .where('cda.receipt_id', '=', id)
       .where('cda.revision', '=', receipt.proposals_revision)
+      // A2 (Accounting seat, Council review of efb7e3f): deterministic order
+      // — this feeds a post-time replay's reconstructed payload, and an
+      // unordered result can hash to a DIFFERENT fingerprint than the
+      // original, false-positiving IDEMPOTENCY_KEY_REUSED.
+      .orderBy('cda.invoice_id')
       .execute()
     return rows.map((r) => ({
       invoiceId: r.invoice_id,
@@ -287,7 +293,7 @@ export class ReceiptsRepository
   ): Promise<Receipt> {
     const updated = await this.scopedUpdate(
       tx,
-      { status: 'CANCELLED', cancelled_at: sql`now()`, cancelled_by: cancelledBy },
+      { status: 'CANCELLED', cancelled_at: nowExpr, cancelled_by: cancelledBy },
       { id, expectedVersion },
     )
       .returningAll()
@@ -311,7 +317,7 @@ export class ReceiptsRepository
       {
         status: 'POSTED',
         number: fields.number,
-        posted_at: sql`now()`,
+        posted_at: nowExpr,
         posted_by: fields.postedBy,
         post_idempotency_key: fields.postIdempotencyKey,
         post_fingerprint: fields.postFingerprint,
@@ -361,7 +367,7 @@ export class ReceiptsRepository
       tx,
       {
         status: 'REVERSED',
-        reversed_at: sql`now()`,
+        reversed_at: nowExpr,
         reversed_by: fields.reversedBy,
         reversal_reason: fields.reason,
         reverse_idempotency_key: fields.reverseIdempotencyKey,
@@ -377,13 +383,13 @@ export class ReceiptsRepository
   async voidAllocations(tx: TenantTx, receiptId: string, voidedBy: string): Promise<void> {
     await tx
       .updateTable('customer_receipt_allocations')
-      .set({
+      .set((eb) => ({
         status: 'VOIDED',
-        voided_at: sql`now()`,
+        voided_at: nowExpr,
         voided_by: voidedBy,
         updated_by: voidedBy,
-        version: sql`version + 1`,
-      })
+        version: eb('version', '+', 1),
+      }))
       .where('tenant_id', '=', this.tenantId)
       .where('receipt_id', '=', receiptId)
       .where('status', '=', 'LIVE')
@@ -405,7 +411,10 @@ export class ReceiptsRepository
       ])
       .where('cra.tenant_id', '=', this.tenantId)
       .where('cra.receipt_id', '=', receiptId)
+      // A2: invoice_id as an explicit tiebreaker — see currentProposals'
+      // identical note. invoice_date stays primary for display purposes.
       .orderBy('si.invoice_date')
+      .orderBy('cra.invoice_id')
       .execute()
     return rows.map((r) => ({
       invoiceId: r.invoice_id,
@@ -437,21 +446,28 @@ export class ReceiptsRepository
     if (filter.status && filter.status.length > 0)
       query = query.where('status', 'in', [...filter.status])
     if (filter.method) query = query.where('method', '=', filter.method)
-    if (filter.from) query = query.where('receipt_date', '>=', sqlDate(filter.from))
-    if (filter.to) query = query.where('receipt_date', '<=', sqlDate(filter.to))
+    if (filter.from) {
+      const from = filter.from
+      query = query.where((eb) => eb('receipt_date', '>=', eb.cast<Date>(eb.val(from), 'date')))
+    }
+    if (filter.to) {
+      const to = filter.to
+      query = query.where((eb) => eb('receipt_date', '<=', eb.cast<Date>(eb.val(to), 'date')))
+    }
     if (filter.q && filter.q.trim().length > 0) {
       query = query.where('number', 'ilike', `${filter.q.trim()}%`)
     }
 
     if (page.after) {
-      const afterDate = sqlDate(page.after.receiptDate)
+      const afterIso = page.after.receiptDate
       const afterId = page.after.id
-      query = query.where((eb) =>
-        eb.or([
+      query = query.where((eb) => {
+        const afterDate = eb.cast<Date>(eb.val(afterIso), 'date')
+        return eb.or([
           eb('receipt_date', '<', afterDate),
           eb.and([eb('receipt_date', '=', afterDate), eb('id', '<', afterId)]),
-        ]),
-      )
+        ])
+      })
     }
     const limit = Math.max(1, Math.min(Math.trunc(page.limit), LIST_PAGE_MAX))
     const rows = await query

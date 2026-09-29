@@ -3,12 +3,12 @@ import type { CustomerDirectory } from '@finsoft/customers/published'
 import {
   computeInvoiceLines,
   normalizeNarration,
-  type Invoice,
   type InvoiceLineInput,
 } from '../domain/invoice.ts'
 import { ReceivablesError } from '../domain/errors.ts'
 import type { Actor } from './actor.ts'
 import { computeCommandFingerprint } from './fingerprint.ts'
+import { loadInvoiceReadModel, type GetInvoiceResult } from './get-invoice.ts'
 import type { InvoicesRepository } from './ports.ts'
 
 /*
@@ -28,8 +28,7 @@ export interface CreateInvoiceDraftCommand {
   readonly actor: Actor
 }
 
-export interface CreateInvoiceDraftResult {
-  readonly invoice: Invoice
+export interface CreateInvoiceDraftResult extends GetInvoiceResult {
   readonly replayed: boolean
 }
 
@@ -71,7 +70,8 @@ export function createCreateInvoiceDraft(
             `idempotencyKey "${command.idempotencyKey}" was already used for a different request.`,
           )
         }
-        return { invoice: prior.invoice, replayed: true }
+        const readModel = await loadInvoiceReadModel(tx, prior.invoice, repo, customerDirectory)
+        return { ...readModel, replayed: true }
       }
 
       const customer = await customerDirectory.requireActiveForPosting(tx, command.customerId)
@@ -112,7 +112,8 @@ export function createCreateInvoiceDraft(
         },
       })
 
-      return { invoice, replayed: false }
+      const readModel = await loadInvoiceReadModel(tx, invoice, repo, customerDirectory)
+      return { ...readModel, replayed: false }
     })
   }
 }

@@ -6,11 +6,11 @@ import {
   assertComplete,
   buildCustomerPaymentPayload,
   type AllocatableInvoice,
-  type Receipt,
 } from '../domain/receipt.ts'
 import { ReceivablesError } from '../domain/errors.ts'
 import type { Actor } from './actor.ts'
 import { computeCommandFingerprint } from './fingerprint.ts'
+import { loadReceiptReadModel, type GetReceiptResult } from './get-receipt.ts'
 import type { InvoicesRepository, ReceiptsRepository } from './ports.ts'
 
 /*
@@ -25,8 +25,7 @@ export interface PostReceiptCommand {
   readonly actor: Actor
 }
 
-export interface PostReceiptResult {
-  readonly receipt: Receipt
+export interface PostReceiptResult extends GetReceiptResult {
   readonly journalEntryId: string
   readonly journalEntryNumber: string
   readonly replayed: boolean
@@ -104,13 +103,19 @@ export function createPostReceipt(
             `idempotencyKey "${command.idempotencyKey}" was already used for a different request.`,
           )
         }
-        const live = await receiptsRepo.allocationsOf(tx, receipt.id)
+        // A1 (Accounting seat, Council review of efb7e3f): ALL allocations,
+        // LIVE and VOIDED — a genuine replay after the receipt has since
+        // been REVERSED (every allocation now VOIDED) must reconstruct the
+        // SAME payload the original post built, not the empty set a
+        // LIVE-only filter would see. The kernel's own idempotency (step 2,
+        // before the period gate) answers the replay from the ORIGINAL
+        // entry regardless — this reconstruction only has to match the
+        // original fingerprint, never re-validate the allocations.
+        const allocations = await receiptsRepo.allocationsOf(tx, receipt.id)
         const complete = assertComplete({
           method: receipt.method,
           amount: receipt.amount,
-          allocations: live
-            .filter((a) => a.status === 'LIVE')
-            .map((a) => ({ invoiceId: a.invoiceId, amount: a.amount })),
+          allocations: allocations.map((a) => ({ invoiceId: a.invoiceId, amount: a.amount })),
         })
         const entry = await postingEngine.post(
           {
@@ -124,8 +129,15 @@ export function createPostReceipt(
           },
           tx,
         )
-        return {
+        const readModel = await loadReceiptReadModel(
+          tx,
           receipt,
+          receiptsRepo,
+          invoicesRepo,
+          customerDirectory,
+        )
+        return {
+          ...readModel,
           journalEntryId: entry.journalEntryId,
           journalEntryNumber: entry.entry.entryNumber,
           replayed: true,
@@ -211,8 +223,15 @@ export function createPostReceipt(
         },
       })
 
+      const readModel = await loadReceiptReadModel(
+        tx,
+        posted,
+        receiptsRepo,
+        invoicesRepo,
+        customerDirectory,
+      )
       return {
-        receipt: posted,
+        ...readModel,
         journalEntryId: entry.journalEntryId,
         journalEntryNumber: entry.entry.entryNumber,
         replayed: entry.outcome === 'REPLAYED',

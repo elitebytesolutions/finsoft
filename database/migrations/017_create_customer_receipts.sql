@@ -238,7 +238,7 @@ CREATE INDEX customer_receipt_draft_allocations_tenant_receipt_rev_idx
   ON customer_receipt_draft_allocations (tenant_id, receipt_id, revision);
 
 COMMENT ON TABLE customer_receipt_draft_allocations IS
-  'Insert-only proposed allocations of a receipt DRAFT (modules.md §6-§7). Reserve nothing: never read by any outstanding or Invariant-9 query. The CURRENT proposals are those at revision = customer_receipts.proposals_revision.';
+  'Insert-only proposed allocations of a receipt DRAFT (modules.md §6-§7). Reserve nothing: never read by any outstanding or Invariant-9 query. The CURRENT proposals are those at revision = customer_receipts.proposals_revision. UPDATE, DELETE and TRUNCATE are forbidden for every role, including the table owner, by customer_receipt_draft_allocations_forbid_mutation.';
 
 CREATE FUNCTION customer_receipt_draft_allocations_enforce_revision() RETURNS trigger
 LANGUAGE plpgsql AS $fn$
@@ -275,6 +275,34 @@ COMMENT ON FUNCTION customer_receipt_draft_allocations_enforce_revision() IS
 CREATE TRIGGER customer_receipt_draft_allocations_enforce_revision
   BEFORE INSERT ON customer_receipt_draft_allocations
   FOR EACH ROW EXECUTE FUNCTION customer_receipt_draft_allocations_enforce_revision();
+
+-- ---------------------------------------------------------------------------
+-- INSERT-only: no UPDATE, no DELETE, no TRUNCATE, for any role including the
+-- owner. Security seat, Council review of efb7e3f (S-A) — same doctrine as
+-- sales_invoice_lines_forbid_mutation (migration 016) and parties_forbid_
+-- mutation (012). Proposals "reserve nothing" (modules.md §6) precisely
+-- because they are frozen once written; a mutable proposal would be a
+-- second, undocumented way for one to reserve something after all.
+-- ---------------------------------------------------------------------------
+CREATE FUNCTION customer_receipt_draft_allocations_forbid_mutation() RETURNS trigger
+LANGUAGE plpgsql AS $fn$
+BEGIN
+  RAISE EXCEPTION 'customer_receipt_draft_allocations is insert-only (modules.md §6-§7): % is forbidden, on every role including the table owner.', TG_OP
+    USING ERRCODE = 'insufficient_privilege';
+END;
+$fn$;
+
+CREATE TRIGGER customer_receipt_draft_allocations_no_update
+  BEFORE UPDATE ON customer_receipt_draft_allocations
+  FOR EACH ROW EXECUTE FUNCTION customer_receipt_draft_allocations_forbid_mutation();
+
+CREATE TRIGGER customer_receipt_draft_allocations_no_delete
+  BEFORE DELETE ON customer_receipt_draft_allocations
+  FOR EACH ROW EXECUTE FUNCTION customer_receipt_draft_allocations_forbid_mutation();
+
+CREATE TRIGGER customer_receipt_draft_allocations_no_truncate
+  BEFORE TRUNCATE ON customer_receipt_draft_allocations
+  FOR EACH STATEMENT EXECUTE FUNCTION customer_receipt_draft_allocations_forbid_mutation();
 
 -- ---------------------------------------------------------------------------
 -- customer_receipt_allocations — real, posted allocations (modules.md §6).
@@ -381,6 +409,28 @@ CREATE TRIGGER customer_receipt_allocations_enforce_transition
   FOR EACH ROW EXECUTE FUNCTION customer_receipt_allocations_enforce_transition();
 
 -- ---------------------------------------------------------------------------
+-- No DELETE, no TRUNCATE, for any role including the owner (rule 4). UPDATE
+-- is legitimate here (LIVE -> VOIDED, governed by the transition trigger
+-- above), so only DELETE/TRUNCATE are blocked — unlike the two purely
+-- insert-only tables in this pair of migrations.
+-- ---------------------------------------------------------------------------
+CREATE FUNCTION customer_receipt_allocations_forbid_delete() RETURNS trigger
+LANGUAGE plpgsql AS $fn$
+BEGIN
+  RAISE EXCEPTION 'customer_receipt_allocations: % is forbidden, on every role including the table owner — void, never delete (rule 4).', TG_OP
+    USING ERRCODE = 'insufficient_privilege';
+END;
+$fn$;
+
+CREATE TRIGGER customer_receipt_allocations_no_delete
+  BEFORE DELETE ON customer_receipt_allocations
+  FOR EACH ROW EXECUTE FUNCTION customer_receipt_allocations_forbid_delete();
+
+CREATE TRIGGER customer_receipt_allocations_no_truncate
+  BEFORE TRUNCATE ON customer_receipt_allocations
+  FOR EACH STATEMENT EXECUTE FUNCTION customer_receipt_allocations_forbid_delete();
+
+-- ---------------------------------------------------------------------------
 -- Deferred constraint trigger: Σ LIVE allocations = receipt.amount, checked
 -- at COMMIT so every row PostReceipt inserts in one statement (or every row
 -- ReverseReceipt voids) is visible together (modules.md §7: "This is the
@@ -453,13 +503,17 @@ COMMENT ON POLICY tenant_isolation ON customer_receipt_allocations IS
   'ADR-0004. USING filters reads; WITH CHECK stops a row being written under another tenant_id. Both are always present.';
 
 -- ---------------------------------------------------------------------------
--- Grants. DELETE to nobody, anywhere (rule 4). Proposals are insert-only.
+-- Grants. Security seat, Council review of efb7e3f (S-A): REVOKE before
+-- every narrow GRANT, on every table finsoft_app touches — see migration
+-- 016's identical note on why a REVOKE must precede each GRANT here. DELETE
+-- to nobody, anywhere (rule 4). Proposals are insert-only.
 -- ---------------------------------------------------------------------------
 REVOKE INSERT, UPDATE ON customer_receipts FROM finsoft_app;
 
 GRANT SELECT ON customer_receipts TO finsoft_app;
+-- No `id` in this list — customer_receipts.id is DEFAULT gen_random_uuid().
 GRANT INSERT (
-  tenant_id, id, customer_id, status, receipt_date, method, amount,
+  tenant_id, customer_id, status, receipt_date, method, amount,
   reference, narration, proposals_revision, create_idempotency_key,
   create_fingerprint, created_by, updated_by
 ) ON customer_receipts TO finsoft_app;
@@ -473,15 +527,21 @@ GRANT UPDATE (
 
 GRANT SELECT ON customer_receipts TO readonly_support;
 
+-- Insert-only (customer_receipt_draft_allocations_forbid_mutation, above,
+-- is the second, role-independent line of defence) — no UPDATE re-grant.
+REVOKE INSERT, UPDATE ON customer_receipt_draft_allocations FROM finsoft_app;
+
 GRANT SELECT ON customer_receipt_draft_allocations TO finsoft_app;
 GRANT INSERT (
-  tenant_id, id, receipt_id, revision, invoice_id, amount, created_by, updated_by
+  tenant_id, receipt_id, revision, invoice_id, amount, created_by, updated_by
 ) ON customer_receipt_draft_allocations TO finsoft_app;
 GRANT SELECT ON customer_receipt_draft_allocations TO readonly_support;
 
+REVOKE INSERT, UPDATE ON customer_receipt_allocations FROM finsoft_app;
+
 GRANT SELECT ON customer_receipt_allocations TO finsoft_app;
 GRANT INSERT (
-  tenant_id, id, receipt_id, invoice_id, amount, status, created_by, updated_by
+  tenant_id, receipt_id, invoice_id, amount, status, created_by, updated_by
 ) ON customer_receipt_allocations TO finsoft_app;
 GRANT UPDATE (status, voided_at, voided_by, updated_by, version) ON customer_receipt_allocations TO finsoft_app;
 GRANT SELECT ON customer_receipt_allocations TO readonly_support;

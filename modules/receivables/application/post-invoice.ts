@@ -1,10 +1,11 @@
 import { recordAudit, withTenant } from '@finsoft/database'
 import { documentNumbers, postingEngine, PostingError } from '@finsoft/accounting-kernel'
-import type { CustomerDirectory } from '@finsoft/customers/published'
-import { buildSalePostedPayload, computeInvoiceLines, type Invoice } from '../domain/invoice.ts'
+import { CustomerDirectoryError, type CustomerDirectory } from '@finsoft/customers/published'
+import { buildSalePostedPayload, computeInvoiceLines } from '../domain/invoice.ts'
 import { ReceivablesError } from '../domain/errors.ts'
 import type { Actor } from './actor.ts'
 import { computeCommandFingerprint } from './fingerprint.ts'
+import { loadInvoiceReadModel, type GetInvoiceResult } from './get-invoice.ts'
 import type { InvoicesRepository } from './ports.ts'
 
 /*
@@ -31,8 +32,7 @@ export interface PostInvoiceCommand {
   readonly actor: Actor
 }
 
-export interface PostInvoiceResult {
-  readonly invoice: Invoice
+export interface PostInvoiceResult extends GetInvoiceResult {
   readonly journalEntryId: string
   readonly journalEntryNumber: string
   readonly replayed: boolean
@@ -55,8 +55,24 @@ export function createPostInvoice(repo: InvoicesRepository, customerDirectory: C
           invoiceId: command.id,
         })
       }
-      // Step 1: FOR SHARE (1a). CUSTOMER_INACTIVE on I7 (api-contract.md §3).
-      await customerDirectory.requireActiveForPosting(tx, customerId)
+      // Step 1: FOR SHARE (1a) — lock order preserved unconditionally.
+      // CUSTOMER_INACTIVE on I7 (api-contract.md §3) is thrown only on the
+      // FRESH-post path below, not here: a replay of an invoice posted
+      // while the customer was still ACTIVE must succeed even after the
+      // customer has since been deactivated (Accounting seat, Council
+      // review of efb7e3f — "move the replay branch BEFORE
+      // requireActiveForPosting"). The lock itself still happens first,
+      // in order; only the THROW is deferred.
+      let inactiveError: CustomerDirectoryError | null = null
+      try {
+        await customerDirectory.requireActiveForPosting(tx, customerId)
+      } catch (error) {
+        if (error instanceof CustomerDirectoryError && error.code === 'CUSTOMER_INACTIVE') {
+          inactiveError = error
+        } else {
+          throw error
+        }
+      }
 
       // Step 2: FOR UPDATE (1c).
       const invoice = await repo.lockForUpdate(tx, command.id)
@@ -112,15 +128,19 @@ export function createPostInvoice(repo: InvoicesRepository, customerDirectory: C
           },
           tx,
         )
+        const readModel = await loadInvoiceReadModel(tx, invoice, repo, customerDirectory)
         return {
-          invoice,
+          ...readModel,
           journalEntryId: entry.journalEntryId,
           journalEntryNumber: entry.entry.entryNumber,
           replayed: true,
         }
       }
 
-      // OLD.status === 'DRAFT' from here.
+      // OLD.status === 'DRAFT' from here — a FRESH post, which does need an
+      // ACTIVE customer. This is where the deferred CUSTOMER_INACTIVE (if
+      // any) is finally thrown.
+      if (inactiveError) throw inactiveError
       invoice.assertVersion(command.expectedVersion)
       if (invoice.customerId !== customerId) {
         // The draft's customer changed between step 0's read and this lock —
@@ -186,8 +206,9 @@ export function createPostInvoice(repo: InvoicesRepository, customerDirectory: C
         },
       })
 
+      const readModel = await loadInvoiceReadModel(tx, posted, repo, customerDirectory)
       return {
-        invoice: posted,
+        ...readModel,
         journalEntryId: entry.journalEntryId,
         journalEntryNumber: entry.entry.entryNumber,
         replayed: entry.outcome === 'REPLAYED',

@@ -64,13 +64,17 @@ export interface ReverseCommand {
  * `actor` is part of the call shape modules.md §4.3/§4.4 fixes, matching the
  * `Actor` shape every module command already carries end-to-end from its
  * controller (modules cannot read `TenantContext` themselves, ADR-0028 S1).
- * It is NOT read here: exactly like every other kernel entry point, the
- * kernel's own actor is `requirePostingActor(tx)` — the ambient principal of
- * the transaction the caller opened (ADR-0028 statement 6: "the actor comes
- * from TenantContext ... and never from an argument"). The field exists so a
- * module's `ReverseInvoice`/`ReverseReceipt` can pass the same `actor` value
- * it threads to its own `recordAudit` call, without the kernel depending on
- * it matching.
+ * It is NOT the kernel's actor of record: exactly like every other kernel
+ * entry point, the kernel's own actor is `requirePostingActor(tx)` — the
+ * ambient principal of the transaction the caller opened (ADR-0028 statement
+ * 6: "the actor comes from TenantContext ... and never from an argument").
+ * `reverseForSource` DOES read this field, but only to ASSERT it equals
+ * `requirePostingActor(tx)`'s own `actorUserId` (R3, Architecture seat,
+ * Council review of efb7e3f) — never to use it as a source of truth in its
+ * own right. A mismatch is a caller bug (a module threading the wrong
+ * `actor` to this call versus its own `recordAudit`), and fails loudly with
+ * `KernelInvariantError` rather than letting the module's audit record and
+ * the kernel's own audit record silently disagree about who acted.
  */
 export interface ReverseForSourceCommand {
   readonly referenceType: string
@@ -368,7 +372,18 @@ export function createReversalEngine(clock: Clock = systemClock): ReversalEngine
     tx: TenantTx,
   ): Promise<ReverseResult> {
     assertIssuedTenantTx(tx)
-    const { tenantId } = requirePostingActor(tx)
+    const { tenantId, actorUserId } = requirePostingActor(tx)
+    // R3 (Architecture seat, Council review of efb7e3f): `command.actor` is
+    // NOT the kernel's actor (see the jsdoc on ReverseForSourceCommand
+    // above) — but a caller passing a DIFFERENT actor than the one on its
+    // own transaction is a bug worth failing loudly on, not a silent
+    // divergence between what the module's audit record says and what the
+    // kernel's own audit record says. Asserted, not read.
+    if (command.actor.userId !== actorUserId) {
+      throw new KernelInvariantError(
+        `reverseForSource was called with actor.userId ${command.actor.userId}, but the transaction's own actor is ${actorUserId}.`,
+      )
+    }
 
     const reason = typeof command.reason === 'string' ? command.reason.trim() : ''
     if (reason.length === 0 || reason.length > REASON_MAX) {
@@ -378,10 +393,18 @@ export function createReversalEngine(clock: Clock = systemClock): ReversalEngine
       )
     }
     assertIdempotencyKey(command.idempotencyKey)
-    if (typeof command.referenceType !== 'string' || command.referenceType.length === 0) {
-      throw new PostingError('PAYLOAD_INVALID', 'referenceType is required.', {
-        field: 'referenceType',
-      })
+    // A3 (Accounting seat, Council review of efb7e3f): allow-listed to
+    // exactly the document source types this PR's modules raise —
+    // reverseForSource is the sanctioned via-source path (skips
+    // REVERSAL_VIA_SOURCE_REQUIRED below), so a typo or a future caller
+    // passing an unexpected referenceType must fail loudly here rather
+    // than silently reversing whatever findEntryBySource happens to match.
+    if (command.referenceType !== 'sales_invoice' && command.referenceType !== 'customer_receipt') {
+      throw new PostingError(
+        'PAYLOAD_INVALID',
+        `referenceType must be "sales_invoice" or "customer_receipt", got "${String(command.referenceType)}".`,
+        { field: 'referenceType' },
+      )
     }
     // Unknown, malformed and another tenant's id are the same answer (§3 row 1).
     if (!isUuid(command.referenceId)) {

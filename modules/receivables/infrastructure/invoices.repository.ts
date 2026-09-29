@@ -1,5 +1,5 @@
-import { sql, type RawBuilder } from 'kysely'
-import { BaseRepository, findTenantTimezone, type TenantTx } from '@finsoft/database'
+import { expressionBuilder } from 'kysely'
+import { BaseRepository, findTenantTimezone, type Database, type TenantTx } from '@finsoft/database'
 import {
   Invoice,
   type ComputedInvoiceLine,
@@ -28,6 +28,16 @@ import type {
  */
 
 const LIST_PAGE_MAX = 200
+
+/**
+ * A standalone expression builder, not tied to any one query's FROM clause —
+ * Kysely's sanctioned way to build a reusable `Expression` (here, `now()`)
+ * for a plain `.set({ column: expr })` object, which has no `(eb) => ...`
+ * callback form to build the expression inside. S-B (Security seat, Council
+ * review of efb7e3f): no `sql` tag anywhere in this file.
+ */
+const eb = expressionBuilder<Database, never>()
+const nowExpr = eb.fn<Date>('now', [])
 
 interface InvoiceDbRow {
   id: string
@@ -87,10 +97,6 @@ function toDate(value: string | Date): string {
 }
 function toDateOrNull(value: string | Date | null): string | null {
   return value === null ? null : toDate(value)
-}
-/** An ISO date bound as text and cast in SQL — mirrors calendar-date.ts's `sqlDate`. */
-function sqlDate(iso: string): RawBuilder<Date> {
-  return sql<Date>`${iso}::date`
 }
 
 function mapRow(row: InvoiceDbRow): Invoice {
@@ -314,7 +320,7 @@ export class InvoicesRepository
   ): Promise<Invoice> {
     const updated = await this.scopedUpdate(
       tx,
-      { status: 'CANCELLED', cancelled_at: sql`now()`, cancelled_by: cancelledBy },
+      { status: 'CANCELLED', cancelled_at: nowExpr, cancelled_by: cancelledBy },
       { id, expectedVersion },
     )
       .returningAll()
@@ -338,7 +344,7 @@ export class InvoicesRepository
       {
         status: 'POSTED',
         number: fields.number,
-        posted_at: sql`now()`,
+        posted_at: nowExpr,
         posted_by: fields.postedBy,
         post_idempotency_key: fields.postIdempotencyKey,
         post_fingerprint: fields.postFingerprint,
@@ -365,7 +371,7 @@ export class InvoicesRepository
       tx,
       {
         status: 'REVERSED',
-        reversed_at: sql`now()`,
+        reversed_at: nowExpr,
         reversed_by: fields.reversedBy,
         reversal_reason: fields.reason,
         reverse_idempotency_key: fields.reverseIdempotencyKey,
@@ -392,6 +398,15 @@ export class InvoicesRepository
     return rows.map((r) => ({ receiptId: r.receipt_id, receiptNumber: r.receipt_number as string }))
   }
 
+  async existingIds(tx: TenantTx, ids: readonly string[]): Promise<ReadonlySet<string>> {
+    if (ids.length === 0) return new Set()
+    const rows = await this.scopedSelect(tx)
+      .select('id')
+      .where('id', 'in', [...new Set(ids)])
+      .execute()
+    return new Set(rows.map((r) => r.id))
+  }
+
   async outstandingOf(tx: TenantTx, ids: readonly string[]): Promise<ReadonlyMap<string, string>> {
     if (ids.length === 0) return new Map()
     const rows = await tx
@@ -402,11 +417,14 @@ export class InvoicesRepository
           .on('cra.tenant_id', '=', this.tenantId)
           .on('cra.status', '=', 'LIVE'),
       )
-      .select(({ ref }) => [
+      .select((eb) => [
         'si.id as invoice_id',
-        sql<string>`(${ref('si.net_amount')} - COALESCE(SUM(${ref('cra.amount')}), 0))::text`.as(
-          'outstanding',
-        ),
+        eb
+          .cast<string>(
+            eb('si.net_amount', '-', eb.fn.coalesce(eb.fn.sum<string>('cra.amount'), eb.lit(0))),
+            'text',
+          )
+          .as('outstanding'),
       ])
       .where('si.tenant_id', '=', this.tenantId)
       .where('si.id', 'in', [...ids])
@@ -451,8 +469,14 @@ export class InvoicesRepository
     if (filter.customerId) query = query.where('customer_id', '=', filter.customerId)
     if (filter.status && filter.status.length > 0)
       query = query.where('status', 'in', [...filter.status])
-    if (filter.from) query = query.where('invoice_date', '>=', sqlDate(filter.from))
-    if (filter.to) query = query.where('invoice_date', '<=', sqlDate(filter.to))
+    if (filter.from) {
+      const from = filter.from
+      query = query.where((eb) => eb('invoice_date', '>=', eb.cast<Date>(eb.val(from), 'date')))
+    }
+    if (filter.to) {
+      const to = filter.to
+      query = query.where((eb) => eb('invoice_date', '<=', eb.cast<Date>(eb.val(to), 'date')))
+    }
     if (filter.q && filter.q.trim().length > 0) {
       query = query.where('number', 'ilike', `${filter.q.trim()}%`)
     }
@@ -466,26 +490,28 @@ export class InvoicesRepository
       // Oldest first (invoiceDate, then id) — the allocation picker's order,
       // same as the preview's suggestion (api-contract.md §4.2).
       if (page.after) {
-        const afterDate = sqlDate(page.after.invoiceDate)
+        const afterIso = page.after.invoiceDate
         const afterId = page.after.id
-        query = query.where((eb) =>
-          eb.or([
+        query = query.where((eb) => {
+          const afterDate = eb.cast<Date>(eb.val(afterIso), 'date')
+          return eb.or([
             eb('invoice_date', '>', afterDate),
             eb.and([eb('invoice_date', '=', afterDate), eb('id', '>', afterId)]),
-          ]),
-        )
+          ])
+        })
       }
       query = query.orderBy('invoice_date', 'asc').orderBy('id', 'asc')
     } else {
       if (page.after) {
-        const afterDate = sqlDate(page.after.invoiceDate)
+        const afterIso = page.after.invoiceDate
         const afterId = page.after.id
-        query = query.where((eb) =>
-          eb.or([
+        query = query.where((eb) => {
+          const afterDate = eb.cast<Date>(eb.val(afterIso), 'date')
+          return eb.or([
             eb('invoice_date', '<', afterDate),
             eb.and([eb('invoice_date', '=', afterDate), eb('id', '<', afterId)]),
-          ]),
-        )
+          ])
+        })
       }
       query = query.orderBy('invoice_date', 'desc').orderBy('id', 'desc')
     }

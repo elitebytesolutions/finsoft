@@ -7,6 +7,7 @@ import { sql } from 'kysely'
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { TenantContext, withTenant } from '@finsoft/database'
+import { periodEngine } from '@finsoft/accounting-kernel'
 import {
   migrateTestDatabase,
   prepareTestDatabase,
@@ -144,6 +145,16 @@ describe('P04/P05/P06 journey: draft, post, receipt, ledger, reversal', () => {
       .set(asOwner(alpha))
       .expect(200)
     expect(ledger.body.closingBalance).toBe('4000.0000')
+
+    // K4 (second follow-up commit, Council review of efb7e3f): the posted
+    // invoice's own INV number, threaded through journal_entries.reference
+    // -> packages/database's ledger query -> packages/reporting ->
+    // modules/customers' repository/mapper, must appear on its ledger line
+    // — not just be resolvable by a second lookup. Closes TD-014's first half.
+    const invoiceLine = (
+      ledger.body.lines as readonly { sourceType: string; sourceId: string; sourceNumber: string }[]
+    ).find((l) => l.sourceType === 'sales_invoice' && l.sourceId === invoice.id)
+    expect(invoiceLine?.sourceNumber).toBe(invoice.number)
   })
 
   it('reverses receipt then invoice, restoring the ledger to zero (P06)', async () => {
@@ -644,6 +655,126 @@ describe('over-allocation is refused', () => {
   })
 })
 
+describe('concurrency: lock order (S-C, Security seat, Council review of efb7e3f)', () => {
+  it('a concurrent draft update and customer deactivation serialise on the customer row, never deadlock (40P01)', async () => {
+    // A DRAFT invoice contributes nothing to the customer's balance, so
+    // deactivation is legitimately allowed to race it — exactly the
+    // scenario LOCK_REGISTRY 1a exists for (modules.md §10: "a deactivation
+    // waits for in-flight postings, then reads the balance they produced").
+    const customer = await createCustomer(app, alpha)
+    const draft = await request(app.getHttpServer())
+      .post('/api/invoices')
+      .set(asOwner(alpha))
+      .set('Idempotency-Key', idemKey())
+      .send({
+        customerId: customer.id,
+        lines: [{ description: 'Draft work', quantity: '1.000000', unitPrice: '100.000000' }],
+      })
+      .expect(201)
+
+    const before = await request(app.getHttpServer())
+      .get(`/api/customers/${customer.id}`)
+      .set(asOwner(alpha))
+      .expect(200)
+
+    const [updateRes, deactivateRes] = await Promise.all([
+      request(app.getHttpServer())
+        .put(`/api/invoices/${draft.body.id}`)
+        .set(asOwner(alpha))
+        .send({
+          customerId: customer.id,
+          lines: [{ description: 'Updated work', quantity: '2.000000', unitPrice: '150.000000' }],
+          version: draft.body.version,
+        }),
+      request(app.getHttpServer())
+        .post(`/api/customers/${customer.id}/deactivate`)
+        .set(asOwner(alpha))
+        .send({ version: before.body.version }),
+    ])
+
+    // Both requests complete — no 40P01 deadlock, no 500 from either side.
+    expect(updateRes.status).toBe(200)
+    expect(deactivateRes.status).toBe(200)
+
+    const finalInvoice = await request(app.getHttpServer())
+      .get(`/api/invoices/${draft.body.id}`)
+      .set(asOwner(alpha))
+      .expect(200)
+    expect(finalInvoice.body.lines).toEqual([
+      expect.objectContaining({ description: 'Updated work', lineNet: '300.0000' }),
+    ])
+
+    const finalCustomer = await request(app.getHttpServer())
+      .get(`/api/customers/${customer.id}`)
+      .set(asOwner(alpha))
+      .expect(200)
+    expect(finalCustomer.body.status).toBe('INACTIVE')
+  })
+})
+
+describe('closed period (A4, Accounting seat, Council review of efb7e3f)', () => {
+  it('refuses to post an invoice dated in a CLOSED period, and consumes no INV number', async () => {
+    // A dedicated tenant, so closing 2026-07 (FY2027's first period)
+    // cannot disturb any other test's open-period posting.
+    const gamma = await createCustomersTenant('M3PC')
+    await runAs({ tenantId: gamma.tenantId, userId: gamma.ownerId }, () =>
+      withTenant((tx) => periodEngine.close('2026-07', tx)),
+    )
+
+    const customer = await createCustomer(app, gamma)
+    const draft = await request(app.getHttpServer())
+      .post('/api/invoices')
+      .set(asOwner(gamma))
+      .set('Idempotency-Key', idemKey())
+      .send({
+        customerId: customer.id,
+        invoiceDate: '2026-07-15',
+        lines: [
+          { description: 'Closed-period work', quantity: '1.000000', unitPrice: '100.000000' },
+        ],
+      })
+      .expect(201)
+
+    const seriesBefore = await runAs({ tenantId: gamma.tenantId, userId: gamma.ownerId }, () =>
+      withTenant((tx) =>
+        tx
+          .selectFrom('document_sequences')
+          .select('last_number')
+          .where('tenant_id', '=', gamma.tenantId)
+          .where('series', '=', 'INV')
+          .executeTakeFirst(),
+      ),
+    )
+
+    await request(app.getHttpServer())
+      .post(`/api/invoices/${draft.body.id}/post`)
+      .set(asOwner(gamma))
+      .set('Idempotency-Key', idemKey())
+      .send({ version: draft.body.version })
+      .expect(422)
+      .expect((res) => expect(res.body.error).toBe('period_closed'))
+
+    const seriesAfter = await runAs({ tenantId: gamma.tenantId, userId: gamma.ownerId }, () =>
+      withTenant((tx) =>
+        tx
+          .selectFrom('document_sequences')
+          .select('last_number')
+          .where('tenant_id', '=', gamma.tenantId)
+          .where('series', '=', 'INV')
+          .executeTakeFirst(),
+      ),
+    )
+    expect(seriesAfter?.last_number ?? null).toBe(seriesBefore?.last_number ?? null)
+
+    const stillDraft = await request(app.getHttpServer())
+      .get(`/api/invoices/${draft.body.id}`)
+      .set(asOwner(gamma))
+      .expect(200)
+    expect(stillDraft.body.status).toBe('DRAFT')
+    expect(stillDraft.body.number).toBeNull()
+  })
+})
+
 describe('audit', () => {
   it('records an audit row for a posted invoice, with the right before/after', async () => {
     const customer = await createCustomer(app, alpha)
@@ -664,5 +795,287 @@ describe('audit', () => {
     expect(rows).toHaveLength(1)
     expect(rows[0]?.before_json).toEqual({ status: 'DRAFT' })
     expect(rows[0]?.after_json).toMatchObject({ status: 'POSTED', number: invoice.number })
+  })
+})
+
+describe('S-D (Security seat, Council review of efb7e3f): receipt isolation, allocation validation, idempotency-key shape', () => {
+  it("returns the identical 404 body for an unknown receipt id and another tenant's receipt id", async () => {
+    const customer = await createCustomer(app, alpha)
+    const draft = await request(app.getHttpServer())
+      .post('/api/receipts')
+      .set(asOwner(alpha))
+      .set('Idempotency-Key', idemKey())
+      .send({ customerId: customer.id, allocations: [] })
+      .expect(201)
+
+    const unknown = await request(app.getHttpServer())
+      .get('/api/receipts/00000000-0000-0000-0000-000000000000')
+      .set(asOwner(beta))
+      .expect(404)
+
+    const crossTenant = await request(app.getHttpServer())
+      .get(`/api/receipts/${draft.body.id}`)
+      .set(asOwner(beta))
+      .expect(404)
+
+    // Same shape the invoice version of this test asserts (line ~334):
+    // `error`/`statusCode` are the stable fields; `message`/`details.
+    // receiptId`/`path` legitimately differ because they echo the id itself.
+    expect(crossTenant.body.error).toBe(unknown.body.error)
+    expect(crossTenant.body.statusCode).toBe(unknown.body.statusCode)
+  })
+
+  it("refuses to create a receipt draft alleging an allocation to another TENANT's invoice, with 422 INVOICE_NOT_FOUND", async () => {
+    const customerBeta = await createCustomer(app, beta)
+    const invoiceBeta = await createPostedInvoice(app, beta, customerBeta.id)
+
+    const customerAlpha = await createCustomer(app, alpha)
+    await request(app.getHttpServer())
+      .post('/api/receipts')
+      .set(asOwner(alpha))
+      .set('Idempotency-Key', idemKey())
+      .send({
+        customerId: customerAlpha.id,
+        method: 'CASH',
+        amount: '1000.0000',
+        allocations: [{ invoiceId: invoiceBeta.id, amount: '1000.0000' }],
+      })
+      .expect(422)
+      .expect((res) => {
+        expect(res.body.error).toBe('invoice_not_found')
+        expect(res.body.details).toMatchObject({ invoiceId: invoiceBeta.id })
+      })
+  })
+
+  it("refuses to update a receipt draft's allocations to name another TENANT's invoice", async () => {
+    const customerBeta = await createCustomer(app, beta)
+    const invoiceBeta = await createPostedInvoice(app, beta, customerBeta.id)
+
+    const customerAlpha = await createCustomer(app, alpha)
+    const draft = await request(app.getHttpServer())
+      .post('/api/receipts')
+      .set(asOwner(alpha))
+      .set('Idempotency-Key', idemKey())
+      .send({ customerId: customerAlpha.id, allocations: [] })
+      .expect(201)
+
+    await request(app.getHttpServer())
+      .patch(`/api/receipts/${draft.body.id}`)
+      .set(asOwner(alpha))
+      .send({
+        amount: '1000.0000',
+        allocations: [{ invoiceId: invoiceBeta.id, amount: '1000.0000' }],
+        version: draft.body.version,
+      })
+      .expect(422)
+      .expect((res) => {
+        expect(res.body.error).toBe('invoice_not_found')
+        expect(res.body.details).toMatchObject({ invoiceId: invoiceBeta.id })
+      })
+
+    // The draft itself is untouched — the rejected revision never landed.
+    const stillEmpty = await request(app.getHttpServer())
+      .get(`/api/receipts/${draft.body.id}`)
+      .set(asOwner(alpha))
+      .expect(200)
+    expect(stillEmpty.body.proposals).toEqual([])
+  })
+
+  it("an allocation naming another CUSTOMER's invoice (same tenant) is accepted as a draft, then refused with 422 ALLOCATION_PARTY_MISMATCH at post time", async () => {
+    const customerA = await createCustomer(app, alpha)
+    const customerB = await createCustomer(app, alpha)
+    const invoiceB = await createPostedInvoice(app, alpha, customerB.id)
+
+    // The invoice id EXISTS in this tenant, so create-time's existence-only
+    // check (S-D) does not reject it — only post-time's assertAllocatable
+    // (which knows the receipt's own customer) can catch a party mismatch.
+    const draft = await request(app.getHttpServer())
+      .post('/api/receipts')
+      .set(asOwner(alpha))
+      .set('Idempotency-Key', idemKey())
+      .send({
+        customerId: customerA.id,
+        method: 'CASH',
+        amount: '1000.0000',
+        allocations: [{ invoiceId: invoiceB.id, amount: '1000.0000' }],
+      })
+      .expect(201)
+
+    await request(app.getHttpServer())
+      .post(`/api/receipts/${draft.body.id}/post`)
+      .set(asOwner(alpha))
+      .set('Idempotency-Key', idemKey())
+      .send({ version: draft.body.version })
+      .expect(422)
+      .expect((res) => {
+        expect(res.body.error).toBe('allocation_party_mismatch')
+        expect(res.body.details).toMatchObject({ invoiceId: invoiceB.id })
+      })
+  })
+
+  it('a malformed Idempotency-Key header is a 400, not a 500', async () => {
+    const customer = await createCustomer(app, alpha)
+    await request(app.getHttpServer())
+      .post('/api/receipts')
+      .set(asOwner(alpha))
+      .set('Idempotency-Key', 'not a valid key / has spaces and slashes')
+      .send({ customerId: customer.id, allocations: [] })
+      .expect(400)
+      .expect((res) => expect(res.body.error).toBe('idempotency_key_invalid'))
+  })
+})
+
+describe('receipt RBAC', () => {
+  it('403s receipt creation for a no-role user and a viewer', async () => {
+    const customer = await createCustomer(app, alpha)
+
+    await request(app.getHttpServer())
+      .post('/api/receipts')
+      .set(asNoRole(alpha))
+      .set('Idempotency-Key', idemKey())
+      .send({ customerId: customer.id, allocations: [] })
+      .expect(403)
+
+    await request(app.getHttpServer())
+      .post('/api/receipts')
+      .set(asViewer(alpha))
+      .set('Idempotency-Key', idemKey())
+      .send({ customerId: customer.id, allocations: [] })
+      .expect(403)
+  })
+
+  it('403s posting and cancelling a receipt draft for a no-role user', async () => {
+    const customer = await createCustomer(app, alpha)
+    const draft = await request(app.getHttpServer())
+      .post('/api/receipts')
+      .set(asOwner(alpha))
+      .set('Idempotency-Key', idemKey())
+      .send({ customerId: customer.id, allocations: [] })
+      .expect(201)
+
+    await request(app.getHttpServer())
+      .post(`/api/receipts/${draft.body.id}/post`)
+      .set(asNoRole(alpha))
+      .set('Idempotency-Key', idemKey())
+      .send({ version: draft.body.version })
+      .expect(403)
+
+    await request(app.getHttpServer())
+      .post(`/api/receipts/${draft.body.id}/cancel`)
+      .set(asNoRole(alpha))
+      .send({ version: draft.body.version })
+      .expect(403)
+  })
+
+  it('403s receipt reversal for a holder of payment.receive who lacks voucher.reverse', async () => {
+    // Same shape as the invoice reversal RBAC test above: the owner role
+    // holds every MVP permission, so a no-role user (holds neither
+    // payment.receive nor voucher.reverse) proves the decorator requires
+    // BOTH, sharing the same guard-refusal body every other privileged
+    // route uses.
+    const customer = await createCustomer(app, alpha)
+    const invoice = await createPostedInvoice(app, alpha, customer.id)
+    const draft = await request(app.getHttpServer())
+      .post('/api/receipts')
+      .set(asOwner(alpha))
+      .set('Idempotency-Key', idemKey())
+      .send({
+        customerId: customer.id,
+        method: 'CASH',
+        amount: '10000.0000',
+        allocations: [{ invoiceId: invoice.id, amount: '10000.0000' }],
+      })
+      .expect(201)
+    const receipt = await request(app.getHttpServer())
+      .post(`/api/receipts/${draft.body.id}/post`)
+      .set(asOwner(alpha))
+      .set('Idempotency-Key', idemKey())
+      .send({ version: draft.body.version })
+      .expect(200)
+
+    await request(app.getHttpServer())
+      .post(`/api/receipts/${receipt.body.id}/reverse`)
+      .set(asNoRole(alpha))
+      .set('Idempotency-Key', idemKey())
+      .send({ reason: 'test' })
+      .expect(403)
+  })
+})
+
+describe('A2 (Accounting seat, Council review of efb7e3f): multi-allocation receipt replay', () => {
+  it('replays a two-invoice receipt post idempotently, both while POSTED and after REVERSED', async () => {
+    const customer = await createCustomer(app, alpha)
+    const invoice1 = await createPostedInvoice(app, alpha, customer.id, [
+      { description: 'A', quantity: '1.000000', unitPrice: '4000.000000' },
+    ])
+    const invoice2 = await createPostedInvoice(app, alpha, customer.id, [
+      { description: 'B', quantity: '1.000000', unitPrice: '6000.000000' },
+    ])
+
+    const draft = await request(app.getHttpServer())
+      .post('/api/receipts')
+      .set(asOwner(alpha))
+      .set('Idempotency-Key', idemKey())
+      .send({
+        customerId: customer.id,
+        method: 'BANK',
+        amount: '10000.0000',
+        allocations: [
+          { invoiceId: invoice1.id, amount: '4000.0000' },
+          { invoiceId: invoice2.id, amount: '6000.0000' },
+        ],
+      })
+      .expect(201)
+
+    const postKey = idemKey('multi-alloc-post')
+    const firstPost = await request(app.getHttpServer())
+      .post(`/api/receipts/${draft.body.id}/post`)
+      .set(asOwner(alpha))
+      .set('Idempotency-Key', postKey)
+      .send({ version: draft.body.version })
+      .expect(200)
+
+    // LOCK_REGISTRY 1c orders allocations by ascending invoice_id, not by
+    // request order — sort both sides the same way rather than assert an
+    // order the API makes no promise about.
+    function byInvoiceId<T extends { invoiceId: string }>(rows: readonly T[]): T[] {
+      return [...rows].sort((a, b) => a.invoiceId.localeCompare(b.invoiceId))
+    }
+    const expectedAllocations = byInvoiceId([
+      { invoiceId: invoice1.id as string, amount: '4000.0000', status: 'LIVE' },
+      { invoiceId: invoice2.id as string, amount: '6000.0000', status: 'LIVE' },
+    ]).map((a) => expect.objectContaining(a))
+    expect(byInvoiceId(firstPost.body.allocations)).toEqual(expectedAllocations)
+
+    // Replay #1: still POSTED. Same key, same version-carrying body — must
+    // return the SAME journal entry and the SAME two LIVE allocations, not
+    // re-derive them from a filtered (and therefore wrong) subset.
+    const replayWhilePosted = await request(app.getHttpServer())
+      .post(`/api/receipts/${draft.body.id}/post`)
+      .set(asOwner(alpha))
+      .set('Idempotency-Key', postKey)
+      .send({ version: draft.body.version })
+      .expect(200)
+    expect(replayWhilePosted.body.journalEntry).toEqual(firstPost.body.journalEntry)
+    expect(byInvoiceId(replayWhilePosted.body.allocations)).toEqual(expectedAllocations)
+
+    await request(app.getHttpServer())
+      .post(`/api/receipts/${draft.body.id}/reverse`)
+      .set(asOwner(alpha))
+      .set('Idempotency-Key', idemKey())
+      .send({ reason: 'test: A2 replay after reversal' })
+      .expect(200)
+
+    // Replay #2: now REVERSED, every allocation VOIDED. The SAME post key
+    // must still answer with the ORIGINAL journal entry (A1's fix: the
+    // fingerprint reconstruction uses ALL allocations, not a LIVE-only
+    // filter that would now see none).
+    const replayAfterReversal = await request(app.getHttpServer())
+      .post(`/api/receipts/${draft.body.id}/post`)
+      .set(asOwner(alpha))
+      .set('Idempotency-Key', postKey)
+      .send({ version: draft.body.version })
+      .expect(200)
+    expect(replayAfterReversal.body.journalEntry).toEqual(firstPost.body.journalEntry)
   })
 })

@@ -63,11 +63,37 @@ function requireUuidPathParam(id: string): void {
   }
 }
 
+/**
+ * Only `getOne` below calls this — the one route with no mutation of its
+ * own. Every mutating route reads its DTO fields off the use case's OWN
+ * result instead (R1, Architecture seat, Council review of efb7e3f — see
+ * `loadReceiptReadModel` in `modules/receivables/application/get-receipt.ts`).
+ */
 async function buildReceiptDto(
   id: string,
   journalEntry: { readonly id: string; readonly number: string } | null = null,
 ) {
   const result = await receivables.getReceipt(id)
+  return toReceiptDto(
+    result.receipt,
+    result.customer,
+    result.proposals,
+    result.proposalProblems,
+    result.allocations,
+    journalEntry,
+  )
+}
+
+function receiptDtoFromReadModel(
+  result: {
+    readonly receipt: Parameters<typeof toReceiptDto>[0]
+    readonly customer: Parameters<typeof toReceiptDto>[1]
+    readonly proposals: Parameters<typeof toReceiptDto>[2]
+    readonly proposalProblems: Parameters<typeof toReceiptDto>[3]
+    readonly allocations: Parameters<typeof toReceiptDto>[4]
+  },
+  journalEntry: { readonly id: string; readonly number: string } | null = null,
+) {
   return toReceiptDto(
     result.receipt,
     result.customer,
@@ -146,7 +172,7 @@ export class ReceiptsController {
         idempotencyKey,
         actor: { userId: auth.userId },
       })
-      return buildReceiptDto(result.receipt.id)
+      return receiptDtoFromReadModel(result)
     } catch (error) {
       if (isReceivablesRoutableError(error)) throw mapReceivablesError(error)
       throw error
@@ -191,7 +217,7 @@ export class ReceiptsController {
         expectedVersion: body.version,
         actor: { userId: auth.userId },
       })
-      return buildReceiptDto(result.id)
+      return receiptDtoFromReadModel(result)
     } catch (error) {
       if (isReceivablesRoutableError(error)) throw mapReceivablesError(error)
       throw error
@@ -220,7 +246,10 @@ export class ReceiptsController {
         idempotencyKey,
         actor: { userId: auth.userId },
       })
-      return buildReceiptDto(id, { id: result.journalEntryId, number: result.journalEntryNumber })
+      return receiptDtoFromReadModel(result, {
+        id: result.journalEntryId,
+        number: result.journalEntryNumber,
+      })
     } catch (error) {
       if (isReceivablesRoutableError(error)) throw mapReceivablesError(error)
       throw error
@@ -244,7 +273,7 @@ export class ReceiptsController {
         expectedVersion: body.version,
         actor: { userId: auth.userId },
       })
-      return buildReceiptDto(result.id)
+      return receiptDtoFromReadModel(result)
     } catch (error) {
       if (isReceivablesRoutableError(error)) throw mapReceivablesError(error)
       throw error
@@ -272,7 +301,10 @@ export class ReceiptsController {
         idempotencyKey,
         actor: { userId: auth.userId },
       })
-      return buildReceiptDto(id, { id: result.journalEntryId, number: result.journalEntryNumber })
+      return receiptDtoFromReadModel(result, {
+        id: result.journalEntryId,
+        number: result.journalEntryNumber,
+      })
     } catch (error) {
       if (isReceivablesRoutableError(error)) throw mapReceivablesError(error)
       throw error
