@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { sql } from 'kysely'
+import { getCorrelation } from '@finsoft/observability'
 import { TenantContext } from '../tenant-context.ts'
 import { assertIssuedTenantTx, type TenantTx } from '../transaction.ts'
 import { auditChainLockKeyExpr } from './anchor.ts'
@@ -32,9 +33,23 @@ export interface AuditEventInput {
   /** Embedded and hashed as an object (ADR-0020 §4); every leaf must already be a string or null. */
   readonly beforeJson: JsonObject | null
   readonly afterJson: JsonObject | null
-  /** Raw textual form; normalizeIp renders it before hashing. Null for job/system-originated events. */
-  readonly ip: string | null
-  readonly requestId: string | null
+  /**
+   * Raw textual form; normalizeIp renders it before hashing. `null` for a
+   * job/system-originated event that genuinely has no client address.
+   *
+   * OMIT the field entirely (rather than passing `null`) to have it default
+   * from the ambient correlation context — see the M1-C comment on
+   * `recordAudit` below. An explicit `null` is a caller's deliberate
+   * statement that there is no address, and always wins over the context.
+   */
+  readonly ip?: string | null
+  /**
+   * `null` for a job/system-originated event with no request to attribute.
+   *
+   * OMIT the field entirely to default from the ambient correlation
+   * context. An explicit `null` always wins.
+   */
+  readonly requestId?: string | null
   /**
    * When the event happened. Defaults to the server clock. Rule 13: this must
    * already be a server-validated value — a business timestamp the domain
@@ -84,6 +99,41 @@ async function withLockTimeoutMapped<T>(tenantId: string, fn: () => Promise<T>):
  * it does, exactly one audit row is written for it because this function is
  * called exactly once, inside the same transaction as everything else the
  * operation does.
+ *
+ * ── `requestId` / `ip` defaulting (M1-C) ─────────────────────────────────
+ *
+ * The Architecture seat ruled the M2 posting engine may not merge until
+ * every audit row carries a request id: `audit_log` is append-only and
+ * hash-chained, so a `null` written today can never be backfilled once a
+ * real request id exists. Requiring every one of this package's many
+ * call sites to thread `requestId`/`ip` through by hand is exactly the kind
+ * of plumbing ADR-0016 built the correlation context to avoid (§1 of that
+ * ADR's own rationale) — so a caller that OMITS the field gets it from the
+ * ambient `CorrelationContext` (`getCorrelation()`) instead, established at
+ * the edge by apps/api/src/correlation/request-correlation.middleware.ts (or,
+ * on the worker side, by apps/worker's job runner / outbox dispatcher, which
+ * already wrap every job in `withCorrelation({ requestId: correlationId })`).
+ *
+ * `packages/database` importing `@finsoft/observability` here is not a new
+ * edge: `pool.ts` already does, and ADR-0016 §2's own text names
+ * `packages/database` as an allowed importer. `depcruise`'s
+ * `observability-importers-are-allowlisted` rule blocks the kernels,
+ * `shared-types`, `ui` and `validation` from this reach — `packages/database`
+ * is not on that list.
+ *
+ * Three rules, in order of how surprising getting them wrong would be:
+ *
+ *   1. A field the caller does not mention at all (`undefined`) is
+ *      defaulted from the context, field by field.
+ *   2. An explicit caller value — including an explicit `null` — always
+ *      wins. A caller that has already decided "no address for this event"
+ *      (a system-originated row with a real reason to say so) is not
+ *      overridden by whatever happens to be ambient.
+ *   3. No context, or the context lacks the field (`ip` is optional on
+ *      `CorrelationContext` — absent for a job), and the caller did not
+ *      supply one: the column stays `null`. NEVER fabricated. A guess
+ *      hashed into an append-only chain cannot later be corrected to "we
+ *      didn't actually know."
  */
 export async function recordAudit(
   tx: TenantTx,
@@ -91,6 +141,11 @@ export async function recordAudit(
 ): Promise<AuditAppendResult> {
   assertIssuedTenantTx(tx)
   const { tenantId } = TenantContext.require()
+
+  const needsContext = event.requestId === undefined || event.ip === undefined
+  const ambient = needsContext ? getCorrelation() : undefined
+  const requestId = event.requestId !== undefined ? event.requestId : (ambient?.requestId ?? null)
+  const rawIp = event.ip !== undefined ? event.ip : (ambient?.ip ?? null)
 
   // Fail fast in TypeScript, before a locked, half-built INSERT statement
   // finds out from a CHECK violation five layers into a posting transaction.
@@ -153,7 +208,7 @@ export async function recordAudit(
 
   const id = randomUUID()
   const seq = (BigInt(head.seq) + 1n).toString()
-  const ip = event.ip === null ? null : normalizeIp(event.ip)
+  const ip = rawIp === null ? null : normalizeIp(rawIp)
   const occurredAt = event.occurredAt ?? new Date()
 
   const record = buildCanonicalRecord({
@@ -168,7 +223,7 @@ export async function recordAudit(
     beforeJson: event.beforeJson,
     afterJson: event.afterJson,
     ip,
-    requestId: event.requestId,
+    requestId,
   })
 
   const { hash } = computeAuditHash(head.hash, record)
