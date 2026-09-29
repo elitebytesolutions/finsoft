@@ -66,6 +66,7 @@ may not go backwards.
 | 5a | `journal_entries (tenant, id)` row of the entry being reversed, `FOR UPDATE` — reversal only | row | xact | `lockEntryForReversal`, `packages/database/src/accounting/journal.ts` | [ADR-0006](adr/ADR-0006-immutable-posted-transactions.md), reversal.md §8 |
 | 5b | `fiscal_periods` rows — the posting date's period `FOR SHARE`; or, for a period transition, **every** period of the tenant `FOR UPDATE` in ascending `period_start` | row | xact | Posting gate: `findPeriodForDate`, `packages/database/src/accounting/periods.ts`. Transitions: `periodEngine.close/reopen/lock` → `lockedTarget` (whole-calendar lock), `packages/accounting-kernel/src/queries/periods.ts`. Re-read by triggers in migrations 011, 012 | [ADR-0012](adr/ADR-0012-fiscal-period-locking.md), periods.md §7, journal-voucher.md edge cases ("commits before the close or is rejected after it"; both orders tested in `database/tests/accounting-triggers.spec.ts`) |
 | 5c | `document_sequences` counter row, via `INSERT ... ON CONFLICT DO UPDATE` on its scope's partial unique index | row | xact | `assignDocumentNumber` / `assignTenantDocumentNumber`, `packages/database/src/accounting/sequences.ts` | NON_NEGOTIABLES rule 12, README §4, K7 |
+| 5d | `accounts (tenant_id, id)` row of the account being edited, `FOR UPDATE` — chart-of-accounts code/parent edit only | row | xact | `lockAccountForUpdate`, `packages/database/src/accounting/accounts.ts` (kernel: `chartOfAccounts.update`); re-taken inside `accounts_enforce_posted_immutability`, migration 018 | coa-standard.md §8.7 R8, M2-C |
 | **6** | `pg_advisory_xact_lock(fold(tenant_id))` — **TERMINAL** | 1-arg | xact | migration 007, the audit append path | [ADR-0020](adr/ADR-0020-audit-hash-chain-canonicalisation.md) §5 |
 
 **Position 6 is terminal.** Nothing is acquired after it except the implicit
@@ -310,9 +311,13 @@ COLUMN`, or dropped in a later migration — not silently left ambiguous.
 
 ---
 
-## Row locks — migration 018 (accounts create/edit, M2-C)
+## Row locks — migration 018 (accounts create/edit, M2-C) — position 5d
 
-**Order:** a single row, `accounts (tenant_id, id)` — the account being edited, `FOR UPDATE`.
+**Order:** a single row, `accounts (tenant_id, id)` — the account being edited, `FOR UPDATE`. Claims
+**position 5d** in the global acquisition order above, between 5c (numbering) and 6 (the audit
+terminal lock) — an account create or edit always ends with `recordAudit` (rule 9), so its own
+transaction's order is **5d, then 6**, exactly the same "row lock(s), then the terminal advisory
+lock" shape every posting and reversal transaction already follows for 5a/5b/5c.
 
 coa-standard.md §8.7 R8: a code or parent-id edit must not pass its "the account has no journal
 line yet" check while a concurrent transaction inserts that account's first `journal_lines` row.
@@ -332,12 +337,16 @@ that references the same account takes an implicit `FOR KEY SHARE` on this same 
 transaction to wait or (if it already committed) to have already released the lock before this one
 was taken. Either the account edit commits first (and the posting then lands on the same account
 id under its new code/parent), or the posting commits first (and the fresh `journal_lines` read
-inside the lock sees it, rejecting the edit) — proved both ways by
-`tests/integration/accounts-create-edit.spec.ts`'s "code and parent freeze after the first
-posting" describe block (edit-then-post, post-then-edit, and a real concurrent race).
+inside the lock sees it, rejecting the edit) — proved both ways, for BOTH `code` and `parentId`
+independently, by `tests/integration/accounts-create-edit.spec.ts`'s "code and parent freeze after
+the first posting" describe block (edit-then-post, post-then-edit, and a real concurrent race, for
+each field).
 
-**Not a new position in the global advisory-lock order above** — this is a row lock, grouped by
-migration like 005's and 008's own entries, not an advisory lock.
+`accounts (tenant_id, id)` shares no row with any of 5a/5b/5c/6's own targets
+(`journal_entries`, `fiscal_periods`, `document_sequences`, the advisory key), so 5d cannot form a
+cycle with any of them; it only ever contends with itself (two concurrent edits of the same
+account, which simply serialise) and with a `journal_lines` INSERT's implicit `FOR KEY SHARE` on
+the same account row, as described above.
 
 ---
 

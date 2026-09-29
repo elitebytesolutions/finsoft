@@ -33,6 +33,7 @@ describe('ControlAccountMisconfiguredError', () => {
       restricted: false,
       isActive: true,
       parentId: null,
+      version: 0,
     })
     expect(error.code).toBe('ACCOUNT_ROLE_MISCONFIGURED')
     expect(error.role).toBe('AR_CONTROL')

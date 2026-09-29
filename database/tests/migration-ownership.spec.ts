@@ -166,8 +166,18 @@ const REVOKE_SHAPE = new RegExp(
   'is',
 )
 
+/** `GRANT INSERT (<cols>) ...` / `GRANT UPDATE (<cols>) ...` — the column-scoped re-grant S4 exception (a) requires after a REVOKE. */
+const COLUMN_SCOPED_REGRANT = /^GRANT\s+(?:INSERT|UPDATE)\s*\(/i
+
 export function grantRevokeOffenses(sql: string, ownedTables: ReadonlySet<string>): string[] {
   const offenses: string[] = []
+  // S4 exception (a) (ADR-0028 §9, Security seat): a REVOKE INSERT, UPDATE
+  // on a table is allowed only if the SAME migration then re-grants a
+  // column list to finsoft_app on that same table. Tracked across the
+  // whole file — the re-grant need not immediately follow the REVOKE
+  // statement-for-statement, only be present somewhere in the same file.
+  const revokedTables = new Set<string>()
+  const regrantedTables = new Set<string>()
 
   for (const statement of splitStatements(sql)) {
     const isGrant = /\bGRANT\b/i.test(statement)
@@ -188,6 +198,17 @@ export function grantRevokeOffenses(sql: string, ownedTables: ReadonlySet<string
     if (!ownedTables.has(table)) {
       offenses.push(
         `${isGrant ? 'GRANT' : 'REVOKE'} on a table this migration's owner did not create ("${table}"): ${statement}`,
+      )
+    }
+
+    if (isRevoke) revokedTables.add(table)
+    if (isGrant && COLUMN_SCOPED_REGRANT.test(statement)) regrantedTables.add(table)
+  }
+
+  for (const table of revokedTables) {
+    if (!regrantedTables.has(table)) {
+      offenses.push(
+        `REVOKE on "${table}" has no column-scoped re-GRANT (INSERT or UPDATE) to finsoft_app in the same migration (S4 exception (a))`,
       )
     }
   }
@@ -281,10 +302,13 @@ export function buildOwnerTables(
  * `packages/<name>` owners: all bans apply, with exactly three exceptions
  * (verbatim text in the ADR note). Exception (a) — REVOKE INSERT, UPDATE ON
  * an owned table FROM finsoft_app, only if the same migration re-grants a
- * column list — needed no new code: it was already the one allowed REVOKE
- * shape (REVOKE_SHAPE above), gated on table ownership via `ownedTables`,
- * which `buildOwnerTables` (above) now resolves correctly across the 014
- * boundary. Exceptions (b) and (c) are new, owner-gated allowances below.
+ * column list — reuses the one allowed REVOKE shape (REVOKE_SHAPE above),
+ * gated on table ownership via `ownedTables` (which `buildOwnerTables`,
+ * above, now resolves correctly across the 014 boundary), TIGHTENED
+ * (Council review, M2-C) so `grantRevokeOffenses` itself enforces the
+ * "same migration re-grants a column list" half — a bare REVOKE with no
+ * companion GRANT INSERT/UPDATE(...) is its own offense, not merely
+ * unchecked. Exceptions (b) and (c) are new, owner-gated allowances below.
  */
 
 /**
@@ -517,17 +541,22 @@ describe('migration ownership (C10, ADR-0028)', () => {
       expect(offenses).toHaveLength(1)
     })
 
-    it('REVOKE ... ON a table this migration did not create is rejected', () => {
+    it('REVOKE ... ON a table this migration did not create is rejected (and, with no re-grant either, both offenses fire)', () => {
       const offenses = grantRevokeOffenses(
         'REVOKE INSERT, UPDATE ON parties FROM finsoft_app;',
         new Set(['customers']),
       )
-      expect(offenses).toHaveLength(1)
+      expect(offenses).toHaveLength(2)
+      expect(offenses.some((o) => /did not create/.test(o))).toBe(true)
+      expect(offenses.some((o) => /no column-scoped re-GRANT/.test(o))).toBe(true)
     })
 
-    it('the one allowed REVOKE idiom passes: INSERT, UPDATE ON an owned table FROM finsoft_app', () => {
+    it('the one allowed REVOKE idiom passes: INSERT, UPDATE ON an owned table FROM finsoft_app, WITH a column-scoped re-grant', () => {
+      // S4 exception (a): the REVOKE alone is not enough — the same
+      // migration must also re-grant a column list to finsoft_app.
       const offenses = grantRevokeOffenses(
-        'REVOKE INSERT, UPDATE ON customers FROM finsoft_app;',
+        'REVOKE INSERT, UPDATE ON customers FROM finsoft_app;\n' +
+          'GRANT INSERT (id) ON customers TO finsoft_app;',
         new Set(['customers']),
       )
       expect(offenses).toEqual([])
@@ -777,15 +806,40 @@ describe('migration ownership (C10, ADR-0028)', () => {
         expect(forbiddenOffenses(ownerFixture, 'modules/customers')).toContain('ALTER ... OWNER')
       })
 
-      it('(a) needs no new code: REVOKE INSERT, UPDATE ON an owned table FROM finsoft_app already passes, for a packages/<name> owner, once the table resolves as owned', () => {
-        const revokeFixture = 'REVOKE INSERT, UPDATE ON accounts FROM finsoft_app;'
+      it('(a) REVOKE INSERT, UPDATE on an owned table, followed by a column-scoped re-GRANT, passes for a packages/<name> owner once the table resolves as owned', () => {
+        const revokeThenRegrant =
+          'REVOKE INSERT, UPDATE ON accounts FROM finsoft_app;\n' +
+          'GRANT INSERT (code) ON accounts TO finsoft_app;'
         const owned = new Set(['accounts'])
-        expect(grantRevokeOffenses(revokeFixture, owned)).toEqual([])
+        expect(grantRevokeOffenses(revokeThenRegrant, owned)).toEqual([])
       })
 
-      it('(a) the same REVOKE is rejected if the table does not resolve as owned (the pre-014 map is what makes it resolve for migration 018)', () => {
+      it('(a) is rejected: a REVOKE with NO re-grant at all — the checker must enforce the companion GRANT, not just accept the REVOKE shape', () => {
+        const revokeOnly = 'REVOKE INSERT, UPDATE ON accounts FROM finsoft_app;'
+        const owned = new Set(['accounts'])
+        const offenses = grantRevokeOffenses(revokeOnly, owned)
+        expect(offenses).toHaveLength(1)
+        expect(offenses[0]).toMatch(/no column-scoped re-GRANT/)
+      })
+
+      it('(a) a re-grant that is NOT column-scoped (a bare GRANT UPDATE with no column list) does not satisfy the requirement', () => {
+        // GRANT_SHAPES itself already refuses a column-less GRANT UPDATE as
+        // an unrecognised shape, so this also proves the unrecognised-shape
+        // offense fires rather than a false "re-grant satisfied".
+        const revokeThenBareGrant =
+          'REVOKE INSERT, UPDATE ON accounts FROM finsoft_app;\nGRANT UPDATE ON accounts TO finsoft_app;'
+        const owned = new Set(['accounts'])
+        const offenses = grantRevokeOffenses(revokeThenBareGrant, owned)
+        expect(offenses.some((o) => /unrecognised GRANT shape/.test(o))).toBe(true)
+        expect(offenses.some((o) => /no column-scoped re-GRANT/.test(o))).toBe(true)
+      })
+
+      it('(a) the same REVOKE is rejected if the table does not resolve as owned (the pre-014 map is what makes it resolve for migration 018) — now two offenses: unowned AND no re-grant', () => {
         const revokeFixture = 'REVOKE INSERT, UPDATE ON accounts FROM finsoft_app;'
-        expect(grantRevokeOffenses(revokeFixture, new Set())).toHaveLength(1)
+        const offenses = grantRevokeOffenses(revokeFixture, new Set())
+        expect(offenses).toHaveLength(2)
+        expect(offenses.some((o) => /did not create/.test(o))).toBe(true)
+        expect(offenses.some((o) => /no column-scoped re-GRANT/.test(o))).toBe(true)
       })
     })
 

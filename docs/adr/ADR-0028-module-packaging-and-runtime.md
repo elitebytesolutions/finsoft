@@ -153,14 +153,22 @@ owners, verbatim from this lane's delivery brief:
 > asserts that role is `NOLOGIN`, `NOBYPASSRLS` and owns nothing else. Every `packages/<name>`
 > migration also needs a named T2 Database/Security review.
 
+**Database/Security seat — signature pending.** This text is quoted verbatim from the M2-C delivery
+brief, transcribed here by the implementing engineer, not yet signed by the seat whose ruling it
+records. Do not treat it as countersigned until this line is replaced with a dated signature.
+
 Implemented in `database/tests/migration-ownership.spec.ts` (`isAllowedSecurityDefiner`,
 `isAllowedFunctionOwnerChange`, both gated on a `packages/<name>` owner only — a `modules/<name>`
 owner keeps the unconditional ban), each with a failing fixture and a passing fixture for the allowed
-shape. Exception (a) needed no new code: `REVOKE INSERT, UPDATE ON <table> FROM finsoft_app` was
-already the one allowed `REVOKE` shape (`REVOKE_SHAPE`), gated only on the table being one the
-migration's owner created — which is exactly what the pre-014 owner map above now lets migration 018
-satisfy for `accounts`. Migration 018 itself uses none of the three exceptions — it needed no
-`SECURITY DEFINER` function, having been unable to complete the one that coa-standard.md §8.7 R2 asks
-for (a dedicated `NOLOGIN`/`NOBYPASSRLS` role could not be provisioned from within this lane's `ALLOWED`
-paths — see this lane's report). The three exceptions are implemented and fixture-tested regardless,
-ready for whichever migration lands R2's seeding function.
+shape. Exception (a) is `grantRevokeOffenses`'s existing `REVOKE_SHAPE` — `REVOKE INSERT, UPDATE ON
+<table> FROM finsoft_app` was already the one allowed `REVOKE` shape, gated on the table being one
+the migration's owner created (which is exactly what the pre-014 owner map above now lets migration
+018 satisfy for `accounts`) — **tightened by Council review** (M2-C, 2026-09-29) to additionally
+require that the SAME migration also re-grants a column list (`GRANT INSERT (…)` or
+`GRANT UPDATE (…)`) to `finsoft_app` on that same table; a bare `REVOKE` with no companion re-grant
+is now its own offense, with a failing fixture. Migration 018 itself uses none of the three
+exceptions — it needed no `SECURITY DEFINER` function, having been unable to complete the one that
+coa-standard.md §8.7 R2 asks for (a dedicated `NOLOGIN`/`NOBYPASSRLS` role could not be provisioned
+from within this lane's `ALLOWED` paths — see this lane's report, and
+[TECH_DEBT.md](../TECH_DEBT.md) TD-012). The three exceptions are implemented and fixture-tested
+regardless, ready for whichever migration lands R2's seeding function.

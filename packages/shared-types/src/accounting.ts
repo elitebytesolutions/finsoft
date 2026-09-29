@@ -111,15 +111,8 @@ export interface AccountDto {
   /** Null for a HEADER account. The tree's edges. */
   readonly parentId: string | null
   readonly isActive: boolean
-  /**
-   * Optimistic concurrency (coa-standard.md §8.2) — PATCH sends it back as
-   * expectedVersion. Every real response carries a real number; typed
-   * optional only so a pre-M2-C fixture outside this lane's ALLOWED paths
-   * (e.g. apps/web's chart-of-accounts test, owned by the M2-UI lane) keeps
-   * compiling without this lane editing a forbidden file. Tighten to
-   * required once that fixture is updated.
-   */
-  readonly version?: number | undefined
+  /** Optimistic concurrency (coa-standard.md §8.2) — PATCH sends it back as expectedVersion. */
+  readonly version: number
 }
 
 export interface AccountsResponseDto {

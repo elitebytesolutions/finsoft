@@ -25,14 +25,8 @@ export interface AccountRow {
   readonly isActive: boolean
   /** Null for a HEADER account. GET /api/accounts' tree is built from this. */
   readonly parentId: string | null
-  /**
-   * Optimistic concurrency (coa-standard.md §8.2). Optional on the TYPE only
-   * — `mapRow` always sets it from the real, NOT NULL `version` column
-   * (migration 010) — so that fixtures built before M2-C (e.g.
-   * packages/reporting's) that construct an `AccountRow` literal without it
-   * keep compiling. A new caller should still always read a real number.
-   */
-  readonly version?: number
+  /** Optimistic concurrency (coa-standard.md §8.2). Always the real, NOT NULL `version` column (migration 010). */
+  readonly version: number
 }
 
 function mapRow(row: {

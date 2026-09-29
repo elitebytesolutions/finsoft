@@ -275,6 +275,53 @@ Product Owner (billing decision) / DevOps Guardian (restoring the workflow).
 
 ---
 
+## GAP-006 — Chart-of-accounts create has no database-privilege backstop (R2)
+
+| | |
+|---|---|
+| **Rule** | [`coa-standard.md`](posting-rules/coa-standard.md) §8.7 R2, hardening rules 4, 7 and 9 of [NON_NEGOTIABLES.md](NON_NEGOTIABLES.md) (no hard delete / structural drift of the chart; tenant isolation; audit) via Invariant 9 (subledger/control-account reconciliation) |
+| **Requirement** | The chart-of-accounts user-create path must be **structurally** unable to insert a header, a control account, a role-holding account or a restricted account — enforced at the database-privilege layer, not only in application code — via a `SECURITY DEFINER` seeding function owned by a dedicated `NOLOGIN`, `NOBYPASSRLS` role that owns nothing else |
+| **Status** | **Not enforced. Deferred by decision (R2 option (b): merge now, close later)** |
+| **Raised** | 2026-09-29, M2-C Council review (Security seat) |
+
+### Council disposition, 2026-09-29
+
+> **R2 is option (b): merge now.** Production stays blocked until R2 is done.
+
+This accepts the application-layer enforcement (`chartOfAccounts.create`, `packages/accounting-kernel/src/chart-of-accounts.ts`, hardcodes `kind='POSTABLE'`, `control_kind='NONE'`, `role=NULL`, `restricted=false` — no request field admits anything else) plus R7 (`accounts_tenant_ar_ap_control_key`, migration 018 — at most one `AR`-control and one `AP`-control account per tenant, structurally, for every role) **for develop and staging only**, where tenants hold demo data. It does not accept the database-privilege half of R2 for production.
+
+### What is enforced
+
+- The application layer: no code path in `chartOfAccounts.create` can be made to write a header, a control kind, a role, or `restricted = true` — there is no field for it in the command shape, checked by `validateCreatePayload`'s `requireKnownKeys`.
+- R7's unique index (`accounts_tenant_ar_ap_control_key`, migration 018): a second `AR`- or `AP`-control account cannot be **stored**, by any role, including `finsoft_migration` — this closes the specific configuration TD-011 worried about, independent of R2.
+- Every other database requirement in `coa-standard.md` §8.7 (R1, R3–R11) is built and tested (migration 018, `database/tests/accounting-acl.spec.ts`, `journal-lines.spec.ts`, `migration-ownership.spec.ts`).
+
+### What is not enforced, and why
+
+`finsoft_app`'s column-scoped `INSERT` grant on `accounts` still includes `kind`, `control_kind`, `role` and `restricted` (migration 010, unchanged) — the same grant tenant provisioning (`seedChartOfAccounts`) uses. A bug in `finsoft_app`'s **own** code (not a crafted HTTP request, which the kernel's fixed values already foreclose) could still reach those columns; nothing at the privilege layer refuses it. Closing this needs a `SECURITY DEFINER` seeding function owned by a role that is `NOLOGIN`, `NOBYPASSRLS`, and "owns nothing else" (Security seat, S4 exception (c) — see [ADR-0028](adr/ADR-0028-module-packaging-and-runtime.md) §9's 2026-09-29 note). The one existing such role, `finsoft_refresh` (migration 006, ADR-0023 §2), already owns `auth_lookup.resolve_refresh`, so reusing it would fail "owns nothing else" for both functions. A fresh role can only be created in `infrastructure/docker/postgres/init/00-bootstrap.sh` (`finsoft_migration` has no `CREATEROLE`) — infrastructure work, not a migration.
+
+Also not yet enforced at the database level: **R12** (`updated_by` must equal the user in context) has no database-level check — it is set correctly by `updateAccountRow` (`packages/database/src/accounting/accounts.ts`), but nothing at the trigger or grant layer stops a different value being written by a caller that bypasses the kernel (the same class of gap as the rest of R2 — an application-layer guarantee, not a structural one).
+
+### Compensating controls
+
+1. Every reachable path (the real HTTP API, the real kernel) cannot produce a header/control/role/restricted account or a wrong `updated_by` — this is proven by `tests/integration/accounts-create-edit.spec.ts` and the kernel's own unit tests, not merely assumed.
+2. R7's structural index means even a hypothetical bug that reached `control_kind` could not create a second `AR`/`AP` control account — the specific failure Invariant 9 depends on.
+3. Develop and staging hold demo/test data only (same posture GAP-003 and GAP-004 already rely on) — the blast radius of a `finsoft_app`-code bug reaching these columns is a corrupted demo chart, not a real business's books.
+4. Production has no deployment path today (GAP-001, GAP-003, GAP-004) and this entry adds a fourth, independent block specific to chart-of-accounts maintenance.
+
+### What would close it
+
+1. A new `NOLOGIN`, `NOBYPASSRLS` database role (for example `finsoft_coa_seed`) added to `infrastructure/docker/postgres/init/00-bootstrap.sh`, granted to `finsoft_migration` `WITH INHERIT FALSE, SET TRUE` (the `finsoft_refresh` pattern).
+2. A follow-up migration: the seeding function created as `finsoft_migration`, `SET search_path = pg_catalog, public`, `ALTER FUNCTION ... OWNER TO finsoft_coa_seed`, `REVOKE EXECUTE ... FROM PUBLIC` then an explicit `GRANT EXECUTE ... TO finsoft_app`; `finsoft_app`'s `INSERT` on `accounts` narrowed to drop `kind`/`control_kind`/`role`/`restricted`; `seedChartOfAccounts` and `tools/seed/backfill-accounting.mjs` routed through the new function.
+3. `database/tests/schema.spec.ts` asserting the new role is `NOLOGIN`, `NOBYPASSRLS`, and owns exactly that one function (the S4 exception (c) condition `migration-ownership.spec.ts` already enforces the *shape* of, pending the role existing to assert against).
+4. A database-level check or trigger for R12 (`updated_by` matches the session's context, for every role), closing the companion gap named above.
+
+### Owner
+
+Database Guardian / DevOps Guardian (owns `00-bootstrap.sh`), with the Security seat on the exact role shape and the T2 Database/Security review the new migration needs.
+
+---
+
 ## Adding an entry
 
 State the rule and quote the requirement. Say precisely what *is* enforced and what is not — a gap described vaguely reads as smaller than it is. List compensating controls without dressing them up as equivalents. Name what would close it, and who owns that. Date it.

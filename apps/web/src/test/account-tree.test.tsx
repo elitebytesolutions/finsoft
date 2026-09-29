@@ -21,6 +21,7 @@ function account(
     restricted: false,
     parentId: null,
     isActive: true,
+    version: 0,
     ...overrides,
   }
 }

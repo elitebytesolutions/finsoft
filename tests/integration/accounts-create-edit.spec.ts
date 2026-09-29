@@ -486,6 +486,34 @@ describe('PATCH /api/accounts/:id', () => {
     expect(moved.body.parentId).toBe(costOfSales(alpha))
   })
 
+  it("Council correction: a parent-only move (code unchanged) is validated against the NEW parent's block, not skipped", async () => {
+    // 6640 under 6000 Operating Expenses, moved to 5000 Cost of Sales with NO
+    // code field in the request — before the fix, the range check lived only
+    // inside `if (changingCode)` and never ran for a parent-only move,
+    // silently leaving 6640 filed under a 5000-block header.
+    const created = await request(app.getHttpServer())
+      .post('/api/accounts')
+      .set(authHeaders(alpha.tenantId, alpha.ownerId))
+      .send({ parentId: opex(alpha), name: 'Parent-Only Move Test', code: '6642' })
+      .expect(201)
+
+    const res = await request(app.getHttpServer())
+      .patch(`/api/accounts/${created.body.id}`)
+      .set(authHeaders(alpha.tenantId, alpha.ownerId))
+      .send({ parentId: costOfSales(alpha), expectedVersion: 0 })
+      .expect(400)
+    expect(res.body.error).toBe('account_code_out_of_range')
+
+    // Unmoved: the account still carries its original code and parent.
+    const unchanged = await request(app.getHttpServer())
+      .get('/api/accounts')
+      .set(authHeaders(alpha.tenantId, alpha.ownerId))
+    const row = unchanged.body.accounts.find((a: { id: string }) => a.id === created.body.id)
+    expect(row.code).toBe('6642')
+    expect(row.parentId).toBe(opex(alpha))
+    expect(row.version).toBe(0)
+  })
+
   describe('code and parent freeze after the first posting (§8.2, §8.7 R4/R8)', () => {
     it('a code edit after a posting: ACCOUNT_HAS_POSTINGS / 409 — edit-then-post and post-then-edit both land correctly', async () => {
       const created = await request(app.getHttpServer())
@@ -519,11 +547,16 @@ describe('PATCH /api/accounts/:id', () => {
 
       // Same type as the account's current parent (6000, EXPENSE) — isolates
       // ACCOUNT_HAS_POSTINGS from ACCOUNT_PARENT_TYPE_MISMATCH, which the
-      // §8.9 order checks first.
+      // §8.9 order checks first. A compatible code (5181) travels with the
+      // parentId, per §8.2 ("the code must then lie in the new parent's
+      // block") and the Council correction (item 1 above) — without it,
+      // ACCOUNT_CODE_OUT_OF_RANGE fires before ACCOUNT_HAS_POSTINGS ever
+      // gets a chance to, which is itself the correct §8.9 order and is
+      // proven separately by the "parent-only move" test above.
       const parentEdit = await request(app.getHttpServer())
         .patch(`/api/accounts/${created.body.id}`)
         .set(authHeaders(alpha.tenantId, alpha.ownerId))
-        .send({ parentId: costOfSales(alpha), expectedVersion: 0 })
+        .send({ parentId: costOfSales(alpha), code: '5181', expectedVersion: 0 })
         .expect(409)
       expect(parentEdit.body.error).toBe('account_has_postings')
 
@@ -605,6 +638,132 @@ describe('PATCH /api/accounts/:id', () => {
       // the new code (200), or the posting committed first (200) and the
       // edit was rejected (409) — never a state where both "won" against
       // each other's view of the account.
+      if (editRes.status === 200) {
+        expect(postRes.status).toBe(200)
+      } else {
+        expect(editRes.status).toBe(409)
+        expect(postRes.status).toBe(200)
+      }
+    })
+
+    /*
+     * Security seat, M2-C review: the code-only race above does not exercise
+     * R8's lock on a `parentId` edit — the field the row lock (rather than
+     * the `accounts_tenant_code_key` unique index the original §8.7 R8 text
+     * leaned on for `code`) is the one actually closing. Both orders, then a
+     * real concurrent race, all changing `parentId` (with `code` moving
+     * alongside it, as §8.2 says a real cross-block move normally requires
+     * — "the code must then lie in the new parent's block" — the Council
+     * correction above (item 1) now enforces exactly that, so a parentId
+     * move into a DIFFERENT thousand-block needs a compatible code in the
+     * same request). What is under test is the `parent_id` branch of the
+     * trigger's `NEW.parent_id IS DISTINCT FROM OLD.parent_id` condition,
+     * which fires here regardless of `code` also changing in the same
+     * statement.
+     */
+    it('re-parenting (with a compatible code) after a posting: ACCOUNT_HAS_POSTINGS / 409 — post-then-edit', async () => {
+      const created = await request(app.getHttpServer())
+        .post('/api/accounts')
+        .set(authHeaders(alpha.tenantId, alpha.ownerId))
+        .send({ parentId: opex(alpha), name: 'Post Then Reparent', code: '6680' })
+        .expect(201)
+
+      await request(app.getHttpServer())
+        .post('/api/journals')
+        .set(authHeaders(alpha.tenantId, alpha.ownerId))
+        .set('Idempotency-Key', 'coa-post-then-reparent-1')
+        .send({
+          occurredAt: '2026-09-13',
+          narration: 'Post before a re-parent edit attempt',
+          reference: null,
+          lines: [
+            { accountId: created.body.id, debit: '75.0000' },
+            { accountId: bank(alpha), credit: '75.0000' },
+          ],
+        })
+        .expect(200)
+
+      const parentEdit = await request(app.getHttpServer())
+        .patch(`/api/accounts/${created.body.id}`)
+        .set(authHeaders(alpha.tenantId, alpha.ownerId))
+        .send({ parentId: costOfSales(alpha), code: '5180', expectedVersion: 0 })
+        .expect(409)
+      expect(parentEdit.body.error).toBe('account_has_postings')
+    })
+
+    it('re-parenting (with a compatible code) before the first posting is allowed, and the posting then lands under the new parent — edit-then-post', async () => {
+      const created = await request(app.getHttpServer())
+        .post('/api/accounts')
+        .set(authHeaders(alpha.tenantId, alpha.ownerId))
+        .send({ parentId: opex(alpha), name: 'Reparent Then Post', code: '6690' })
+        .expect(201)
+
+      const reparented = await request(app.getHttpServer())
+        .patch(`/api/accounts/${created.body.id}`)
+        .set(authHeaders(alpha.tenantId, alpha.ownerId))
+        .send({ parentId: costOfSales(alpha), code: '5190', expectedVersion: 0 })
+        .expect(200)
+      expect(reparented.body.parentId).toBe(costOfSales(alpha))
+      expect(reparented.body.code).toBe('5190')
+
+      await request(app.getHttpServer())
+        .post('/api/journals')
+        .set(authHeaders(alpha.tenantId, alpha.ownerId))
+        .set('Idempotency-Key', 'coa-reparent-then-post-1')
+        .send({
+          occurredAt: '2026-09-14',
+          narration: 'Post after a re-parent edit',
+          reference: null,
+          lines: [
+            { accountId: created.body.id, debit: '125.0000' },
+            { accountId: bank(alpha), credit: '125.0000' },
+          ],
+        })
+        .expect(200)
+
+      // Now frozen — both fields.
+      const afterPost = await request(app.getHttpServer())
+        .patch(`/api/accounts/${created.body.id}`)
+        .set(authHeaders(alpha.tenantId, alpha.ownerId))
+        .send({ parentId: opex(alpha), code: '6691', expectedVersion: 1 })
+        .expect(409)
+      expect(afterPost.body.error).toBe('account_has_postings')
+    })
+
+    it('concurrency: a parentId edit (with a compatible code) racing the account’s first posting resolves one way or the other, never both — this is what R8’s FOR UPDATE closes for the parent_id branch', async () => {
+      const created = await request(app.getHttpServer())
+        .post('/api/accounts')
+        .set(authHeaders(alpha.tenantId, alpha.ownerId))
+        .send({ parentId: opex(alpha), name: 'Race Reparent Vs Post', code: '6692' })
+        .expect(201)
+
+      const [editRes, postRes] = await Promise.all([
+        request(app.getHttpServer())
+          .patch(`/api/accounts/${created.body.id}`)
+          .set(authHeaders(alpha.tenantId, alpha.ownerId))
+          .send({ parentId: costOfSales(alpha), code: '5192', expectedVersion: 0 }),
+        request(app.getHttpServer())
+          .post('/api/journals')
+          .set(authHeaders(alpha.tenantId, alpha.ownerId))
+          .set('Idempotency-Key', 'coa-race-reparent-post-1')
+          .send({
+            occurredAt: '2026-09-15',
+            narration: 'Race against a re-parent edit',
+            reference: null,
+            lines: [
+              { accountId: created.body.id, debit: '5.0000' },
+              { accountId: bank(alpha), credit: '5.0000' },
+            ],
+          }),
+      ])
+
+      // Either the re-parent committed first (200) and the posting landed
+      // under the new parent (200), or the posting committed first (200)
+      // and the re-parent was rejected (409) — never both winning against
+      // each other's view of the account. `parent_id` has no unique index
+      // of its own (unlike `code`), so this proves R8's explicit row lock
+      // is what closes this race for the `parent_id` branch, not an
+      // accidental side effect of a different constraint.
       if (editRes.status === 200) {
         expect(postRes.status).toBe(200)
       } else {

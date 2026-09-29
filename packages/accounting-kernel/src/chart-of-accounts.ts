@@ -108,22 +108,6 @@ async function loadHeaderParent(
   return parent
 }
 
-/**
- * `AccountRow.version` is typed optional on `packages/database` only for
- * backward compatibility with fixtures built before M2-C (see that file's
- * own comment) — every row this kernel reads or writes carries the real,
- * NOT NULL `version` column (migration 010). `undefined` here is a kernel
- * defect (a query that forgot to select it), never a user condition.
- */
-function requireVersion(account: AccountRow): number {
-  if (account.version === undefined) {
-    throw new KernelInvariantError(
-      `accounts ${account.id}: version was not returned by the query that loaded this row.`,
-    )
-  }
-  return account.version
-}
-
 function mapUniqueViolation(error: unknown): never {
   if (journalSqlstate(error) === UNIQUE_VIOLATION) {
     const constraint = journalConstraintName(error)
@@ -183,7 +167,7 @@ function accountCreatedAudit(account: AccountRow, actorUserId: string, parent: A
       role: account.role,
       restricted: String(account.restricted),
       isActive: String(account.isActive),
-      version: String(requireVersion(account)),
+      version: String(account.version),
     },
   }
 }
@@ -311,9 +295,9 @@ function accountUpdatedAudit(
     action: 'ACCOUNT_UPDATED',
     entityType: 'accounts',
     entityId: after.id,
-    beforeJson: { version: String(requireVersion(before)) },
+    beforeJson: { version: String(before.version) },
     afterJson: {
-      version: String(requireVersion(after)),
+      version: String(after.version),
       ...Object.fromEntries(
         Object.entries(changed).flatMap(([field, { before: b, after: a }]) => [
           [`${field}Before`, b],
@@ -343,7 +327,7 @@ async function update(cmd: UpdateAccountCommand, tx: TenantTx): Promise<AccountR
       { accountId: id, code: current.code },
     )
   }
-  const currentVersion = requireVersion(current)
+  const currentVersion = current.version
   if (record.expectedVersion !== currentVersion) {
     throw new PostingError(
       'ACCOUNT_VERSION_CONFLICT',
@@ -380,10 +364,25 @@ async function update(cmd: UpdateAccountCommand, tx: TenantTx): Promise<AccountR
     if (typeof record.code !== 'string' || record.code.length === 0) {
       throw new PostingError('PAYLOAD_INVALID', 'code must be a string.', { field: 'code' })
     }
+    newCode = record.code
+  }
+
+  /*
+   * Council correction, M2-C review: a parent-only move must ALSO validate
+   * a code against the block — the NEW parent's block if the parent is
+   * changing, the CURRENT parent's if it is not (code alone changing under
+   * the same parent). Without this, "6640 -> parent 5000, code unchanged"
+   * skipped the range check entirely, since it only ran inside
+   * `if (changingCode)` before. The code validated is whichever one is in
+   * effect after this edit: the new code if it is changing, else the
+   * account's current (already-valid) code — re-checked here only because
+   * the block it must lie in may have just changed.
+   */
+  if (changingCode || changingParent) {
+    const effectiveCode = newCode ?? current.code
     const blockParentCode =
       newParent?.code ?? (await requireCurrentParentCode(tx, tenantId, current))
-    assertCodeInBlock(record.code, blockParentCode)
-    newCode = record.code
+    assertCodeInBlock(effectiveCode, blockParentCode)
   }
 
   if (changingCode || changingParent) {

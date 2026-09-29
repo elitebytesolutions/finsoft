@@ -384,6 +384,8 @@ own query shape, rather than resolving a single role.
 
 ## TD-012 · coa-standard.md §8.7 R2's database-privilege backstop is not built — blocked on a new database role
 
+**Also tracked as [GAP-006](COMPLIANCE_GAPS.md#gap-006--chart-of-accounts-create-has-no-database-privilege-backstop-r2)**, a named **production blocker** (Council disposition, M2-C review, 2026-09-29: R2 is option (b), merge now, production stays blocked until R2 is done). GAP-006 is the LEVEL-0-adjacent, sign-off-tracked record; this entry is the implementation-detail record for whoever picks up the fix — read both.
+
 **What.** `coa-standard.md` §8.7 R2 asks for the chart-of-accounts user-create
 path to be structurally unable to insert a header, a control account, a role
 or a restricted account — at the privilege layer, not only in application
