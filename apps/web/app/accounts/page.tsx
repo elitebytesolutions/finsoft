@@ -1,20 +1,13 @@
 'use client'
-/* Route /accounts — generated from the prototype route table in
- * ui-prototype/src/App.tsx. The screen and its props are unchanged. */
+/* Route /accounts — M2-S: wired to the real API (GET /api/accounts), read-only
+ * (coa-standard.md §5). Screen no longer takes mock data/mutator props. */
 import { ChartOfAccounts } from '@/screens/chart-of-accounts'
 import { Guard } from '@/components/guard'
-import { useFinsoft } from '@/app-context'
 
 export default function Page() {
-  const f = useFinsoft()
   return (
     <Guard module="Cash, Bank & GL">
-      <ChartOfAccounts
-        data={f.data}
-        onAdd={f.addMaster}
-        onRemove={f.removeMaster}
-        canCreate={f.act('master:create')}
-      />
+      <ChartOfAccounts />
     </Guard>
   )
 }

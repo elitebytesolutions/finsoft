@@ -14,11 +14,12 @@ function renderAt(path: string) {
 }
 
 describe('account ledger screens', () => {
-  it('ledgers register page renders with live ledger content', () => {
-    renderAt('/ledgers')
-    expect(screen.getAllByText(/Account Ledger/).length).toBeGreaterThan(0)
-    expect(screen.getAllByText('Cash in Hand').length).toBeGreaterThan(0)
-  })
+  // "ledgers register page renders with live ledger content" was removed here — M2-S wired
+  // /ledgers to the real ledger API (GET /api/accounts + GET /api/ledgers/:accountId), so it
+  // no longer renders synchronously from mock data. Covered by account-ledger.test.tsx.
+  //
+  // /finance/accounts/:code (below) is NOT in the M2-S wiring scope this round — it stays a
+  // prototype screen, so these two tests are unaffected.
   it('account detail shows statement and picker changes accounts', () => {
     renderAt('/finance/accounts/1110-01')
     expect(screen.getAllByText('Cash in Hand').length).toBeGreaterThan(0)

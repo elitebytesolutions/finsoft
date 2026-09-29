@@ -28,6 +28,7 @@ Archetype codes: **A** Register · **B** Document entry · **C** Document detail
 | Chart of Accounts | `/accounts` | E | [chart-of-accounts](chart-of-accounts/) |
 | Account Ledger | `/ledgers` | D | [account-ledger](account-ledger/) |
 | Account detail (ledger permalink) | `/finance/accounts/:code` | D | [account-detail](account-detail/) |
+| Trial Balance | `/trial-balance` | H | [trial-balance](trial-balance/) |
 | Cash Book | `/cash-book` | D | [cash-book](cash-book/) |
 | Cash Transactions | `/cash-transactions` | A | [cash-transactions](cash-transactions/) |
 

@@ -65,22 +65,13 @@ describe('Finsoft detail pages', () => {
     expect(screen.getByText('Purchase PUR-2026-0184')).toBeInTheDocument()
   })
 
-  it('renders the four-level chart of accounts hierarchy', () => {
-    renderAt('/accounts')
-    expect(screen.getByRole('heading', { name: 'Chart of Accounts' })).toBeInTheDocument()
-    for (const label of ['Assets', 'Liabilities', 'Equity', 'Income', 'Expenses']) {
-      expect(screen.getAllByText(label).length).toBeGreaterThan(0)
-    }
-    expect(screen.getAllByText('Postable').length).toBeGreaterThan(0)
-    expect(screen.getByText('Cash in Hand')).toBeInTheDocument()
-  })
-
-  it('renders the voucher register with posted entries', () => {
-    renderAt('/vouchers')
-    expect(screen.getAllByText('Voucher Register').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('JV-2026-0409').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('JV-2026-0413').length).toBeGreaterThan(0)
-  })
+  // "renders the four-level chart of accounts hierarchy" (/accounts) and "renders the
+  // voucher register with posted entries" (/vouchers) were removed here — M2-S wired both
+  // routes to the real API (GET /api/accounts, GET /api/journals), so they no longer render
+  // synchronously from mock data and this harness does not stub `fetch`. Their states are
+  // covered by chart-of-accounts.test.tsx and voucher-register.test.tsx instead, which mock
+  // `fetch` directly (matching trial-balance.test.tsx's approach) rather than rendering
+  // through the full App+router harness.
 
   it('renders every module and child in the sidebar', () => {
     renderAt('/dashboard')
@@ -92,52 +83,13 @@ describe('Finsoft detail pages', () => {
       }
   })
 
-  it('offers voucher-type filters inside the register', () => {
-    renderAt('/vouchers')
-    for (const t of [
-      'All Status',
-      'All Voucher Types',
-      'Journal Voucher',
-      'Receipt Voucher',
-      'Payment Voucher',
-      'Contra Voucher',
-    ]) {
-      expect(screen.getAllByText(t).length).toBeGreaterThan(0)
-    }
-  })
-
-  it('opens an accordion row to reveal accounting entries', () => {
-    renderAt('/vouchers')
-    fireEvent.click(screen.getByRole('button', { name: /jv-2026-0412/i }))
-    expect(screen.getAllByText('Rent Expense').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('Office Rent Payment').length).toBeGreaterThan(0)
-  })
-
-  it('renders a voucher detail page with entries and audit', () => {
-    renderAt('/vouchers/JV-2026-0413')
-    expect(screen.getAllByText('Staff Salary Payment').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('Salaries Expense').length).toBeGreaterThan(0)
-    expect(screen.getByText('Status & audit')).toBeInTheDocument()
-  })
-
-  it('renders the new journal voucher entry form', () => {
-    renderAt('/vouchers/new')
-    expect(screen.getByText('New Journal Voucher')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /add line/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /save & post/i })).toBeInTheDocument()
-  })
-
-  it('saves a balanced voucher from independent debit and credit rows', () => {
-    renderAt('/vouchers/new')
-    fireEvent.change(screen.getByLabelText('Narration'), {
-      target: { value: 'Office equipment purchase' },
-    })
-    fireEvent.change(screen.getByLabelText('Debit line 1'), { target: { value: '25000' } })
-    fireEvent.change(screen.getByLabelText('Credit line 2'), { target: { value: '25000' } })
-    expect(screen.getByText('Balanced')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /save draft/i }))
-    expect(screen.getAllByText('Office equipment purchase').length).toBeGreaterThan(0)
-  })
+  // The voucher-register filter/accordion tests, the voucher-detail test and the two
+  // new-voucher-form tests were removed here — M2-S wired /vouchers, /vouchers/:id and
+  // /vouchers/new to the real journals API (GET/POST /api/journals, POST /.../reverse), so
+  // none of them render synchronously from mock data any more, and the mock's own affordances
+  // (multiple voucher types, Save Draft) no longer exist on these screens (journal-voucher.md
+  // §1: single-step post, JV only). Covered instead by voucher-register.test.tsx,
+  // voucher-detail.test.tsx and voucher-new.test.tsx.
 
   it('renders customers directory from master accounts', () => {
     renderAt('/customers')
@@ -178,13 +130,13 @@ describe('Finsoft detail pages', () => {
     expect(screen.getByText('Aging Summary')).toBeInTheDocument()
   })
 
-  it('renders field sales and period close', () => {
+  it('renders field sales', () => {
     renderAt('/field-sales')
     expect(screen.getByText('Representative performance')).toBeInTheDocument()
-    renderAt('/period-close')
-    expect(screen.getByText('Period close')).toBeInTheDocument()
-    expect(screen.getByText('Pre-close checklist')).toBeInTheDocument()
   })
+  // The period-close assertion here was removed — M2-S wired /period-close to the real
+  // periods API (GET/POST /api/periods/...), which no longer renders a checklist
+  // (periods.md §7: no close checklist exists in M2). Covered by period-close.test.tsx.
 
   it('renders accounts receivable from credit sales', () => {
     renderAt('/receivables')
@@ -266,13 +218,9 @@ describe('Finsoft detail pages', () => {
     expect(screen.getAllByText(/Pending \(/).length).toBeGreaterThan(0)
   })
 
-  it('blocks deletion of an account that has posted transactions', () => {
-    renderAt('/accounts')
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Select Cash in Hand' }))
-    fireEvent.click(screen.getByRole('button', { name: /^Delete$/ }))
-    expect(screen.getByText(/Transactions have been posted/)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Delete account' })).toBeDisabled()
-  })
+  // "blocks deletion of an account that has posted transactions" was removed here — M2-S
+  // wired /accounts to the real, read-only accounts API (GET /api/accounts); there is no
+  // delete affordance any more (coa-standard.md §5). Covered by chart-of-accounts.test.tsx.
   it('opens the add-master modal from the masters page', () => {
     renderAt('/masters?new=vendor')
     expect(screen.getByRole('dialog', { name: 'Create master record' })).toBeInTheDocument()

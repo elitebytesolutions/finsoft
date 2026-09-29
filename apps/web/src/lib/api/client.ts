@@ -215,8 +215,19 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
 
   if (!res.ok) {
     const body = await parseJsonSafe(res)
+    // The accounting API (and any future non-auth route) reports its own machine-readable
+    // `error`/`details` on top of the shared `message` — docs/design/M2/api-contract.md §1, §7.
+    // Carried through as `serverCode`/`serverDetails` so a caller like accounting-client.ts can
+    // branch on the real PostingErrorCode without this generic path having to know what it means.
+    const serverCode = typeof body?.error === 'string' ? body.error : undefined
+    const serverDetails =
+      body?.details && typeof body.details === 'object' && !Array.isArray(body.details)
+        ? (body.details as Record<string, unknown>)
+        : undefined
     throw new ApiError('unknown', toMessage(body, `Request failed (${res.status}).`), {
       status: res.status,
+      serverCode,
+      serverDetails,
     })
   }
 

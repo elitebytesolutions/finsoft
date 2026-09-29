@@ -1646,6 +1646,12 @@ export const nav: NavGroup[] = [
           },
           { label: 'Account Ledger', path: '/ledgers', icon: 'BookOpen', perm: 'Cash, Bank & GL' },
           { label: 'Cash Book', path: '/cash-book', icon: 'Banknote', perm: 'Cash, Bank & GL' },
+          {
+            label: 'Trial Balance',
+            path: '/trial-balance',
+            icon: 'Scale',
+            perm: 'Cash, Bank & GL',
+          },
         ],
       },
       {

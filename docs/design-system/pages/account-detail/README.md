@@ -26,6 +26,23 @@ frame depicts this route, for either the header or the leaf branch, so no frame 
 This gap should be raised with whoever maintains the reference set, not silently inherited by
 reusing an `/ledgers` screenshot for a screen that looks materially plainer.
 
+## API note — M2-S (2026-09-29)
+
+Same real report as [account-ledger](../account-ledger/#api-note--m2-s-2026-09-29)
+(`REPORT/account-ledger@1`) for the leaf branch — this route is a fixed-account, fixed-toolbar view
+of the same data, so everything that document's API note says about voucher types, status filter,
+reversal markers and server-computed balances applies here too.
+
+**Header branch (levels 1–3).** The roll-up sums every level-4 descendant's net movement. This is
+computed **server-side** once the contract lands — the "Aggregated debit/credit" and "Net position"
+figures are not summed in the browser from child rows, matching this brief's money rule. Until the
+contract offers a roll-up endpoint, this branch is the harder half to wire; if M2-B's contract covers
+only single-account ledgers, the header branch stays on mock data behind the prototype banner while
+the leaf branch converts — that split is called out explicitly in the M2-S delivery report rather
+than silently shipped.
+
+**Permission.** Same as `account-ledger`: `voucher.view`, no dedicated code for this route.
+
 ## 2. Purpose
 
 A stable, linkable, code-addressed view of one line in the chart of accounts: opening it always

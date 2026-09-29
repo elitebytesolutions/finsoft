@@ -1,990 +1,625 @@
 'use client'
-import { useState } from 'react'
-import { useNavigate, useParams, useSearchParams } from '@/lib/router'
+/*
+ * /vouchers/:id (VoucherDetail) and /vouchers/new (VoucherForm) — real API.
+ * docs/design-system/pages/{voucher-detail,voucher-new}/README.md.
+ */
+import { useMemo, useState, type FormEvent } from 'react'
+import { ArrowLeft, ChevronRight, Plus, RotateCw, ShieldAlert, Trash2 } from 'lucide-react'
 import {
-  ArrowLeft,
-  ArrowRight,
-  Banknote,
-  CalendarDays,
-  Check,
-  ChevronDown,
-  ChevronRight,
-  ChevronsUpDown,
-  CircleCheck,
-  Copy,
-  FileSpreadsheet,
-  FileText,
-  GripVertical,
-  Landmark,
-  ListPlus,
-  MoreHorizontal,
-  Paperclip,
-  Plus,
-  Printer,
-  ReceiptText,
-  Save,
-  Scale,
-  Settings2,
-  SlidersHorizontal,
-  Trash2,
-  UploadCloud,
-  UserRound,
-  WalletCards,
-} from 'lucide-react'
-import { users, voucherCode, type Voucher, type VoucherLine } from '@/mocks/api'
-import { allVouchers } from './voucher-data'
-import type { AppData } from '@/mocks/api'
-import { Badge, Button, Panel, Table } from '@finsoft/ui'
-import { money } from '@finsoft/ui'
+  Badge,
+  Banner,
+  Button,
+  Field,
+  Modal,
+  PageHead,
+  TextInput,
+  moneyFromString,
+} from '@finsoft/ui'
+import { useNavigate, useParams } from '@/lib/router'
+import { getJournal, listAccounts, postJournal, reverseJournal } from '@/lib/api/accounting-client'
+import { useApiQuery } from '@/lib/api/use-api-query'
+import { useIdempotencyKey } from '@/lib/api/idempotency-key'
+import { postableJournalAccounts } from '@/lib/accounting/account-tree'
+import { computeVoucherTotals } from '@/lib/accounting/voucher-totals'
+import { todayIso } from '@/lib/date/local-date'
+import { ApiError } from '@/lib/api/types'
+import type {
+  AccountDto,
+  JournalEntryDetail,
+  PostJournalLineInput,
+} from '@/lib/api/accounting-types'
 
-const typeMeta: Record<string, { name: string; short: string }> = {
-  JV: { name: 'Journal Voucher', short: 'JV' },
-  CRV: { name: 'Cash Receipt', short: 'CRV' },
-  CPV: { name: 'Cash Payment', short: 'CPV' },
-  BRV: { name: 'Bank Receipt', short: 'BRV' },
-  BPV: { name: 'Bank Payment', short: 'BPV' },
-  CV: { name: 'Contra Voucher', short: 'CV' },
-  SINV: { name: 'Sales Invoice', short: 'SINV' },
-  PINV: { name: 'Purchase Invoice (GRN)', short: 'PINV' },
-}
-const typeTone = (t: string): 'info' | 'good' | 'warn' | 'neutral' =>
-  t === 'JV'
-    ? 'info'
-    : t === 'CRV' || t === 'BRV'
-      ? 'good'
-      : t === 'CPV' || t === 'BPV'
-        ? 'warn'
-        : t === 'CV'
-          ? 'neutral'
-          : 'good'
+/* ------------------------------------------------------------------ *
+ * Voucher detail — /vouchers/:id
+ * ------------------------------------------------------------------ */
 
-function VoucherDetail({
-  data,
-  onPost,
-  onCancel,
-}: {
-  data: AppData
-  onPost: (id: string) => void
-  onCancel: (id: string) => void
-}) {
-  const navigate = useNavigate(),
-    { id } = useParams()
-  const voucher = allVouchers(data).find((v) => v.id === id)
-  if (!voucher)
+export function VoucherDetail() {
+  const navigate = useNavigate()
+  const { id } = useParams()
+  const { state, reload } = useApiQuery(() => getJournal(id!), [id])
+  const { state: accountsState } = useApiQuery(
+    () => listAccounts().then((r) => [...r.accounts]),
+    [],
+  )
+
+  if (state.status === 'loading') {
     return (
-      <div className="state-page">
+      <div className="state-page" role="status" aria-live="polite">
         <span>
-          <FileText />
+          <RotateCw />
         </span>
-        <h1>Record not found</h1>
-        <p>No voucher matches that reference.</p>
-        <Button kind="secondary" onClick={() => navigate('/vouchers')}>
-          <ArrowLeft /> Back to vouchers
-        </Button>
+        <h1>Loading voucher…</h1>
       </div>
     )
-  const meta = typeMeta[voucher.type],
-    dr = voucher.lines.reduce((a, l) => a + l.amount, 0)
-  const related =
-    voucher.type === 'SINV' && voucher.reference.startsWith('INV')
-      ? `/sales/${voucher.reference}`
-      : voucher.type === 'PINV' && voucher.reference.startsWith('PUR')
-        ? `/purchases/${voucher.reference}`
-        : null
+  }
+  if (state.status === 'forbidden') {
+    return (
+      <div className="state-page" role="alert">
+        <span>
+          <ShieldAlert />
+        </span>
+        <h1>Access restricted</h1>
+        <p>Your role does not have permission to view this voucher.</p>
+      </div>
+    )
+  }
+  if (state.status === 'error') {
+    if (
+      state.message.toLowerCase().includes('not found') ||
+      state.message.toLowerCase().includes('entry_not_found')
+    ) {
+      return (
+        <div className="state-page">
+          <h1>Record not found</h1>
+          <p>This document does not exist, or it belongs to another company.</p>
+          <Button kind="secondary" onClick={() => navigate('/vouchers')}>
+            <ArrowLeft /> Back to vouchers
+          </Button>
+        </div>
+      )
+    }
+    return (
+      <div className="state-page" role="alert">
+        <span>
+          <ShieldAlert />
+        </span>
+        <h1>We could not load this voucher</h1>
+        <p>{state.message}</p>
+        <Button onClick={reload}>Try again</Button>
+      </div>
+    )
+  }
+
+  return (
+    <VoucherDetailReady
+      entry={state.data}
+      accounts={accountsState.status === 'ready' ? accountsState.data : []}
+      onReversed={reload}
+    />
+  )
+}
+
+function VoucherDetailReady({
+  entry,
+  accounts,
+  onReversed,
+}: {
+  entry: JournalEntryDetail
+  accounts: AccountDto[]
+  onReversed: () => void
+}) {
+  const navigate = useNavigate()
+  const [reverseOpen, setReverseOpen] = useState(false)
+  const nameOf = (accountId: string) => {
+    const a = accounts.find((x) => x.id === accountId)
+    return a ? `${a.name} (${a.code})` : accountId
+  }
+  const isReversal = entry.reversalOf !== null
+  const canReverse = entry.status === 'POSTED' && !isReversal
+
   return (
     <>
       <div className="vou-breadcrumb">
-        <button onClick={() => navigate('/vouchers')}>Voucher Management</button>
+        <button onClick={() => navigate('/vouchers')}>Voucher Register</button>
         <ChevronRight />
-        <span>{meta.name}s</span>
-        <ChevronRight />
-        <b>{voucher.id}</b>
+        <b>{entry.entryNumber}</b>
       </div>
       <div className="vd-head">
         <div className="vd-title">
           <div>
-            <Badge tone={typeTone(voucher.type)}>
-              {meta.short} · {voucher.status}
-            </Badge>
-            <Badge tone={voucher.posting === 'Posted' ? 'good' : 'neutral'}>
-              {voucher.posting}
+            <Badge tone="info">Journal Voucher</Badge>
+            <Badge tone={entry.status === 'POSTED' ? 'good' : 'danger'}>
+              {entry.status === 'POSTED' ? 'Posted' : 'Reversed'}
             </Badge>
           </div>
-          <h1>{voucher.id}</h1>
-          <p>{voucher.narration}</p>
+          <h1>{entry.entryNumber}</h1>
+          <p>{entry.narration}</p>
         </div>
         <div className="vd-actions">
-          <Button kind="secondary">
-            <Printer /> Print
-          </Button>
-          {voucher.status === 'Draft' ? (
-            <Button
-              onClick={() => {
-                onPost(voucher.id)
-                navigate('/vouchers')
-              }}
-            >
-              <Check /> Post &amp; approve
+          {canReverse && (
+            <Button kind="danger" onClick={() => setReverseOpen(true)}>
+              Reverse
             </Button>
-          ) : voucher.status === 'Posted' ? (
-            <Button kind="danger" onClick={() => onCancel(voucher.id)}>
-              Cancel voucher
-            </Button>
-          ) : null}
-          <Button kind="secondary" onClick={() => navigate(-1)}>
+          )}
+          <Button kind="secondary" onClick={() => navigate('/vouchers')}>
             <ArrowLeft /> Back
           </Button>
         </div>
       </div>
-      <div className="vd-grid">
-        <section className="vd-main">
-          <Panel title="Voucher header" sub="Posting information">
-            <div className="vd-fields">
-              <div>
-                <small>Voucher no.</small>
-                <b>{voucher.id}</b>
-              </div>
-              <div>
-                <small>Voucher type</small>
-                <b>{meta.name}</b>
-              </div>
-              <div>
-                <small>Voucher date</small>
-                <b>{voucher.date}</b>
-              </div>
-              <div>
-                <small>Posting date</small>
-                <b>{voucher.date}</b>
-              </div>
-              <div>
-                <small>Reference</small>
-                <b>{voucher.reference || '—'}</b>
-              </div>
-              <div>
-                <small>Branch</small>
-                <b>{voucher.branch}</b>
-              </div>
-              <div>
-                <small>Department</small>
-                <b>{voucher.department}</b>
-              </div>
-              <div>
-                <small>Currency</small>
-                <b>PKR — Pakistani Rupee</b>
-              </div>
-            </div>
-          </Panel>
-          <Panel title="Accounting entries" sub="Debit and credit lines · double-entry balanced">
-            <div className="vou-entries">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Dr Account</th>
-                    <th>Code</th>
-                    <th>Debit (PKR)</th>
-                    <th>Cr Account</th>
-                    <th>Code</th>
-                    <th>Credit (PKR)</th>
-                    <th>Remark</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {voucher.lines.map((l, i) => (
-                    <tr key={i}>
-                      <td>
-                        <b>{l.debit}</b>
-                      </td>
-                      <td>{voucherCode[l.debit] ?? '—'}</td>
-                      <td>{money(l.amount)}</td>
-                      <td>
-                        <b>{l.credit}</b>
-                      </td>
-                      <td>{voucherCode[l.credit] ?? '—'}</td>
-                      <td>{money(l.amount)}</td>
-                      <td>{l.remark ?? '—'}</td>
-                    </tr>
-                  ))}
-                  <tr className="vou-total">
-                    <td colSpan={2}>Total</td>
-                    <td>
-                      <b>{money(dr)}</b>
-                    </td>
-                    <td />
-                    <td />
-                    <td>
-                      <b>{money(dr)}</b>
-                    </td>
-                    <td>
-                      Difference <Badge tone="good">Rs 0.00</Badge>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            <div className="vd-totals">
-              <span>
-                Total debit <b>{money(dr)}</b>
-              </span>
-              <span>
-                Total credit <b>{money(dr)}</b>
-              </span>
-              <span>
-                Difference <b>Rs 0.00</b>
-              </span>
-            </div>
-          </Panel>
-          <Panel title="Related documents" sub="Source and destination records">
-            <Table
-              headers={['Reference', 'Type', 'Narration', '']}
-              rows={[
-                [
-                  related ? (
-                    <button className="linkable" onClick={() => navigate(related!)}>
-                      {voucher.reference}
-                    </button>
-                  ) : (
-                    voucher.reference || '—'
-                  ),
-                  meta.name,
-                  voucher.narration,
-                  related ? (
-                    <button className="table-action" onClick={() => navigate(related!)}>
-                      Open <ArrowRight />
-                    </button>
-                  ) : null,
-                ],
-              ]}
-            />
-          </Panel>
-        </section>
-        <aside className="vd-rail">
-          <Panel title="Status & audit">
-            <div className="vd-info">
-              <p>
-                <span>Status</span>
-                <b>
-                  <Badge
-                    tone={
-                      voucher.status === 'Posted'
-                        ? 'good'
-                        : voucher.status === 'Draft'
-                          ? 'warn'
-                          : 'danger'
-                    }
-                  >
-                    {voucher.status}
-                  </Badge>
-                </b>
-              </p>
-              <p>
-                <span>Posting status</span>
-                <b>
-                  <Badge tone={voucher.posting === 'Posted' ? 'good' : 'neutral'}>
-                    {voucher.posting}
-                  </Badge>
-                </b>
-              </p>
-              <p>
-                <span>Created by</span>
-                <b>{voucher.createdBy}</b>
-              </p>
-              <p>
-                <span>Created on</span>
-                <b>{voucher.date} · 09:12 AM</b>
-              </p>
-              <p>
-                <span>Last modified</span>
-                <b>
-                  {voucher.date} · {voucher.posting === 'Posted' ? '11:45 AM' : '09:12 AM'}
-                </b>
-              </p>
-              <p>
-                <span>Approved by</span>
-                <b>{voucher.status === 'Posted' ? 'Ahmed Raza' : 'Pending approval'}</b>
-              </p>
-            </div>
-          </Panel>
-          <Panel
-            title="Attachments"
-            sub="Supporting documents"
-            action={
-              <Button kind="ghost">
-                <Paperclip size={14} /> Add
-              </Button>
-            }
-          >
-            <div className="vd-attach">
-              <span>
-                <FileText />
-                Purchase invoice {voucher.reference || 'scan'}
-              </span>
-              <small>{Math.max(120, voucher.lines.length * 92)} KB · PDF</small>
-            </div>
-            <div className="vd-attach">
-              <span>
-                <FileText />
-                Ledger excerpt
-              </span>
-              <small>64 KB · XLSX</small>
-            </div>
-          </Panel>
-          <Panel title="Comments" sub="Thread for approvers">
-            <div className="vd-comment">
-              <b>No comments yet</b>
-              <p>Be the first to add a comment.</p>
-            </div>
-            <div className="modal-foot" style={{ border: 0, margin: 0, padding: 0 }}>
-              <Button
-                kind="secondary"
-                onClick={() => navigate(`/vouchers/new?type=${voucher.type.toLowerCase()}`)}
-              >
-                <Plus /> Add comment
-              </Button>
-            </div>
-          </Panel>
-        </aside>
-      </div>
+
+      {entry.status === 'REVERSED' && entry.reversedBy && (
+        <Banner tone="danger">Reversed. See the reversing voucher for the full effect.</Banner>
+      )}
+      {isReversal && entry.reversalOf && (
+        <Banner tone="info">This voucher reverses an earlier entry. {entry.reversalReason}</Banner>
+      )}
+
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Account</th>
+            <th>Memo</th>
+            <th className="num">Debit (PKR)</th>
+            <th className="num">Credit (PKR)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {entry.lines.map((line) => (
+            <tr key={line.lineNumber}>
+              <td>{line.lineNumber}</td>
+              <td>{nameOf(line.accountId)}</td>
+              <td>{line.memo ?? '—'}</td>
+              <td className="num money-debit">
+                {moneyFromString(line.debit, { zeroAsDash: true })}
+              </td>
+              <td className="num money-credit">
+                {moneyFromString(line.credit, { zeroAsDash: true })}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {reverseOpen && (
+        <ReverseDialog
+          entryId={entry.id}
+          onClose={() => setReverseOpen(false)}
+          onDone={() => {
+            setReverseOpen(false)
+            onReversed()
+          }}
+        />
+      )}
     </>
   )
 }
 
-const typeByCat: Record<string, string> = {
-  journal: 'JV',
-  cash: 'CRV',
-  bank: 'BRV',
-  contra: 'CV',
-  payments: 'BPV',
-  receipts: 'BRV',
-}
-
-const drCrDefaults: Record<string, { debit: string; credit: string }> = {
-  JV: { debit: 'Cash in Hand', credit: 'Sales Revenue' },
-  CRV: { debit: 'Cash in Hand', credit: 'Accounts Receivable' },
-  CPV: { debit: 'Accounts Payable', credit: 'Cash in Hand' },
-  BRV: { debit: 'Meezan Bank — 8721', credit: 'Accounts Receivable' },
-  BPV: { debit: 'Accounts Payable', credit: 'Meezan Bank — 8721' },
-  CV: { debit: 'Meezan Bank — 8721', credit: 'Cash in Hand' },
-}
-function MoneyInput({
-  value,
-  onChange,
-  label,
+function ReverseDialog({
+  entryId,
+  onClose,
+  onDone,
 }: {
-  value: number
-  onChange: (n: number) => void
-  label: string
+  entryId: string
+  onClose: () => void
+  onDone: () => void
 }) {
-  const [focus, setFocus] = useState(false)
-  const shown = focus
-    ? value
-      ? String(value)
-      : ''
-    : value
-      ? value.toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-      : ''
+  const [reason, setReason] = useState('')
+  const [confirmed, setConfirmed] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const { key } = useIdempotencyKey()
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (submitting) return
+    if (!reason.trim()) {
+      setError('A reason is required.')
+      return
+    }
+    if (!confirmed) {
+      setError('Confirm that you understand this posts a new reversing entry.')
+      return
+    }
+    setSubmitting(true)
+    setError(null)
+    try {
+      await reverseJournal(entryId, { reason: reason.trim() }, key)
+      onDone()
+    } catch (err) {
+      const message =
+        err instanceof ApiError ? err.message : 'Could not reverse this voucher. Try again.'
+      setError(message)
+      setSubmitting(false)
+    }
+  }
+
   return (
-    <input
-      aria-label={label}
-      inputMode="decimal"
-      value={shown}
-      placeholder="0.00"
-      onFocus={() => setFocus(true)}
-      onBlur={() => setFocus(false)}
-      onChange={(e) => onChange(Number(e.target.value.replace(/[^0-9.]/g, '')) || 0)}
-    />
+    <Modal title="Reverse voucher" onClose={onClose}>
+      <form onSubmit={submit} noValidate>
+        <p>
+          This posts a new reversing entry that exactly neutralises this voucher. Both entries
+          remain in the ledger permanently. This cannot be undone.
+        </p>
+        <Field label="Reason" htmlFor="reverse-reason" required error={error ?? undefined}>
+          <TextInput id="reverse-reason" value={reason} onChange={setReason} required />
+        </Field>
+        <label style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '12px 0' }}>
+          <input
+            type="checkbox"
+            checked={confirmed}
+            onChange={(e) => setConfirmed(e.target.checked)}
+          />
+          I understand this cannot be undone.
+        </label>
+        <div className="modal-foot">
+          <Button kind="secondary" onClick={onClose} type="button">
+            Cancel
+          </Button>
+          <Button kind="danger" type="submit" busy={submitting}>
+            Reverse voucher
+          </Button>
+        </div>
+      </form>
+    </Modal>
   )
 }
-function VoucherForm({
-  data,
-  onSave,
-}: {
-  data: AppData
-  onSave: (v: Voucher, post: boolean) => void
-}) {
-  const navigate = useNavigate(),
-    [params] = useSearchParams()
-  const pre = typeByCat[params.get('type') || 'journal'] ?? 'JV'
-  const [form, setForm] = useState({
-    vtype: pre,
-    date: '2026-08-30',
-    narration: '',
-    reference: '',
-    branch: 'Lahore Main',
-    department: 'Accounts',
-    prepared: users[0].name,
-    approver: '',
-  })
-  type Entry = { account: string; description: string; debit: number; credit: number }
-  const initial = (t: string): Entry[] => {
-    const d = drCrDefaults[t] ?? drCrDefaults.JV
-    if (t === 'JV')
-      return [
-        { account: d.debit, description: 'Cash received from customer', debit: 50000, credit: 0 },
-        {
-          account: d.credit,
-          description: 'Sales against invoice #INV-1024',
-          debit: 0,
-          credit: 50000,
-        },
-      ]
-    return [
-      { account: d.debit, description: '', debit: 0, credit: 0 },
-      { account: d.credit, description: '', debit: 0, credit: 0 },
-    ]
-  }
-  const [entries, setEntries] = useState<Entry[]>(initial(pre)),
-    [saveTemplate, setSaveTemplate] = useState(false)
-  const setType = (t: string) => {
-    setForm((f) => ({ ...f, vtype: t }))
-    setEntries(initial(t))
-  }
-  const allAccounts = data.masters.filter((m) => m.level === 4).map((m) => m.name)
-  const debitTotal = entries.reduce((a, l) => a + (Number(l.debit) || 0), 0),
-    creditTotal = entries.reduce((a, l) => a + (Number(l.credit) || 0), 0),
-    difference = Math.abs(debitTotal - creditTotal),
-    balanced = debitTotal > 0 && difference < 0.005
-  const voucherNo = `${form.vtype}-2026-${String(Math.max(0, ...data.vouchers.filter((v) => v.type === form.vtype).map((v) => parseInt(v.id.split('-').at(-1) ?? '0', 10) || 0)) + 1).padStart(4, '0')}`
-  const toLines = (): VoucherLine[] => {
-    const debits = entries.filter((e) => e.debit > 0).map((e) => ({ ...e, left: e.debit })),
-      credits = entries.filter((e) => e.credit > 0).map((e) => ({ ...e, left: e.credit })),
-      result: VoucherLine[] = []
-    let d = 0,
-      c = 0
-    while (d < debits.length && c < credits.length) {
-      const amount = Math.min(debits[d].left, credits[c].left)
-      result.push({
-        debit: debits[d].account,
-        credit: credits[c].account,
-        amount,
-        remark: debits[d].description || credits[c].description || form.narration,
-      })
-      debits[d].left -= amount
-      credits[c].left -= amount
-      if (debits[d].left < 0.005) d++
-      if (credits[c].left < 0.005) c++
-    }
-    return result
-  }
-  const submit = (post: boolean) => {
-    if (!form.narration.trim()) {
-      alert('Add a narration before saving the voucher.')
-      return
-    }
-    if (!balanced) {
-      alert('Voucher entries must include equal debit and credit totals.')
-      return
-    }
-    const seq =
-      Math.max(
-        0,
-        ...data.vouchers
-          .filter((v) => v.type === form.vtype)
-          .map((v) => parseInt(v.id.split('-').at(-1) ?? '0', 10) || 0),
-      ) + 1
-    const v: Voucher = {
-      id: `${form.vtype}-2026-${String(seq).padStart(4, '0')}`,
-      date: form.date,
-      type: form.vtype as Voucher['type'],
-      narration: form.narration,
-      reference: form.reference,
-      status: post ? 'Posted' : 'Draft',
-      posting: post ? 'Posted' : 'Unposted',
-      createdBy: form.prepared,
-      branch: form.branch,
-      department: form.department,
-      lines: toLines(),
-    }
-    onSave(v, post)
-    navigate('/vouchers')
-  }
-  const setEntry = (i: number, p: Partial<Entry>) =>
-    setEntries((list) => list.map((entry, j) => (j === i ? { ...entry, ...p } : entry)))
-  const addEntry = () =>
-    setEntries((list) => [
-      ...list,
-      { account: 'Cash in Hand', description: '', debit: 0, credit: 0 },
-    ])
-  const typeCards = [
-    { type: 'JV', label: 'Journal', sub: 'General entry', icon: FileSpreadsheet },
-    { type: 'CPV', label: 'Cash Payment', sub: 'Cash out', icon: WalletCards },
-    { type: 'CRV', label: 'Cash Receipt', sub: 'Cash in', icon: Banknote },
-    { type: 'BPV', label: 'Bank Payment', sub: 'From bank', icon: Landmark },
-    { type: 'BRV', label: 'Bank Receipt', sub: 'To bank', icon: ReceiptText },
-    { type: 'CV', label: 'More', sub: 'Other types', icon: MoreHorizontal },
-  ]
-  const fmtLong = (iso: string) =>
-    iso
-      ? new Date(iso + 'T00:00').toLocaleDateString('en-US', {
-          month: 'short',
-          day: '2-digit',
-          year: 'numeric',
-        })
-      : ''
-  const dupEntry = (i: number) =>
-    setEntries((list) => [...list.slice(0, i + 1), { ...list[i] }, ...list.slice(i + 1)])
-  return (
-    <form className="vn-page" onSubmit={(e) => e.preventDefault()}>
-      <span className="sr-only">New {typeMeta[form.vtype].name}</span>
-      <div className="vn-head">
-        <button
-          type="button"
-          className="vn-back"
-          aria-label="Back to vouchers"
-          onClick={() => navigate('/vouchers')}
-        >
-          <ArrowLeft />
-        </button>
-        <div className="vn-title">
-          <h1>New Voucher</h1>
-          <p>Enter a balanced voucher — every debit has a matching credit.</p>
-        </div>
-        <div className="vn-types">
-          {typeCards.map((card) => {
-            const Icon = card.icon
-            return (
-              <button
-                type="button"
-                key={card.type}
-                className={form.vtype === card.type ? 'active' : ''}
-                onClick={() => setType(card.type)}
-              >
-                <Icon />
-                <b>{card.label}</b>
-                <small>{card.sub}</small>
-              </button>
-            )
-          })}
-        </div>
+
+/* ------------------------------------------------------------------ *
+ * New voucher — /vouchers/new
+ * ------------------------------------------------------------------ */
+
+interface FormLine {
+  accountId: string
+  debit: string
+  credit: string
+  memo: string
+}
+
+const emptyLine = (): FormLine => ({ accountId: '', debit: '', credit: '', memo: '' })
+
+export function VoucherForm() {
+  const { state: accountsState, reload: reloadAccounts } = useApiQuery(
+    () => listAccounts().then((r) => [...r.accounts]),
+    [],
+  )
+
+  if (accountsState.status === 'loading') {
+    return (
+      <div className="state-page" role="status" aria-live="polite">
+        <span>
+          <RotateCw />
+        </span>
+        <h1>Loading…</h1>
       </div>
+    )
+  }
+  if (accountsState.status === 'forbidden') {
+    return (
+      <div className="state-page" role="alert">
+        <span>
+          <ShieldAlert />
+        </span>
+        <h1>Access restricted</h1>
+        <p>Your role does not have permission to post a journal voucher.</p>
+      </div>
+    )
+  }
+  if (accountsState.status === 'error') {
+    return (
+      <div className="state-page" role="alert">
+        <span>
+          <ShieldAlert />
+        </span>
+        <h1>We could not load the account list</h1>
+        <p>{accountsState.message}</p>
+        <Button onClick={reloadAccounts}>Try again</Button>
+      </div>
+    )
+  }
 
-      <section className="vn-card">
-        <div className="vn-card-head">
-          <span className="vn-ico">
-            <FileText />
-          </span>
-          <div>
-            <h2>Voucher Details</h2>
-            <p>Basic information about this voucher</p>
+  return <VoucherFormReady accounts={postableJournalAccounts(accountsState.data)} />
+}
+
+function VoucherFormReady({ accounts }: { accounts: AccountDto[] }) {
+  const navigate = useNavigate()
+  const [date, setDate] = useState(todayIso())
+  const [reference, setReference] = useState('')
+  const [narration, setNarration] = useState('')
+  const [lines, setLines] = useState<FormLine[]>([emptyLine(), emptyLine()])
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
+  const [formError, setFormError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  // One key per form INSTANCE (useIdempotencyKey's own contract), not per attempt: opening the
+  // confirm dialog and cancelling it, then clicking Post again, is still the same logical
+  // submission — `reset()` below is called only after a successful post, never on cancel, so a
+  // cancel-then-post reuses this exact key and the server's replay/idempotency guarantee
+  // (journal-voucher.md §7) still covers a double-post from this one form.
+  const { key, reset } = useIdempotencyKey()
+
+  const totals = useMemo(
+    () => computeVoucherTotals(lines.map((l) => ({ debit: l.debit, credit: l.credit }))),
+    [lines],
+  )
+  const lineCount = useMemo(
+    () => lines.filter((l) => l.accountId && (l.debit || l.credit)).length,
+    [lines],
+  )
+
+  const setLine = (i: number, patch: Partial<FormLine>) =>
+    setLines((list) => list.map((l, j) => (j === i ? { ...l, ...patch } : l)))
+  const addLine = () => setLines((list) => [...list, emptyLine()])
+  const removeLine = (i: number) => setLines((list) => list.filter((_, j) => j !== i))
+
+  const canSubmit = totals.balanced && narration.trim().length > 0 && !submitting
+
+  // Opens the confirm dialog — posting itself happens only from there, in doPost below.
+  const requestSubmit = (e: FormEvent) => {
+    e.preventDefault()
+    if (!canSubmit) return
+    setConfirmOpen(true)
+  }
+
+  const doPost = async () => {
+    setSubmitting(true)
+    setFormError(null)
+    setFieldErrors({})
+
+    const body = {
+      occurredAt: date,
+      narration: narration.trim(),
+      reference: reference.trim() || undefined,
+      lines: lines
+        .filter((l) => l.accountId && (l.debit || l.credit))
+        .map<PostJournalLineInput>((l) => ({
+          accountId: l.accountId,
+          ...(l.debit ? { debit: l.debit } : { credit: l.credit }),
+          ...(l.memo ? { memo: l.memo } : {}),
+        })),
+    }
+
+    try {
+      const result = await postJournal(body, key)
+      reset()
+      navigate(`/vouchers/${result.id}`)
+    } catch (err) {
+      setConfirmOpen(false)
+      if (err instanceof ApiError) {
+        const code = err.serverCode
+        if (code === 'jv_unbalanced') {
+          setFormError(
+            `Debits and credits differ. Server totals — debit ${err.serverDetails?.totalDebit}, credit ${err.serverDetails?.totalCredit}.`,
+          )
+        } else if (code === 'narration_required' || code === 'narration_too_long') {
+          setFieldErrors({ narration: err.message })
+        } else if (code === 'date_in_future') {
+          setFieldErrors({ date: err.message })
+        } else if (
+          code === 'period_closed' ||
+          code === 'period_locked' ||
+          code === 'period_not_found'
+        ) {
+          setFormError(err.message)
+        } else {
+          setFormError(err.message)
+        }
+      } else {
+        setFormError('Something went wrong. Try again.')
+      }
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <>
+      <form className="vn-page" onSubmit={requestSubmit} noValidate>
+        <PageHead
+          eyebrow="Accounting / Vouchers"
+          title="New Journal Voucher"
+          description="Post a balanced journal entry."
+        />
+
+        {formError && <Banner tone="danger">{formError}</Banner>}
+
+        <section className="vn-card">
+          <div className="vn-grid4">
+            <Field label="Voucher date" htmlFor="jv-date" required error={fieldErrors.date}>
+              <input
+                id="jv-date"
+                type="date"
+                value={date}
+                max={todayIso()}
+                onChange={(e) => setDate(e.target.value)}
+              />
+            </Field>
+            <Field label="Reference" htmlFor="jv-reference" helper="Optional, up to 100 characters">
+              <TextInput id="jv-reference" value={reference} onChange={setReference} />
+            </Field>
           </div>
-          <span className="vn-auto">
-            Auto number: <b>{voucherNo}</b>
-            <Settings2 />
-          </span>
-        </div>
-        <div className="vn-grid4">
-          <label className="vn-fld">
-            <span>
-              Voucher Date<em>*</em>
-            </span>
-            <span className="vn-in">
-              <i>
-                <CalendarDays />
-              </i>
-              <input type="text" readOnly value={fmtLong(form.date)} aria-label="Voucher Date" />
-              <input
-                className="vn-date-overlay"
-                type="date"
-                value={form.date}
-                onChange={(e) => setForm({ ...form, date: e.target.value })}
-              />
-            </span>
-          </label>
-          <label className="vn-fld">
-            <span>
-              Posting Date<em>*</em>
-            </span>
-            <span className="vn-in">
-              <i>
-                <CalendarDays />
-              </i>
-              <input type="text" readOnly value={fmtLong(form.date)} aria-label="Posting Date" />
-              <input
-                className="vn-date-overlay"
-                type="date"
-                value={form.date}
-                onChange={(e) => setForm({ ...form, date: e.target.value })}
-              />
-            </span>
-          </label>
-          <label className="vn-fld">
-            <span>
-              Voucher Type<em>*</em>
-            </span>
-            <span className="vn-in sel">
-              <i>
-                <SlidersHorizontal />
-              </i>
-              <select
-                aria-label="Voucher Type"
-                value={form.vtype}
-                onChange={(e) => setType(e.target.value)}
-              >
-                {['JV', 'CRV', 'CPV', 'BRV', 'BPV', 'CV'].map((t) => (
-                  <option key={t} value={t}>
-                    {typeMeta[t].name}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="chev" />
-            </span>
-          </label>
-          <label className="vn-fld">
-            <span>Reference No.</span>
-            <span className="vn-in">
-              <i>
-                <ReceiptText />
-              </i>
-              <input
-                value={form.reference}
-                onChange={(e) => setForm({ ...form, reference: e.target.value })}
-                placeholder="e.g. BRV-1024"
-              />
-            </span>
-          </label>
-          <label className="vn-fld">
-            <span>
-              Branch<em>*</em>
-            </span>
-            <span className="vn-in sel">
-              <i>
-                <Landmark />
-              </i>
-              <select
-                value={form.branch}
-                onChange={(e) => setForm({ ...form, branch: e.target.value })}
-              >
-                <option>Lahore Main</option>
-                <option>Rawalpindi</option>
-                <option>Faisalabad</option>
-              </select>
-              <ChevronsUpDown className="chev" />
-            </span>
-          </label>
-          <label className="vn-fld">
-            <span>Department</span>
-            <span className="vn-in sel">
-              <i>
-                <UserRound />
-              </i>
-              <select
-                value={form.department}
-                onChange={(e) => setForm({ ...form, department: e.target.value })}
-              >
-                <option>Accounts</option>
-                <option>Payroll</option>
-                <option>Counter</option>
-                <option>Stores</option>
-                <option>Sales</option>
-                <option>Operations</option>
-                <option>Marketing</option>
-              </select>
-              <ChevronsUpDown className="chev" />
-            </span>
-          </label>
-          <label className="vn-fld">
-            <span>Prepared By</span>
-            <span className="vn-in sel">
-              <i>
-                <UserRound />
-              </i>
-              <select
-                value={form.prepared}
-                onChange={(e) => setForm({ ...form, prepared: e.target.value })}
-              >
-                {users.map((u) => (
-                  <option key={u.id}>{u.name}</option>
-                ))}
-              </select>
-              <ChevronDown className="chev" />
-            </span>
-          </label>
-          <label className="vn-fld">
-            <span>Approved By</span>
-            <span className="vn-in sel">
-              <i>
-                <UserRound />
-              </i>
-              <select
-                value={form.approver}
-                onChange={(e) => setForm({ ...form, approver: e.target.value })}
-              >
-                <option value="">Select approver</option>
-                {users
-                  .filter((u) => u.role === 'Owner' || u.role === 'Accountant')
-                  .map((u) => (
-                    <option key={u.id}>{u.name}</option>
-                  ))}
-              </select>
-              <ChevronDown className="chev" />
-            </span>
-          </label>
-        </div>
-        <label className="vn-fld vn-narr">
-          <span>
-            Narration<em>*</em>
-          </span>
-          <span className="vn-in area">
-            <i>
-              <FileText />
-            </i>
-            <textarea
-              aria-label="Narration"
-              maxLength={300}
-              value={form.narration}
-              onChange={(e) => setForm({ ...form, narration: e.target.value })}
-              placeholder="Briefly describe this voucher..."
-            />
-            <small>{form.narration.length}/300</small>
-          </span>
-        </label>
-      </section>
+          <Field label="Narration" htmlFor="jv-narration" required error={fieldErrors.narration}>
+            <TextInput id="jv-narration" value={narration} onChange={setNarration} required />
+          </Field>
+        </section>
 
-      <section className="vn-card">
-        <div className="vn-card-head">
-          <span className="vn-ico">
-            <ListPlus />
-          </span>
-          <div>
+        <section className="vn-card">
+          <div className="vn-card-head">
             <h2>Voucher Entries</h2>
-            <p>Add debit and credit lines. The voucher must be balanced.</p>
-          </div>
-          <div className="vn-entry-actions">
-            <span className="vn-in sel tmpl">
-              <i>
-                <FileSpreadsheet />
-              </i>
-              <select aria-label="Import from template">
-                <option>Import from template</option>
-                <option>Monthly rent</option>
-                <option>Cash sale</option>
-              </select>
-              <ChevronDown className="chev" />
-            </span>
-            <button
-              type="button"
-              className="vn-btn ghost"
-              onClick={() =>
-                setEntries((list) => [
-                  ...list,
-                  ...Array.from({ length: 3 }, () => ({
-                    account: 'Cash in Hand',
-                    description: '',
-                    debit: 0,
-                    credit: 0,
-                  })),
-                ])
-              }
-            >
-              <Plus />
-              Add multiple lines
-            </button>
-            <button type="button" className="vn-btn solid" onClick={addEntry}>
-              <Plus />
-              Add line
+            <button type="button" className="vn-btn solid" onClick={addLine}>
+              <Plus /> Add line
             </button>
           </div>
-        </div>
-        <div className="vn-table-wrap">
-          <table className="vn-table">
-            <thead>
-              <tr>
-                <th className="n">#</th>
-                <th>Account</th>
-                <th>Code</th>
-                <th>Description / Narration</th>
-                <th className="num">Debit (PKR)</th>
-                <th className="num">Credit (PKR)</th>
-                <th>Cost Center</th>
-                <th className="act">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {entries.map((entry, i) => (
-                <tr key={i}>
-                  <td className="n">
-                    <span>{i + 1}</span>
-                    <GripVertical />
-                  </td>
-                  <td>
-                    <span className="vn-in sel sm">
+          <div className="vn-table-wrap">
+            <table className="vn-table">
+              <thead>
+                <tr>
+                  <th className="n">#</th>
+                  <th>Account</th>
+                  <th>Memo</th>
+                  <th className="num">Debit (PKR)</th>
+                  <th className="num">Credit (PKR)</th>
+                  <th className="act">Remove</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lines.map((line, i) => (
+                  <tr key={i}>
+                    <td className="n">{i + 1}</td>
+                    <td>
                       <select
                         aria-label={`Account line ${i + 1}`}
-                        value={entry.account}
-                        onChange={(e) => setEntry(i, { account: e.target.value })}
+                        value={line.accountId}
+                        onChange={(e) => setLine(i, { accountId: e.target.value })}
                       >
-                        {allAccounts.map((a) => (
-                          <option key={a}>{a}</option>
+                        <option value="">Select an account</option>
+                        {accounts.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.name} ({a.code})
+                          </option>
                         ))}
                       </select>
-                      <ChevronsUpDown className="chev" />
-                    </span>
-                  </td>
-                  <td>
-                    <span className="vn-in sm">
-                      <input readOnly value={voucherCode[entry.account] ?? '—'} />
-                    </span>
-                  </td>
-                  <td>
-                    <span className="vn-in sm">
+                    </td>
+                    <td>
                       <input
-                        value={entry.description}
-                        onChange={(e) => setEntry(i, { description: e.target.value })}
-                        placeholder="Line description"
+                        aria-label={`Memo line ${i + 1}`}
+                        value={line.memo}
+                        onChange={(e) => setLine(i, { memo: e.target.value })}
                       />
-                    </span>
-                  </td>
-                  <td>
-                    <span className="vn-in sm num">
-                      <MoneyInput
-                        label={`Debit line ${i + 1}`}
-                        value={entry.debit}
-                        onChange={(n) => setEntry(i, { debit: n, credit: n ? 0 : entry.credit })}
+                    </td>
+                    <td>
+                      <input
+                        aria-label={`Debit line ${i + 1}`}
+                        inputMode="decimal"
+                        value={line.debit}
+                        onChange={(e) =>
+                          setLine(i, {
+                            debit: e.target.value,
+                            credit: e.target.value ? '' : line.credit,
+                          })
+                        }
                       />
-                    </span>
-                  </td>
-                  <td>
-                    <span className="vn-in sm num">
-                      <MoneyInput
-                        label={`Credit line ${i + 1}`}
-                        value={entry.credit}
-                        onChange={(n) => setEntry(i, { credit: n, debit: n ? 0 : entry.debit })}
+                    </td>
+                    <td>
+                      <input
+                        aria-label={`Credit line ${i + 1}`}
+                        inputMode="decimal"
+                        value={line.credit}
+                        onChange={(e) =>
+                          setLine(i, {
+                            credit: e.target.value,
+                            debit: e.target.value ? '' : line.debit,
+                          })
+                        }
                       />
-                    </span>
-                  </td>
-                  <td>
-                    <span className="vn-in sel sm">
-                      <select aria-label={`Cost center line ${i + 1}`}>
-                        <option>Main Branch</option>
-                        <option>Rawalpindi</option>
-                        <option>Sales</option>
-                      </select>
-                      <ChevronDown className="chev" />
-                    </span>
-                  </td>
-                  <td className="act">
-                    <button
-                      type="button"
-                      aria-label={`Duplicate line ${i + 1}`}
-                      onClick={() => dupEntry(i)}
-                    >
-                      <Copy />
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={`Remove line ${i + 1}`}
-                      disabled={entries.length <= 2}
-                      onClick={() => setEntries((list) => list.filter((_, j) => j !== i))}
-                    >
-                      <Trash2 />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div className="vn-entry-foot">
-          <button type="button" className="vn-addline" onClick={addEntry}>
-            <Plus />
-            Add another line
-          </button>
+                    </td>
+                    <td className="act">
+                      <button
+                        type="button"
+                        aria-label={`Remove line ${i + 1}`}
+                        disabled={lines.length <= 2}
+                        onClick={() => removeLine(i)}
+                      >
+                        <Trash2 />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           <div className="vn-totals">
             <div>
               <small>Total Debit</small>
-              <b>Rs {debitTotal.toLocaleString('en-PK', { minimumFractionDigits: 2 })}</b>
+              <b>{moneyFromString(totals.totalDebit)}</b>
             </div>
             <div>
               <small>Total Credit</small>
-              <b>Rs {creditTotal.toLocaleString('en-PK', { minimumFractionDigits: 2 })}</b>
+              <b>{moneyFromString(totals.totalCredit)}</b>
             </div>
-            <div className={`vn-bal ${balanced ? 'ok' : 'pending'}`}>
-              <span>{balanced ? <Check /> : <Scale />}</span>
-              <div>
-                <b>{balanced ? 'Balanced' : 'Unbalanced'}</b>
-                <small>{balanced ? 'Difference is zero' : `Difference ${money(difference)}`}</small>
-              </div>
+            <div className={`vn-bal ${totals.balanced ? 'ok' : 'pending'}`}>
+              <b>{totals.balanced ? 'Balanced' : 'Unbalanced'}</b>
+              <small>
+                {totals.balanced
+                  ? 'Difference is zero'
+                  : `Difference ${moneyFromString(totals.difference)}`}
+              </small>
             </div>
-          </div>
-        </div>
-      </section>
-
-      <div className="vn-lower">
-        <section className="vn-card">
-          <div className="vn-card-head">
-            <span className="vn-ico">
-              <Paperclip />
-            </span>
-            <div>
-              <h2>Attachments</h2>
-            </div>
-          </div>
-          <label className="vn-upload">
-            <UploadCloud />
-            <b>Drag &amp; drop files here, or click to upload</b>
-            <small>PDF, Excel, JPG up to 10MB each</small>
-            <input type="file" multiple />
-          </label>
-        </section>
-        <section className="vn-card">
-          <div className="vn-card-head">
-            <span className="vn-ico">
-              <FileText />
-            </span>
-            <div>
-              <h2>Additional Information</h2>
-            </div>
-          </div>
-          <div className="vn-extra">
-            <label className="vn-fld">
-              <span>Tags</span>
-              <span className="vn-in">
-                <input placeholder="Add tags (optional)" />
-              </span>
-            </label>
-            <label className="vn-fld">
-              <span>Comments</span>
-              <span className="vn-in area plain">
-                <textarea rows={2} placeholder="Any additional notes..." />
-              </span>
-            </label>
           </div>
         </section>
-      </div>
 
-      <div className="vn-actionbar">
-        <label className="vn-switch">
-          <input
-            type="checkbox"
-            checked={saveTemplate}
-            onChange={(e) => setSaveTemplate(e.target.checked)}
-          />
-          <i />
-          <span>
-            <b>Save as template</b>
-            <small>Reuse this voucher format later</small>
-          </span>
-        </label>
-        <div className="vn-actionbar-right">
-          <button type="button" className="vn-btn text" onClick={() => navigate('/vouchers')}>
-            Cancel
-          </button>
-          <button type="button" className="vn-btn ghost" onClick={() => submit(false)}>
-            <Save />
-            Save Draft
-          </button>
-          <span className="vn-split">
-            <button type="button" onClick={() => submit(true)}>
-              <CircleCheck />
-              Save &amp; Post
+        <div className="vn-actionbar">
+          <div className="vn-actionbar-right">
+            <button type="button" className="vn-btn text" onClick={() => navigate('/vouchers')}>
+              Cancel
             </button>
-            <button type="button" aria-label="More save options">
-              <ChevronDown />
-            </button>
-          </span>
+            <Button type="submit" busy={submitting} disabled={!canSubmit}>
+              Post voucher
+            </Button>
+          </div>
         </div>
-      </div>
-    </form>
+      </form>
+      {confirmOpen && (
+        <PostConfirmDialog
+          date={date}
+          totals={totals}
+          lineCount={lineCount}
+          submitting={submitting}
+          onCancel={() => setConfirmOpen(false)}
+          onConfirm={doPost}
+        />
+      )}
+    </>
   )
 }
 
-export { VoucherDetail, VoucherForm }
+function PostConfirmDialog({
+  date,
+  totals,
+  lineCount,
+  submitting,
+  onCancel,
+  onConfirm,
+}: {
+  date: string
+  totals: ReturnType<typeof computeVoucherTotals>
+  lineCount: number
+  submitting: boolean
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  return (
+    <Modal title="Post voucher" onClose={onCancel}>
+      <p>
+        Post {lineCount} line{lineCount === 1 ? '' : 's'} totalling{' '}
+        <b>{moneyFromString(totals.totalDebit)}</b> to <b>{date}</b>? Posted entries cannot be
+        edited — a mistake is corrected by reversal, never by editing.
+      </p>
+      <div className="totals-card">
+        <div>
+          <span>Voucher date</span>
+          <b>{date}</b>
+        </div>
+        <div>
+          <span>Lines</span>
+          <b>{lineCount}</b>
+        </div>
+        <div>
+          <span>Total debit</span>
+          <b>{moneyFromString(totals.totalDebit)}</b>
+        </div>
+        <div>
+          <span>Total credit</span>
+          <b>{moneyFromString(totals.totalCredit)}</b>
+        </div>
+      </div>
+      <div className="modal-foot">
+        <Button kind="secondary" type="button" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="button" busy={submitting} onClick={onConfirm}>
+          Post voucher
+        </Button>
+      </div>
+    </Modal>
+  )
+}
