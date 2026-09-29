@@ -153,9 +153,7 @@ owners, verbatim from this lane's delivery brief:
 > asserts that role is `NOLOGIN`, `NOBYPASSRLS` and owns nothing else. Every `packages/<name>`
 > migration also needs a named T2 Database/Security review.
 
-**Database/Security seat — signature pending.** This text is quoted verbatim from the M2-C delivery
-brief, transcribed here by the implementing engineer, not yet signed by the seat whose ruling it
-records. Do not treat it as countersigned until this line is replaced with a dated signature.
+Database/Security seat — 2026-09-29 — signs the quoted S4 text above as its ruling (M2-C review at 849d7b8).
 
 Implemented in `database/tests/migration-ownership.spec.ts` (`isAllowedSecurityDefiner`,
 `isAllowedFunctionOwnerChange`, both gated on a `packages/<name>` owner only — a `modules/<name>`
