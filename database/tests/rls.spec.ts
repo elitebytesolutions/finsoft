@@ -287,4 +287,13 @@ describe('row level security', () => {
     // point is to observe absence without the statement aborting.
     expect(value[0]?.value ?? null).toBeNull()
   })
+
+  it('S4 (ADR-0028): customers is present, tenant-owned and RLS-protected — this file stays catalog-driven', async () => {
+    // This file's own tests above already prove the general rule for every
+    // tenant-owned table found in the catalog; this is the one line S4
+    // asks for explicitly — a standing guard that the FIRST module table
+    // is not somehow exempt from what the generic assertions already cover.
+    const owned = await tenantOwnedTables()
+    expect(owned).toContain('customers')
+  })
 })

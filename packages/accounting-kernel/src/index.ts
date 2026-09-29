@@ -25,6 +25,11 @@
 export { FinancialEvent, IMPLEMENTED_EVENTS, type FinancialEventName } from './events.ts'
 export { KernelInvariantError, PostingError, type PostingErrorCode } from './errors.ts'
 export { PartyType, registerParty, type PartyTypeName } from './parties.ts'
+export {
+  documentNumbers,
+  type DocumentNumbers,
+  type TenantScopeSeries,
+} from './document-numbers.ts'
 export { periodEngine, type PeriodEngine } from './periods.ts'
 export {
   postingEngine,

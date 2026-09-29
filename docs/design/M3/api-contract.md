@@ -131,7 +131,7 @@ posts. Neither is authoritative: posting re-validates everything under locks.
 | `SOURCE_ALREADY_POSTED` | 409 | I7 / R6 on a document already posted under another key | `{ documentNumber, entryNumber }` |
 | `ALREADY_REVERSED` | 409 | I8, R8 under a new key | `{ reversalEntryNumber }` |
 | `INVOICE_HAS_LIVE_ALLOCATIONS` | 409 | I8 (PO-Q1 Option A) | `{ receipts: [{ id, number }] }` |
-| `CUSTOMER_INACTIVE` | 422 | I2, I4, I7, R3, R5, R6 | `{ customerId }` |
+| `CUSTOMER_INACTIVE` | 422 | I2, I4, I7 | `{ customerId }` — **not** R3/R5/R6: Accounting seat ruling R-2 (Council review, 2026-09-29) resolves the service-sale.md §11 / customer-receipt.md §3 row 8 contradiction this pack (§12) flagged as open — an inactive customer can still be **paid**, only not **invoiced**. `PostReceipt` uses `CustomerDirectory.requireForPayment` (status-agnostic; modules.md §3), not `requireActiveForPosting` |
 | `SALE_NO_LINES` · `SALE_TOO_MANY_LINES` · `SALE_LINE_NON_POSITIVE` · `SALE_AMOUNT_MISMATCH` | 422 | I7 (domain first, kernel re-checks). `SALE_AMOUNT_MISMATCH` from the kernel is a **500**, because the module computed the figure with the same function | `{ lineNo }` / `{ lineNo, submitted, expected }` |
 | `RECEIPT_INCOMPLETE` | 422 | R6 on a draft with no method or no amount | `{ missing: string[] }` |
 | `AMOUNT_NON_POSITIVE` · `RECEIPT_NO_ALLOCATION` · `ALLOCATION_DUPLICATE_INVOICE` · `RECEIPT_UNALLOCATED_AMOUNT` | 422 | R6. `AMOUNT_NON_POSITIVE` and `ALLOCATION_DUPLICATE_INVOICE` also on R3 and R5, where the value itself is invalid | `{ amount, allocatedTotal }` for the last |

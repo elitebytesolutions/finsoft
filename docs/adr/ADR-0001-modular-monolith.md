@@ -5,6 +5,8 @@
 **Deciders:** Product Owner, Architecture Guardian, Accounting Guardian
 **Authority:** LEVEL 1 — reversing this requires a superseding ADR
 
+> **Supersession scope notice.** [ADR-0028](ADR-0028-module-packaging-and-runtime.md) supersedes this ADR **in part**: the `modules/*` line of the Decision block (the layer list `domain/application/infrastructure/api/ui`). Modules are workspace packages with no `ui/` layer, and their controllers live in `apps/api/src/<module>/`. Everything else in this ADR stands.
+
 ## Context
 
 FinSoft replaces a legacy desktop accounting system at a trading business. Its output is a number filed with the FBR or used to decide solvency, so correctness dominates every other quality attribute.

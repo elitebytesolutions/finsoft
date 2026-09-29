@@ -27,6 +27,7 @@
  * accounting, reconciliation, integration, performance) plus test:e2e.
  */
 import { execSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { performance } from 'node:perf_hooks'
 import { classify, loadConfig, resolveBase, changedFilesFromGit } from './classify.mjs'
 
@@ -69,7 +70,15 @@ function npm(script) {
 function lintChangedFiles(files) {
   const targets = files.filter((f) => {
     const dot = f.lastIndexOf('.')
-    return dot !== -1 && LINT_EXTENSIONS.has(f.slice(dot))
+    // A file deleted by this push is still in the merge-base diff (git diff
+    // --name-only reports it whether the change was an edit or a removal),
+    // but there is nothing left on disk for ESLint to read — `eslint
+    // "path/that/no/longer/exists.ts"` exits non-zero as a tooling error,
+    // not a lint finding, and would fail every push that deletes a linted
+    // file. Skipped here, not because a deletion needs no check (depcruise
+    // and typecheck still see the removal), but because THIS check's job is
+    // reading source that exists.
+    return dot !== -1 && LINT_EXTENSIONS.has(f.slice(dot)) && existsSync(f)
   })
   if (targets.length === 0) {
     console.log('  no changed .ts/.tsx/.mjs/.cjs files — nothing to lint')

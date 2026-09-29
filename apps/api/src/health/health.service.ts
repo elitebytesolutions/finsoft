@@ -25,8 +25,11 @@ import { readSchemaHealth } from '@finsoft/database'
  * asserts it matches the highest migration on disk, so it cannot drift
  * silently — while the running container still needs no access to the
  * migration files.
+ *
+ * 15: 015_create_customers.sql (M3-C). Renumbered from the M3 design pack's
+ * original 014 — see that migration's own header for why.
  */
-export const REQUIRED_SCHEMA_VERSION = 14
+export const REQUIRED_SCHEMA_VERSION = 15
 
 /**
  * A readiness probe must answer quickly or it is useless: an orchestrator

@@ -88,6 +88,169 @@ module.exports = {
     },
 
     /* ------------------------------------------------------------------ *
+     * ADR-0028, M3-C's first PR (C2-C5). Module packaging and runtime.
+     * ------------------------------------------------------------------ */
+    {
+      // C2. `no-cross-module-internals` above already forbids domain/ and
+      // infrastructure/; this widens the same rule to the WHOLE of another
+      // module — application/ and api/ included — leaving exactly one door
+      // open: the other module's own application/published.ts.
+      name: 'cross-module-via-published-only',
+      severity: 'error',
+      comment:
+        'ADR-0028 statement 3 / C2: the only file reachable across modules/X -> modules/Y ' +
+        '(Y != X) is modules/Y/application/published.ts. modules/receivables may not import ' +
+        'modules/customers/application/create-customer.ts, or anything else of customers, only ' +
+        'its published.ts.',
+      from: { path: '^modules/([^/]+)/' },
+      to: {
+        path: '^modules/(?!$1/)[^/]+/',
+        pathNot: '^modules/[^/]+/application/published\\.ts$',
+      },
+    },
+    {
+      // C3, first half. infrastructure/ implements application/ports.ts —
+      // and reaches nothing else of application/ (no use case, no published
+      // DTO reached through the back door).
+      name: 'infrastructure-reaches-application-only-via-ports',
+      severity: 'error',
+      comment:
+        'ADR-0028 statement 5: infrastructure/ -> application/ports.ts is the one sanctioned ' +
+        'edge (a type-only import, so infrastructure/ can implement the port). Any other target ' +
+        'under application/ — a use case, published.ts — is unreachable from infrastructure/.',
+      from: { path: '^modules/([^/]+)/infrastructure/' },
+      to: {
+        path: '^modules/([^/]+)/application/',
+        pathNot: '^modules/$1/application/ports\\.ts$',
+      },
+    },
+    {
+      // C3, second half. The infrastructure -> ports.ts edge above is
+      // sanctioned only as a TYPE-only import — infrastructure/ implements
+      // the port's interfaces, it does not call a runtime value ports.ts
+      // exports (ports.ts declares none; a runtime dependency here would be
+      // the domain-shaped coupling ADR-0028 statement 5 draws the line
+      // against).
+      name: 'ports-import-is-type-only',
+      severity: 'error',
+      comment:
+        'ADR-0028 statement 5: modules/*/application/ports.ts is reached only as a type-only ' +
+        'import. A runtime (value) import of ports.ts is not the "build a kernel payload" ' +
+        'exception statement 5 grants for the kernel index — ports.ts has no runtime values to ' +
+        'import in the first place.',
+      from: {},
+      to: {
+        path: '^modules/([^/]+)/application/ports\\.ts$',
+        dependencyTypesNot: ['type-only'],
+      },
+    },
+    {
+      // C4, first third. application/ never reaches down into
+      // infrastructure/ — a repository is handed to a use case, never
+      // imported by one.
+      name: 'application-does-not-import-infrastructure',
+      severity: 'error',
+      comment:
+        'ADR-0028 statement 5: application/ never imports infrastructure/ — repositories are ' +
+        'built by index.ts (the composition root) and passed in. A use case reaching down into ' +
+        'infrastructure/ directly is exactly the coupling ports.ts exists to prevent.',
+      from: { path: '^modules/([^/]+)/application/' },
+      to: { path: '^modules/([^/]+)/infrastructure/' },
+    },
+    {
+      // C4, second third. The module's OWN api/ layer (framework-free HTTP
+      // contract: zod schemas, mappers, the error table) never imports
+      // infrastructure/ either — same reason, a different layer.
+      name: 'module-api-does-not-import-infrastructure',
+      severity: 'error',
+      comment:
+        "ADR-0028 statement 4: a module's api/ layer is framework-free (zod request schemas, " +
+        'response mappers, the error-code -> HTTP-status table) and never imports ' +
+        'infrastructure/ — it has no business holding a repository.',
+      from: { path: '^modules/([^/]+)/api/' },
+      to: { path: '^modules/([^/]+)/infrastructure/' },
+    },
+    {
+      // C4, third third. domain/ imports only its own files,
+      // @finsoft/validation, @finsoft/shared-types, and the kernel index —
+      // type-only. domain-is-pure (above) already forbids domain -> its own
+      // module's api/application/infrastructure; this is the allow-list for
+      // everything OUTSIDE the module.
+      name: 'domain-imports-allowlisted',
+      severity: 'error',
+      comment:
+        'ADR-0028 statement 5: domain/ imports only its own files, @finsoft/validation and ' +
+        '@finsoft/shared-types outright, plus @finsoft/accounting-kernel type-only (to build a ' +
+        "kernel payload, e.g. toSalePostedPayload()). Anything else — including the module's " +
+        'own infrastructure/api/application, or a runtime import of the kernel — is forbidden. ' +
+        "accounting-kernel is in this rule's allow-list (pathNot) so the TYPE-ONLY exception " +
+        'statement 5 grants is reachable at all — domain-kernel-import-is-type-only, below, is ' +
+        'the rule that then rejects a non-type-only (runtime) import of it. Without ' +
+        'accounting-kernel here, this rule alone forbade the path unconditionally and the other ' +
+        'rule could never fire on anything this one had not already caught (Architecture seat ' +
+        'Council review, 2026-09-29).',
+      from: { path: '^modules/([^/]+)/domain/' },
+      to: {
+        pathNot: [
+          '^modules/$1/domain/',
+          '^packages/(validation|shared-types|accounting-kernel)/',
+          '^node_modules/',
+        ],
+      },
+    },
+    {
+      // C4, third third, continued: the ONE exception (kernel index,
+      // type-only) stated as its own rule, since "pathNot" above excludes
+      // the kernel unconditionally rather than conditionally on
+      // dependencyType. A value (runtime) import of the kernel from
+      // domain/ must still fail — domain/ may look at the kernel's TYPES
+      // only, never call one of its functions.
+      name: 'domain-kernel-import-is-type-only',
+      severity: 'error',
+      comment:
+        'ADR-0028 statement 5: domain/ may import @finsoft/accounting-kernel type-only (to type ' +
+        'a payload it builds, e.g. toSalePostedPayload()). A runtime import — calling ' +
+        'postingEngine.post or registerParty from domain/ — belongs in application/, not here.',
+      from: { path: '^modules/([^/]+)/domain/' },
+      to: {
+        path: '^packages/accounting-kernel/',
+        dependencyTypesNot: ['type-only'],
+      },
+    },
+    {
+      // C5, first half. apps/** reaches a module only through its index.ts
+      // — never domain/, application/, infrastructure/ or api/ directly.
+      name: 'apps-import-module-index-only',
+      severity: 'error',
+      comment:
+        'ADR-0028 statement 3: apps/api, apps/worker and tests/** reach a module through ".' +
+        '" -> ./index.ts alone. apps/** importing modules/customers/application/create-customer.ts ' +
+        'directly, instead of the factory index.ts exports, is the same private-internals ' +
+        'violation no-cross-module-internals forbids between two modules.',
+      from: { path: '^apps/' },
+      to: {
+        path: '^modules/',
+        pathNot: '^modules/[^/]+/index\\.ts$',
+      },
+    },
+    {
+      // C5, second half. A module never imports auth, permissions, ui, an
+      // app, or packages/database's auth query surface.
+      name: 'modules-import-allowlisted',
+      severity: 'error',
+      comment:
+        'ADR-0028 statement 5: a module may import the kernels’ public index, ' +
+        '@finsoft/database (root only), @finsoft/validation, @finsoft/shared-types, ' +
+        '@finsoft/reporting and @finsoft/observability (not in domain/). It never imports ' +
+        '@finsoft/auth, @finsoft/permissions, @finsoft/ui, an app, or packages/database’s ' +
+        'auth/login query surface.',
+      from: { path: '^modules/' },
+      to: {
+        path: ['^packages/(auth|permissions|ui)/', '^apps/', '^packages/database/src/auth/'],
+      },
+    },
+
+    /* ------------------------------------------------------------------ *
      * The kernels are the only writers of financial truth.
      * ADR-0005, ADR-0008
      * ------------------------------------------------------------------ */

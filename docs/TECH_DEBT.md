@@ -315,3 +315,63 @@ document-less event needs the same derivation and either duplicates this
 function or imports it from `apps/api` (which dependency-cruiser would
 correctly refuse, `apps/api` not being an allowed import for a module or
 another lane).
+
+---
+
+## TD-010 · The customer ledger shows a reversal with no reason
+
+**What.** `GET /api/customers/:id/ledger`'s `reverses.reason` field
+(`packages/shared-types/src/customer.ts`) is `null` whenever a line reverses
+another entry. `packages/reporting`'s account-ledger read (K5,
+`packages/database/src/accounting/ledger.ts`'s `AccountLedgerLine`) carries
+only the paired entry's id and number — never `journal_entries.reversal_reason`
+— so `modules/customers/api/mappers.ts` has nothing to put there. The field
+renders as absent in the response, not as an empty string standing in for a
+real one, which is the honest shape for "not resolvable from this read," not
+a guess.
+
+**Why it is accepted.** Adding `reversal_reason` to the ledger read is a K5
+change to `packages/reporting`/`packages/database`, reviewed as T3 kernel
+work — out of scope for a module lane to widen unilaterally, and the field is
+cosmetic (the reversal is fully identified by `entryId`/`entryNumber`; the
+REASON is additionally available today via `GET /api/audit`, filtered to the
+reversal entry, for a user who needs it).
+
+**Owner.** Accounting seat.
+
+**What would force it.** M4's customer ledger screen needing the reversal
+reason inline, without a second request to the audit endpoint — at which
+point the fix is adding `reversal_reason` to `AccountLedgerLine` and its
+mapper, not a new query.
+
+---
+
+## TD-011 · K5's party ledger resolves exactly one AR_CONTROL account
+
+**What.** `packages/reporting/src/party-ledger.ts`'s `controlAccountLedger`
+resolves the `AR_CONTROL` (or `AP_CONTROL`) role to exactly one account via
+`resolveAccountsByRole` and reads that one account's ledger, filtered by
+party. `packages/reporting/src/subledger.ts`'s `customerSubledgerBalance` (the
+balance-only read `GET /api/customers` and `GET /api/customers/:id` use) takes
+a different path: it sums every journal line carrying `account_control = 'AR'`
+for the party, with no join to a specific account id at all. The two would
+diverge — the ledger showing one account's lines, the balance summing every
+AR-control account's — if a tenant ever configured more than one account with
+`control_kind = 'AR'`.
+
+**Why it is accepted.** `accounts_tenant_active_role_key` (migration 010)
+already makes at most one ACTIVE account hold the `AR_CONTROL` **role** per
+tenant, and the MVP standard-v1 chart of accounts seeds exactly one AR-control
+account with no UI or endpoint to create a second. A tenant could still mark a
+second account `control_kind = 'AR'` without giving it the `AR_CONTROL` role
+(roles and control-kind are independent columns, coa-standard.md), which is
+the one configuration this divergence needs — reachable only through a chart
+edit no MVP surface performs.
+
+**Owner.** Accounting seat.
+
+**What would force it.** Wave 2's chart-of-accounts editing UI, or any tenant
+onboarding that seeds a second AR-control account (a second AR bank fee
+account, for instance) — at which point `controlAccountLedger` should sum
+every AR-control account for the party, matching `customerSubledgerBalance`'s
+own query shape, rather than resolving a single role.

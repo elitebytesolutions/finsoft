@@ -370,6 +370,58 @@ describe('schema', () => {
     }
   })
 
+  it('makes every foreign key from a tenant table to a tenant table composite on tenant_id (S3, ADR-0028)', async () => {
+    // PostgreSQL foreign-key checks run with row security OFF (ADR-0026's
+    // own reasoning, generalised): a single-column reference from one
+    // tenant-owned table to another would let tenant B insert a row
+    // pointing at tenant A's, and would tell B whether that id exists —
+    // both a tenant boundary break and a cross-tenant existence oracle.
+    // Only a composite key carrying tenant_id on BOTH sides closes it.
+    const all = await constraints()
+    const tenantOwned = new Set(
+      (await columns())
+        .filter((c) => c.column_name === 'tenant_id' && !isGlobalTable(c.table_name))
+        .map((c) => c.table_name),
+    )
+
+    // S3 (Security seat, Council review, 2026-09-29): checks BOTH sides.
+    // The original check only proved the REFERENCING column list leads with
+    // tenant_id; a FOREIGN KEY (tenant_id, x) REFERENCES t (id, y) — with a
+    // composite LOCAL key but a single-column, non-tenant-leading REFERENCED
+    // key — would still pass it while being exactly the same RLS-blind
+    // existence oracle it exists to catch, one side over.
+    const offenders = all
+      .filter((c) => c.contype === 'f')
+      .filter((c) => c.referenced_table !== null && c.referenced_table !== 'tenants')
+      .filter((c) => tenantOwned.has(c.table_name) && tenantOwned.has(c.referenced_table as string))
+      .filter(
+        (c) =>
+          !/^FOREIGN KEY \(tenant_id,[^)]*\)\s+REFERENCES\s+"?[a-zA-Z_][a-zA-Z0-9_]*"?\(tenant_id,/i.test(
+            c.definition,
+          ),
+      )
+      .map(
+        (c) =>
+          `${c.table_name}.${c.constraint_name} -> ${String(c.referenced_table)}: ${c.definition}`,
+      )
+
+    expect(
+      offenders,
+      'a tenant-to-tenant foreign key is not composite on tenant_id, leading, on BOTH the ' +
+        'referencing AND the referenced column list. A single-column reference on either side ' +
+        'bypasses RLS at the referential-integrity check (S3, ADR-0028).',
+    ).toEqual([])
+  })
+
+  it('S3 fixture: a composite local key against a non-tenant-leading referenced key is still an offender', () => {
+    // Pure regex check, mirroring the live query above — proves the fix
+    // actually inspects the REFERENCES side, not only the FOREIGN KEY side.
+    const re =
+      /^FOREIGN KEY \(tenant_id,[^)]*\)\s+REFERENCES\s+"?[a-zA-Z_][a-zA-Z0-9_]*"?\(tenant_id,/i
+    expect(re.test('FOREIGN KEY (tenant_id, x) REFERENCES t(id, y)')).toBe(false)
+    expect(re.test('FOREIGN KEY (tenant_id, x) REFERENCES t(tenant_id, y)')).toBe(true)
+  })
+
   it('never uses ON DELETE CASCADE, and always RESTRICT (rule 4)', async () => {
     const foreignKeys = (await constraints()).filter((c) => c.contype === 'f')
     expect(foreignKeys.length).toBeGreaterThan(0)

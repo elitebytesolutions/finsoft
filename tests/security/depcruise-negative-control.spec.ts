@@ -217,6 +217,101 @@ const CASES: readonly Case[] = [
       'M1-X, Council T1 / Security seat final check 3: request-scope has exactly one ' +
       'legitimate caller, permission.guard.ts, by any path.',
   },
+
+  /* -------------------------------------------------------------- *
+   * ADR-0028, C9: probes for the boundary rules M3-C makes fireable
+   * for the first time (modules/customers is the first real module,
+   * so every one of these targets a REAL file of it) plus C2-C5.
+   * -------------------------------------------------------------- */
+  {
+    rule: 'no-cross-module-internals',
+    dir: 'modules/probe/application',
+    source: "import '../../customers/domain/customer.ts'\n",
+    because:
+      'ARCHITECTURE §5: modules/receivables may not import modules/customers/domain/*. Before ' +
+      'M3, this rule had never had a second module to check against — modules/ was empty.',
+  },
+  {
+    rule: 'domain-is-pure',
+    dir: 'modules/probe/domain',
+    source: "import '../../customers/application/create-customer.ts'\n",
+    because:
+      'ARCHITECTURE §2: domain/ imports nothing from any module’s api/application/' +
+      'infrastructure, its own or another’s.',
+  },
+  {
+    rule: 'application-does-not-import-api',
+    dir: 'modules/probe/application',
+    source: "import '../../customers/api/schemas.ts'\n",
+    because: 'ARCHITECTURE §2: dependencies point inward. api -> application, never back.',
+  },
+  {
+    rule: 'modules-do-not-reach-into-kernels',
+    dir: 'modules/probe/application',
+    source: "import '../../../packages/accounting-kernel/src/posting-engine.ts'\n",
+    because:
+      'ADR-0005/0008: a module raises a typed financial event through the kernel’s public ' +
+      'index only — it never reaches past index.ts into the kernel’s own internals.',
+  },
+  {
+    rule: 'cross-module-via-published-only',
+    dir: 'modules/probe/application',
+    source: "import '../../customers/application/create-customer.ts'\n",
+    because:
+      'ADR-0028 statement 3 / C2: the only file of customers reachable from another module is ' +
+      'application/published.ts. create-customer.ts is customers’ own internal use case.',
+  },
+  {
+    rule: 'infrastructure-reaches-application-only-via-ports',
+    dir: 'modules/customers/infrastructure',
+    source: "import '../application/create-customer.ts'\n",
+    because:
+      'ADR-0028 statement 5: infrastructure/ -> application/ports.ts is the one sanctioned ' +
+      'edge. Reaching a use case file directly is exactly the coupling ports.ts exists to ' +
+      'prevent.',
+  },
+  {
+    rule: 'application-does-not-import-infrastructure',
+    dir: 'modules/customers/application',
+    source: "import '../infrastructure/customers.repository.ts'\n",
+    because:
+      'ADR-0028 statement 5: a repository is built by index.ts and passed IN to a use case — ' +
+      'a use case never imports infrastructure/ to build its own.',
+  },
+  {
+    rule: 'module-api-does-not-import-infrastructure',
+    dir: 'modules/customers/api',
+    source: "import '../infrastructure/customers.repository.ts'\n",
+    because:
+      'ADR-0028 statement 4: the api/ layer is framework-free mapping and validation — it has ' +
+      'no business holding a repository.',
+  },
+  {
+    rule: 'domain-imports-allowlisted',
+    dir: 'modules/customers/domain',
+    source: "import '../infrastructure/customers.repository.ts'\n",
+    because:
+      'ADR-0028 statement 5: domain/ imports only its own files, @finsoft/validation, ' +
+      '@finsoft/shared-types, and the kernel index type-only. Its own module’s ' +
+      'infrastructure/ is not on that list either.',
+  },
+  {
+    rule: 'apps-import-module-index-only',
+    dir: 'apps/api/src',
+    source: "import '../../../modules/customers/application/create-customer.ts'\n",
+    because:
+      'ADR-0028 statement 3: apps/api reaches a module through "." -> ./index.ts alone. ' +
+      'Reaching past it into application/ is the same private-internals violation ' +
+      'no-cross-module-internals forbids between two modules.',
+  },
+  {
+    rule: 'modules-import-allowlisted',
+    dir: 'modules/probe/infrastructure',
+    source: "import '@finsoft/permissions'\n",
+    because:
+      'ADR-0028 statement 5: a module never imports @finsoft/permissions — RBAC resolution is ' +
+      'apps/api’s concern (the PermissionGuard / @RequirePermission boundary), never a module’s.',
+  },
 ]
 
 describe('every boundary rule fires against a file that violates it', () => {
@@ -230,6 +325,78 @@ describe('every boundary rule fires against a file that violates it', () => {
         'graph will still report clean — that is exactly how this file came to exist. ' +
         'Check options.exclude before assuming the rule text is wrong.',
     ).toContain(rule)
+  })
+})
+
+describe('ports-import-is-type-only (ADR-0028 C3) — a value import of ports.ts', () => {
+  /*
+   * modules/customers/application/ports.ts exports interfaces only, so an
+   * ordinary `import {...} from '...ports.ts'` is ALREADY type-only by
+   * construction — there is nothing else it could be. To prove this rule
+   * actually fires on a genuine VALUE import (not merely "no probe happened
+   * to trip it"), the probe module gets its own ports.ts with a runtime
+   * export, and a sibling file imports it as a value.
+   */
+  it('fires when a ports.ts is imported for its VALUE, not just its types', async () => {
+    probe('modules/probe2/application', 'export const RUNTIME_VALUE_NOT_A_TYPE = 1\n')
+    // The file above lands at a generated name, not literally "ports.ts" —
+    // write the real target directly so the rule's own path pattern
+    // (^modules/([^/]+)/application/ports\.ts$) matches it.
+    const portsAbs = join(ROOT, 'modules/probe2/application/ports.ts')
+    mkdirSync(dirname(portsAbs), { recursive: true })
+    writeFileSync(portsAbs, 'export const RUNTIME_VALUE_NOT_A_TYPE = 1\n', 'utf8')
+    written.push(portsAbs)
+
+    const importerPath = probe(
+      'modules/probe2/infrastructure',
+      "import { RUNTIME_VALUE_NOT_A_TYPE } from '../application/ports.ts'\n" +
+        'export const x = RUNTIME_VALUE_NOT_A_TYPE\n',
+    )
+
+    const fired = await rulesFiredOn(importerPath)
+    expect(
+      fired,
+      'ports-import-is-type-only did not fire on a genuine VALUE import of a ports.ts file',
+    ).toContain('ports-import-is-type-only')
+  })
+
+  it('does not fire on the real, type-only import customers/infrastructure actually uses', async () => {
+    const result = await cruise(['modules/customers/infrastructure/customers.repository.ts'], {
+      ...config.options,
+      ruleSet: { forbidden: config.forbidden },
+      validate: true,
+    })
+    if (typeof result.output === 'string') throw new Error('expected a cruise result object')
+    const rules = result.output.summary.violations.map((v) => v.rule.name)
+    expect(rules).not.toContain('ports-import-is-type-only')
+  })
+})
+
+describe('domain-kernel-import-is-type-only (ADR-0028 statement 5)', () => {
+  it('fires on a runtime (value) import of the kernel from domain/', async () => {
+    const path = probe(
+      'modules/probe/domain',
+      "import { registerParty } from '@finsoft/accounting-kernel'\nexport const r = registerParty\n",
+    )
+    const fired = await rulesFiredOn(path)
+    expect(fired).toContain('domain-kernel-import-is-type-only')
+  })
+
+  it('POSITIVE CONTROL: a type-only kernel import from domain/ passes BOTH rules, not just this one', async () => {
+    // Architecture seat Council review, 2026-09-29: domain-imports-allowlisted
+    // omitted accounting-kernel from its own allow-list, so it fired on
+    // EVERY kernel import regardless of dependencyType — making this rule's
+    // type-only exception unreachable (it could never see an import
+    // domain-imports-allowlisted had not already rejected). Asserting the
+    // full `fired` array is empty, not merely that this one rule is absent,
+    // is what would have caught that.
+    const path = probe(
+      'modules/probe/domain',
+      "import type { PostingErrorCode } from '@finsoft/accounting-kernel'\n" +
+        'export type X = PostingErrorCode\n',
+    )
+    const fired = await rulesFiredOn(path)
+    expect(fired).toEqual([])
   })
 })
 

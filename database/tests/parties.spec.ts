@@ -126,16 +126,24 @@ describe('parties', () => {
         `update parties set version = version + 1 where id = '${id}'`,
         `delete from parties where id = '${id}'`,
         // Listed first so ITS before-truncate trigger fires first; journal_lines
-        // is included only because the FK forbids truncating parties alone.
-        'truncate parties, journal_lines',
+        // and customers are included only because the FK forbids truncating
+        // parties alone — customers (M3-C, migration 015) is the second
+        // table with a foreign key into parties (ADR-0026 statement 4), so
+        // omitting it here now fails at the FK check (0A000) before the
+        // trigger even runs, rather than at parties_forbid_mutation.
+        'truncate parties, journal_lines, customers',
       ]) {
         await client.query('BEGIN')
         try {
-          // Take both tables in the order a posting does (journal_lines, then
-          // parties via the FK check) so TRUNCATE's own parties-first
-          // acquisition can never deadlock (40P01) against a concurrent
-          // posting on a shared test cluster. Observed once without this.
-          await client.query('lock table journal_lines, parties in access exclusive mode')
+          // Take every table in the order a posting does (journal_lines,
+          // then parties via the FK check; customers alongside parties,
+          // since it is the other referencing table this TRUNCATE must
+          // name) so TRUNCATE's own acquisition order can never deadlock
+          // (40P01) against a concurrent posting on a shared test cluster.
+          // Observed once without this.
+          await client.query(
+            'lock table journal_lines, parties, customers in access exclusive mode',
+          )
           await expect(client.query(statement), statement).rejects.toMatchObject({
             code: '42501',
             message: expect.stringMatching(/^parties is insert-only/),
