@@ -118,12 +118,36 @@ export { insertSeededRoles } from './rbac/seed-roles.ts'
 export type { RoleSeed } from './rbac/seed-roles.ts'
 
 /*
- * Accounting query surface. M2-A, ADR-0023 A1: "all query construction lives
- * in packages/database ... the kernel calls those functions." Everything
- * below is row access and SQL only — no posting rule, no rounding, no
- * account-role policy. `seedChartOfAccounts`/`createFiscalYear` are
- * deliberately NOT re-exported here a second time; they live only on
- * `@finsoft/database/provisioning` (see that file's header for why).
+ * Accounting query surface. M2-A.
+ *
+ * THE RULE (Council T3, Arch 1/2/5): this package holds READS of the
+ * accounting tables, plus only those WRITES that ADR-0013:31 permits a
+ * non-kernel package on its query-construction allowlist — i.e. none to a
+ * kernel-owned register. journal_entries / journal_lines (ADR-0005), parties
+ * (ADR-0026 statement 5) and fiscal_periods transitions (Council T3) are
+ * written only by packages/accounting-kernel/src/queries/**; ESLint's
+ * financialTruthWriteSyntax fails the build if any of them is written here,
+ * because modules/*\/infrastructure may import this package and an export
+ * here would be a path around the kernel.
+ *
+ * NOT the rule: an earlier version of this comment cited ADR-0023 A1 ("all
+ * query construction lives in packages/database") as the licence. That
+ * widening moved query bodies out of packages/auth and packages/permissions,
+ * which are NOT on the ADR-0013 allowlist. It never licensed this package to
+ * write tables the kernel owns — the kernel IS on the allowlist, and
+ * ADR-0026's Architecture-seat signature says so explicitly.
+ *
+ * Two kinds of export below are kernel-only by lint rather than by location:
+ * assignDocumentNumber / assignTenantDocumentNumber (numbering, LOCK_REGISTRY
+ * 5c) and lockEntryForReversal (LOCK_REGISTRY 5a) — ESLint
+ * kernelOnlyCallSyntax confines their callers to packages/accounting-kernel
+ * and the database test suites. Period transitions (close / reopen / lock)
+ * are not here at all: they are periodEngine in packages/accounting-kernel.
+ *
+ * Nothing below carries a posting rule, rounding or account-role policy.
+ * `seedChartOfAccounts`/`createFiscalYear` are deliberately NOT re-exported
+ * here a second time; they live only on `@finsoft/database/provisioning`
+ * (see that file's header for why).
  */
 export {
   findAccountsByIds,
@@ -133,21 +157,7 @@ export {
 } from './accounting/accounts.ts'
 export type { AccountRow } from './accounting/accounts.ts'
 
-export {
-  closePeriod,
-  findPeriodById,
-  findPeriodForDate,
-  lockPeriod,
-  PeriodAlreadyClosedError,
-  PeriodCloseOutOfOrderError,
-  PeriodConcurrentModificationError,
-  PeriodLockedError,
-  PeriodLockOutOfOrderError,
-  PeriodNotClosedError,
-  PeriodNotFoundError,
-  PeriodReopenOutOfOrderError,
-  reopenPeriod,
-} from './accounting/periods.ts'
+export { findPeriodById, findPeriodForDate } from './accounting/periods.ts'
 export type { FiscalPeriodRow, PeriodStatus } from './accounting/periods.ts'
 
 export { assignDocumentNumber, assignTenantDocumentNumber } from './accounting/sequences.ts'

@@ -215,6 +215,71 @@ const accountingKernelLogicQuerySyntax = [
 ]
 
 /*
+ * No transaction control in the kernel. ADR-0027 (partial supersession of
+ * ADR-0005 step 2), merge condition K1.
+ *
+ * The kernel runs INSIDE the caller's transaction (postingEngine.post(cmd,
+ * tx)); it never begins, commits, rolls back or reconfigures one. A COMMIT
+ * issued from the kernel would make a posting durable before the caller's
+ * own writes — the document, the subledger, the audit record — and a ROLLBACK
+ * would silently discard them. ADR-0027 sanctions exactly ONE exception: the
+ * named savepoint `finsoft_posting_number` that brackets numbering + the
+ * entry INSERT, in src/queries/journal-writes.ts, as the three whole
+ * statements `SAVEPOINT finsoft_posting_number`, `RELEASE SAVEPOINT
+ * finsoft_posting_number` and `ROLLBACK TO SAVEPOINT finsoft_posting_number`.
+ * Any other savepoint name, a dynamic name, or a second statement appended to
+ * an allowed one is an error, even in that file.
+ *
+ * Caught as: the text of any template literal (sql`` tagged or not, which
+ * covers sql.raw(`...`)) with the statement at its start or after a `;`; any
+ * string literal that STARTS with one (sql.raw('...'), CompiledQuery.raw
+ * ('...'), a constant later passed to either); a `.raw(...)` string with one
+ * after a `;`; and Kysely's transaction-control methods. Statement-shaped
+ * only, so prose such as an error message mentioning "commit" is not caught;
+ * END counts only as a whole statement, so a CASE ... END in a query is not.
+ */
+const TX_KEYWORDS =
+  '(BEGIN|START\\s+TRANSACTION|COMMIT|END\\s*(;|$|\\s+(WORK|TRANSACTION))|ROLLBACK|ABORT|SAVEPOINT|RELEASE|SET\\s+(SESSION\\s+CHARACTERISTICS\\s+AS\\s+)?TRANSACTION|PREPARE\\s+TRANSACTION)'
+/** Query text (templates): a statement at the start, or after a `;`. */
+const TX_CONTROL_TEXT = `/(^|;)\\s*${TX_KEYWORDS}/i`
+/** Plain strings: only when the string itself STARTS with the statement — prose is not caught. */
+const TX_CONTROL_STRING = `/^\\s*${TX_KEYWORDS}/i`
+/** A string handed to a `.raw(...)` executor, with the statement after a `;`. */
+const TX_CONTROL_AFTER_SEMICOLON = `/;\\s*${TX_KEYWORDS}/i`
+const NUMBERING_SAVEPOINT_STATEMENT =
+  '/^\\s*(SAVEPOINT|RELEASE\\s+SAVEPOINT|ROLLBACK\\s+TO\\s+SAVEPOINT)\\s+finsoft_posting_number\\s*$/'
+const kernelTxControlMessage =
+  'ADR-0027 (K1): packages/accounting-kernel issues no transaction control — no BEGIN, COMMIT, ' +
+  'ROLLBACK, SAVEPOINT, RELEASE or SET TRANSACTION. It runs inside the caller’s transaction. The ' +
+  'one exception is the savepoint named finsoft_posting_number in src/queries/journal-writes.ts.'
+const kernelTxControlApiSyntax = {
+  selector:
+    'CallExpression[callee.property.name=/^(transaction|startTransaction|controlledTransaction|savepoint|rollbackToSavepoint|releaseSavepoint|commit|rollback|setIsolationLevel|setAccessMode)$/]',
+  message: kernelTxControlMessage,
+}
+const kernelTxControlStringSyntax = [
+  { selector: `Literal[value=${TX_CONTROL_STRING}]`, message: kernelTxControlMessage },
+  {
+    selector: `CallExpression[callee.property.name='raw'] > Literal[value=${TX_CONTROL_AFTER_SEMICOLON}]`,
+    message: kernelTxControlMessage,
+  },
+]
+const kernelTxControlSyntax = [
+  kernelTxControlApiSyntax,
+  { selector: `TemplateElement[value.raw=${TX_CONTROL_TEXT}]`, message: kernelTxControlMessage },
+  ...kernelTxControlStringSyntax,
+]
+/** journal-writes.ts only: the same, minus the three exact numbering-savepoint statements. */
+const journalWritesTxControlSyntax = [
+  kernelTxControlApiSyntax,
+  {
+    selector: `TemplateElement[value.raw=${TX_CONTROL_TEXT}]:not([value.raw=${NUMBERING_SAVEPOINT_STATEMENT}])`,
+    message: kernelTxControlMessage,
+  },
+  ...kernelTxControlStringSyntax,
+]
+
+/*
  * The journal is written ONLY by the kernel. ADR-0005 Compliance: "INSERT
  * INTO journal_entries / journal_lines, and any repository method writing
  * those tables, may appear only inside packages/accounting-kernel. Any
@@ -268,8 +333,77 @@ const partiesWriteSyntax = [
   },
 ]
 
-/** Both registers of financial truth, composed into every block that sets no-restricted-syntax. */
-const financialTruthWriteSyntax = [...journalWriteSyntax, ...partiesWriteSyntax]
+/*
+ * Period transitions are written ONLY by the kernel. Council T3 (Arch 1/2/5,
+ * Acct F3/R3): close / reopen / lock — the calendar lock, the order checks,
+ * the UPDATE and the audit record — live in
+ * packages/accounting-kernel/src/queries/periods.ts. An UPDATE (or DELETE /
+ * MERGE / TRUNCATE) of fiscal_periods anywhere else — by builder call, sql``
+ * tag or raw string — is a build failure, INCLUDING inside packages/database,
+ * which modules/*\/infrastructure may import. database/migrations is SQL and
+ * not linted. INSERT is deliberately not covered: createFiscalYear
+ * (packages/database/src/provisioning.ts) creates periods, born OPEN, and
+ * that is provisioning, not a transition.
+ */
+const FISCAL_PERIOD_WRITE_TEXT =
+  '/\\b(update|delete\\s+from|merge\\s+into|truncate)\\s+(table\\s+)?(only\\s+)?(public\\.)?fiscal_periods\\b/i'
+const fiscalPeriodWriteMessage =
+  'Council T3 / ADR-0012: fiscal_periods transitions (close, reopen, lock) are written only by ' +
+  'packages/accounting-kernel/src/queries/periods.ts. Call periodEngine.close / ' +
+  'periodEngine.reopen / periodEngine.lock from @finsoft/accounting-kernel; no other file may ' +
+  'write a period transition.'
+const fiscalPeriodWriteSyntax = [
+  {
+    selector:
+      'CallExpression[callee.property.name=/^(updateTable|deleteFrom|mergeInto)$/][arguments.0.value=/^(public\\.)?fiscal_periods\\b/]',
+    message: fiscalPeriodWriteMessage,
+  },
+  {
+    selector: `TemplateElement[value.raw=${FISCAL_PERIOD_WRITE_TEXT}]`,
+    message: fiscalPeriodWriteMessage,
+  },
+  { selector: `Literal[value=${FISCAL_PERIOD_WRITE_TEXT}]`, message: fiscalPeriodWriteMessage },
+]
+
+/*
+ * Kernel-only primitives that packages/database still DEFINES (Council T3
+ * Arch 1/2/5, lint-restrict option): document numbering and the reversal
+ * row lock. They live in packages/database for its tx plumbing, but calling
+ * them outside the kernel either consumes a number no posted entry will
+ * carry (a committed gap, 013's header) or takes LOCK_REGISTRY 5a out of
+ * the kernel's order. Allowed: packages/accounting-kernel/** (whose blocks
+ * do not compose this list) and the database test suites
+ * (database/tests/**, tests/security/**). Caught by named import, by
+ * namespace member access, by destructuring a dynamic import, and by
+ * re-export from @finsoft/database — the definitions and the package
+ * index's own relative re-export are not matched.
+ */
+const KERNEL_ONLY_NAMES =
+  '/^(assignDocumentNumber|assignTenantDocumentNumber|lockEntryForReversal)$/'
+const kernelOnlyMessage =
+  'Council T3: assignDocumentNumber, assignTenantDocumentNumber and lockEntryForReversal are ' +
+  'called only by packages/accounting-kernel. Post through postingEngine.post / the reversal ' +
+  'engine; a number or reversal lock taken anywhere else breaks rule 12 or LOCK_REGISTRY order.'
+const kernelOnlyCallSyntax = [
+  { selector: `ImportSpecifier[imported.name=${KERNEL_ONLY_NAMES}]`, message: kernelOnlyMessage },
+  { selector: `MemberExpression[property.name=${KERNEL_ONLY_NAMES}]`, message: kernelOnlyMessage },
+  {
+    selector: `ObjectPattern > Property[key.name=${KERNEL_ONLY_NAMES}]`,
+    message: kernelOnlyMessage,
+  },
+  {
+    selector: `ExportNamedDeclaration[source.value=/^@finsoft\\/database/] > ExportSpecifier[local.name=${KERNEL_ONLY_NAMES}]`,
+    message: kernelOnlyMessage,
+  },
+]
+
+/** The registers of financial truth, composed into every block that sets no-restricted-syntax. */
+const financialTruthWriteSyntax = [
+  ...journalWriteSyntax,
+  ...partiesWriteSyntax,
+  ...fiscalPeriodWriteSyntax,
+  ...kernelOnlyCallSyntax,
+]
 
 const stripOnlySyntax = [
   {
@@ -733,6 +867,7 @@ export default tseslint.config(
         ...authLookupIdentifierSyntax,
         ...stripOnlySyntax,
         ...accountingKernelLogicQuerySyntax,
+        ...kernelTxControlSyntax,
       ],
     },
   },
@@ -751,6 +886,27 @@ export default tseslint.config(
         ...connectionOwnershipSyntax,
         ...authLookupIdentifierSyntax,
         ...stripOnlySyntax,
+        ...kernelTxControlSyntax,
+      ],
+    },
+  },
+
+  /* ---------------------------------------------------------------- *
+   * packages/accounting-kernel/src/queries/journal-writes.ts — as above,
+   * except the three whole statements on the ADR-0027 numbering savepoint
+   * `finsoft_posting_number`. Restates everything, because this block
+   * REPLACES no-restricted-syntax for the file.
+   * ---------------------------------------------------------------- */
+  {
+    files: ['packages/accounting-kernel/src/queries/journal-writes.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        ...invariantSyntax,
+        ...connectionOwnershipSyntax,
+        ...authLookupIdentifierSyntax,
+        ...stripOnlySyntax,
+        ...journalWritesTxControlSyntax,
       ],
     },
   },

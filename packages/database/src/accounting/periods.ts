@@ -1,8 +1,8 @@
-import { sql } from 'kysely'
 import { assertIssuedTenantTx, type TenantTx } from '../transaction.ts'
 import { calendarDate, sqlDate } from './calendar-date.ts'
 import { TenantContext } from '../tenant-context.ts'
 import { recordAudit } from '../audit/writer.ts'
+import { auditRequestId, auditVia, type AuditOrigin } from './audit-origin.ts'
 
 /*
  * Fiscal periods. docs/posting-rules/periods.md, ADR-0012.
@@ -96,6 +96,7 @@ export async function createFiscalYear(
   tenantId: string,
   fiscalYear: number,
   fiscalYearStartMonth = 7,
+  origin?: AuditOrigin,
 ): Promise<readonly FiscalPeriodRow[]> {
   assertIssuedTenantTx(tx)
 
@@ -113,6 +114,10 @@ export async function createFiscalYear(
         'created provisioned owner, never with no author (rule 9).',
     )
   }
+
+  // Validated before any write, so a bad origin fails with nothing inserted.
+  const auditRequest = auditRequestId(origin)
+  const auditLabel = auditVia(origin)
 
   const months = computeMonths(fiscalYear, fiscalYearStartMonth)
   const created: FiscalPeriodRow[] = []
@@ -146,9 +151,13 @@ export async function createFiscalYear(
     entityType: 'fiscal_periods',
     entityId: null,
     beforeJson: null,
-    afterJson: { fiscalYear: String(fiscalYear), periodCount: String(created.length) },
+    afterJson: {
+      fiscalYear: String(fiscalYear),
+      periodCount: String(created.length),
+      ...auditLabel,
+    },
     ip: null,
-    requestId: null,
+    requestId: auditRequest,
   })
 
   return created
@@ -174,9 +183,9 @@ export async function hasFiscalYear(
  * The single period whose [period_start, period_end] contains `date` (an
  * ISO YYYY-MM-DD string), or null (PERIOD_NOT_FOUND — the kernel's call).
  *
- * LOCKS the row `FOR SHARE` (docs/LOCK_REGISTRY.md position 5a). This is the
+ * LOCKS the row `FOR SHARE` (docs/LOCK_REGISTRY.md position 5b). This is the
  * posting path's period read, and taking the lock HERE — before numbering
- * (5b) and before the journal_entries INSERT whose trigger re-reads the same
+ * (5c) and before the journal_entries INSERT whose trigger re-reads the same
  * row FOR SHARE — is what makes the registered order true: period, then
  * counter, then the terminal audit lock. A close (FOR UPDATE) of this period
  * waits for this transaction; the status returned cannot go stale before the
@@ -212,274 +221,4 @@ export async function findPeriodById(
     .where('id', '=', periodId)
     .executeTakeFirst()
   return row ? mapRow(row) : null
-}
-
-/**
- * Lock EVERY period of the tenant, `FOR UPDATE`, in ascending period_start
- * order, before any transition (LOCK_REGISTRY.md, "fiscal_periods
- * transitions"). Without this, migration 011's trigger locks siblings
- * FOR SHARE in directions that differ by transition — close P2 holds P2 and
- * wants P1, while reopen P1 holds P1 and wants P2 — a 40P01 cycle. One
- * ascending pass makes period transitions of a tenant strictly serial;
- * they are rare, human-initiated operations, and the calendar is 12 rows a
- * year. A posting's FOR SHARE on one period conflicts with this for the
- * duration of that posting only.
- */
-async function lockTenantCalendar(tx: TenantTx, tenantId: string): Promise<void> {
-  await tx
-    .selectFrom('fiscal_periods')
-    .select('id')
-    .where('tenant_id', '=', tenantId)
-    .orderBy('period_start')
-    .forUpdate()
-    .execute()
-}
-
-/**
- * Close `periodId`. Row-locked (`FOR UPDATE`) so no posting can commit into
- * it between the check and the transition (periods.md §7, ADR-0012) — the
- * lock this function takes is what `journal_entries_enforce_open_period`'s
- * `FOR SHARE` (migration 012) blocks against.
- *
- * The order check (every earlier period CLOSED or LOCKED) is restated here
- * for a clean, typed rejection before the UPDATE; migration 011's transition
- * trigger is the database's own backstop if this is ever bypassed.
- */
-export async function closePeriod(
-  tx: TenantTx,
-  tenantId: string,
-  periodId: string,
-  expectedVersion: number,
-  actorUserId: string,
-): Promise<FiscalPeriodRow> {
-  assertIssuedTenantTx(tx)
-  await lockTenantCalendar(tx, tenantId)
-
-  const current = await tx
-    .selectFrom('fiscal_periods')
-    .selectAll()
-    .where('tenant_id', '=', tenantId)
-    .where('id', '=', periodId)
-    .forUpdate()
-    .executeTakeFirst()
-  if (!current) throw new PeriodNotFoundError(periodId)
-  if (current.status === 'LOCKED') throw new PeriodLockedError(mapRow(current).label)
-  if (current.status === 'CLOSED') throw new PeriodAlreadyClosedError(mapRow(current).label)
-
-  const earlierOpen = await tx
-    .selectFrom('fiscal_periods')
-    .select((eb) => eb.fn.countAll<string>().as('count'))
-    .where('tenant_id', '=', tenantId)
-    .where('period_start', '<', sqlDate(mapRow(current).periodStart))
-    .where('status', '=', 'OPEN')
-    .executeTakeFirstOrThrow()
-  if (Number(earlierOpen.count) > 0) {
-    throw new PeriodCloseOutOfOrderError(current.label)
-  }
-
-  const updated = await tx
-    .updateTable('fiscal_periods')
-    .set({
-      status: 'CLOSED',
-      closed_at: sql`now()`,
-      closed_by: actorUserId,
-      updated_by: actorUserId,
-      version: expectedVersion + 1,
-    })
-    .where('tenant_id', '=', tenantId)
-    .where('id', '=', periodId)
-    .where('version', '=', expectedVersion)
-    .returningAll()
-    .executeTakeFirst()
-  if (!updated) throw new PeriodConcurrentModificationError(periodId)
-
-  await recordAudit(tx, {
-    actorUserId,
-    action: 'PERIOD_CLOSED',
-    entityType: 'fiscal_periods',
-    entityId: periodId,
-    beforeJson: { status: 'OPEN' },
-    afterJson: { status: 'CLOSED' },
-    ip: null,
-    requestId: null,
-  })
-
-  return mapRow(updated)
-}
-
-export async function reopenPeriod(
-  tx: TenantTx,
-  tenantId: string,
-  periodId: string,
-  expectedVersion: number,
-  actorUserId: string,
-  reason: string,
-): Promise<FiscalPeriodRow> {
-  assertIssuedTenantTx(tx)
-  await lockTenantCalendar(tx, tenantId)
-
-  const current = await tx
-    .selectFrom('fiscal_periods')
-    .selectAll()
-    .where('tenant_id', '=', tenantId)
-    .where('id', '=', periodId)
-    .forUpdate()
-    .executeTakeFirst()
-  if (!current) throw new PeriodNotFoundError(periodId)
-  if (current.status === 'LOCKED') throw new PeriodLockedError(mapRow(current).label)
-  if (current.status === 'OPEN') throw new PeriodNotClosedError(mapRow(current).label)
-
-  const laterActive = await tx
-    .selectFrom('fiscal_periods')
-    .select((eb) => eb.fn.countAll<string>().as('count'))
-    .where('tenant_id', '=', tenantId)
-    .where('period_start', '>', sqlDate(mapRow(current).periodStart))
-    .where('status', 'in', ['CLOSED', 'LOCKED'])
-    .executeTakeFirstOrThrow()
-  if (Number(laterActive.count) > 0) {
-    throw new PeriodReopenOutOfOrderError(current.label)
-  }
-
-  const updated = await tx
-    .updateTable('fiscal_periods')
-    .set({
-      status: 'OPEN',
-      closed_at: null,
-      closed_by: null,
-      reopened_at: sql`now()`,
-      reopened_by: actorUserId,
-      reopen_reason: reason,
-      updated_by: actorUserId,
-      version: expectedVersion + 1,
-    })
-    .where('tenant_id', '=', tenantId)
-    .where('id', '=', periodId)
-    .where('version', '=', expectedVersion)
-    .returningAll()
-    .executeTakeFirst()
-  if (!updated) throw new PeriodConcurrentModificationError(periodId)
-
-  await recordAudit(tx, {
-    actorUserId,
-    action: 'PERIOD_REOPENED',
-    entityType: 'fiscal_periods',
-    entityId: periodId,
-    beforeJson: { status: 'CLOSED' },
-    afterJson: { status: 'OPEN', reason },
-    ip: null,
-    requestId: null,
-  })
-
-  return mapRow(updated)
-}
-
-export async function lockPeriod(
-  tx: TenantTx,
-  tenantId: string,
-  periodId: string,
-  expectedVersion: number,
-  actorUserId: string,
-): Promise<FiscalPeriodRow> {
-  assertIssuedTenantTx(tx)
-  await lockTenantCalendar(tx, tenantId)
-
-  const current = await tx
-    .selectFrom('fiscal_periods')
-    .selectAll()
-    .where('tenant_id', '=', tenantId)
-    .where('id', '=', periodId)
-    .forUpdate()
-    .executeTakeFirst()
-  if (!current) throw new PeriodNotFoundError(periodId)
-  if (current.status === 'LOCKED') throw new PeriodLockedError(mapRow(current).label)
-  if (current.status !== 'CLOSED') throw new PeriodNotClosedError(mapRow(current).label)
-
-  const earlierUnlocked = await tx
-    .selectFrom('fiscal_periods')
-    .select((eb) => eb.fn.countAll<string>().as('count'))
-    .where('tenant_id', '=', tenantId)
-    .where('period_start', '<', sqlDate(mapRow(current).periodStart))
-    .where('status', '<>', 'LOCKED')
-    .executeTakeFirstOrThrow()
-  if (Number(earlierUnlocked.count) > 0) {
-    throw new PeriodLockOutOfOrderError(current.label)
-  }
-
-  const updated = await tx
-    .updateTable('fiscal_periods')
-    .set({
-      status: 'LOCKED',
-      locked_at: sql`now()`,
-      locked_by: actorUserId,
-      updated_by: actorUserId,
-      version: expectedVersion + 1,
-    })
-    .where('tenant_id', '=', tenantId)
-    .where('id', '=', periodId)
-    .where('version', '=', expectedVersion)
-    .returningAll()
-    .executeTakeFirst()
-  if (!updated) throw new PeriodConcurrentModificationError(periodId)
-
-  await recordAudit(tx, {
-    actorUserId,
-    action: 'PERIOD_LOCKED',
-    entityType: 'fiscal_periods',
-    entityId: periodId,
-    beforeJson: { status: 'CLOSED' },
-    afterJson: { status: 'LOCKED' },
-    ip: null,
-    requestId: null,
-  })
-
-  return mapRow(updated)
-}
-
-export class PeriodNotFoundError extends Error {
-  constructor(periodId: string) {
-    super(`PERIOD_NOT_FOUND: ${periodId}`)
-    this.name = 'PeriodNotFoundError'
-  }
-}
-export class PeriodLockedError extends Error {
-  constructor(label: string) {
-    super(`PERIOD_LOCKED: ${label}`)
-    this.name = 'PeriodLockedError'
-  }
-}
-export class PeriodAlreadyClosedError extends Error {
-  constructor(label: string) {
-    super(`PERIOD_ALREADY_CLOSED: ${label}`)
-    this.name = 'PeriodAlreadyClosedError'
-  }
-}
-export class PeriodNotClosedError extends Error {
-  constructor(label: string) {
-    super(`PERIOD_NOT_CLOSED: ${label}`)
-    this.name = 'PeriodNotClosedError'
-  }
-}
-export class PeriodCloseOutOfOrderError extends Error {
-  constructor(label: string) {
-    super(`PERIOD_CLOSE_OUT_OF_ORDER: ${label}`)
-    this.name = 'PeriodCloseOutOfOrderError'
-  }
-}
-export class PeriodReopenOutOfOrderError extends Error {
-  constructor(label: string) {
-    super(`PERIOD_REOPEN_OUT_OF_ORDER: ${label}`)
-    this.name = 'PeriodReopenOutOfOrderError'
-  }
-}
-export class PeriodLockOutOfOrderError extends Error {
-  constructor(label: string) {
-    super(`PERIOD_LOCK_OUT_OF_ORDER: ${label}`)
-    this.name = 'PeriodLockOutOfOrderError'
-  }
-}
-export class PeriodConcurrentModificationError extends Error {
-  constructor(periodId: string) {
-    super(`fiscal_periods ${periodId} was modified concurrently — re-read and retry.`)
-    this.name = 'PeriodConcurrentModificationError'
-  }
 }

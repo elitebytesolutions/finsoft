@@ -300,12 +300,12 @@ describe('packages/accounting-kernel: query bodies only in src/queries/** (ADR-0
            await tx.insertInto('journal_lines').values({}).execute()
            await tx.updateTable('journal_entries').set({}).execute()
            await tx.insertInto('parties').values({}).execute()
-           await sql\`SAVEPOINT s\`.execute(tx)
          }`,
     )
     expect(matching(messages, KERNEL_LOGIC)).toEqual([])
     expect(matching(messages, JOURNAL)).toEqual([])
     expect(matching(messages, PARTIES)).toEqual([])
+    expect(matching(messages, TX_CONTROL)).toEqual([])
   })
 
   it('still bans auth_lookup in the kernel (a later block must restate it, not drop it)', async () => {
@@ -322,6 +322,135 @@ describe('packages/accounting-kernel: query bodies only in src/queries/** (ADR-0
       `export function w(tx: any) { return tx.selectFrom('journal_entries') }`,
     )
     expect(matching(messages, KERNEL_LOGIC)).toEqual([])
+  })
+})
+
+const TX_CONTROL = 'ADR-0027 (K1): packages/accounting-kernel issues no transaction control'
+const JOURNAL_WRITES = 'packages/accounting-kernel/src/queries/journal-writes.ts'
+
+describe('packages/accounting-kernel issues no transaction control but the numbering savepoint (ADR-0027, K1)', () => {
+  /*
+   * The kernel runs inside the caller's transaction. ADR-0027 sanctions one
+   * savepoint, by one name, in one file, as three whole statements. Every
+   * other transaction-control statement anywhere in the kernel — including a
+   * differently-named savepoint in that same file — must fail the build.
+   */
+  const inQueries = (statement: string) =>
+    "import { sql } from 'kysely'\n" +
+    `export async function w(tx: any) { await sql\`${statement}\`.execute(tx) }`
+
+  it.each([
+    'SAVEPOINT finsoft_posting_number',
+    'RELEASE SAVEPOINT finsoft_posting_number',
+    'ROLLBACK TO SAVEPOINT finsoft_posting_number',
+  ])('allows exactly `%s` in journal-writes.ts', async (statement) => {
+    const messages = await messagesFor(JOURNAL_WRITES, inQueries(statement))
+    expect(matching(messages, TX_CONTROL)).toEqual([])
+  })
+
+  it.each([
+    // The case that used to pass as a "leave src/queries alone" fixture.
+    ['a savepoint named s', 'SAVEPOINT s'],
+    ['a near-miss name', 'SAVEPOINT finsoft_posting_number_2'],
+    ['RELEASE of another savepoint', 'RELEASE SAVEPOINT s'],
+    ['ROLLBACK TO another savepoint', 'ROLLBACK TO SAVEPOINT s'],
+    ['a second statement appended', 'RELEASE SAVEPOINT finsoft_posting_number; COMMIT'],
+    ['a bare ROLLBACK', 'ROLLBACK'],
+    ['COMMIT', 'COMMIT'],
+    ['BEGIN', 'BEGIN'],
+    ['SET TRANSACTION', 'SET TRANSACTION ISOLATION LEVEL SERIALIZABLE'],
+  ])('rejects %s even inside journal-writes.ts', async (_label, statement) => {
+    const messages = await messagesFor(JOURNAL_WRITES, inQueries(statement))
+    expect(matching(messages, TX_CONTROL)).toHaveLength(1)
+  })
+
+  it('rejects a dynamically named savepoint in journal-writes.ts', async () => {
+    const messages = await messagesFor(
+      JOURNAL_WRITES,
+      "import { sql } from 'kysely'\n" +
+        'export async function w(tx: any, n: string) { await sql`SAVEPOINT ${sql.id(n)}`.execute(tx) }',
+    )
+    expect(matching(messages, TX_CONTROL)).toHaveLength(1)
+  })
+
+  it.each([
+    [
+      'ROLLBACK in another queries file',
+      'packages/accounting-kernel/src/queries/periods.ts',
+      'ROLLBACK',
+    ],
+    [
+      'COMMIT in another queries file',
+      'packages/accounting-kernel/src/queries/parties.ts',
+      'COMMIT',
+    ],
+    [
+      'the ALLOWED statement, outside journal-writes.ts',
+      'packages/accounting-kernel/src/queries/periods.ts',
+      'ROLLBACK TO SAVEPOINT finsoft_posting_number',
+    ],
+    [
+      'START TRANSACTION in a new queries file',
+      'packages/accounting-kernel/src/queries/anything.ts',
+      'START TRANSACTION',
+    ],
+  ])('rejects %s', async (_label, file, statement) => {
+    const messages = await messagesFor(file, inQueries(statement))
+    expect(matching(messages, TX_CONTROL)).toHaveLength(1)
+  })
+
+  it.each([
+    [
+      'ROLLBACK via sql.raw in the reversal engine',
+      'packages/accounting-kernel/src/reversal.ts',
+      `import { sql } from 'kysely'\nexport const r = (tx: any) => sql.raw('ROLLBACK').execute(tx)`,
+    ],
+    [
+      'COMMIT via a raw compiled query in the posting engine',
+      'packages/accounting-kernel/src/posting-engine.ts',
+      `export const c = (tx: any, q: any) => tx.executeQuery(q.raw('COMMIT'))`,
+    ],
+    [
+      'Kysely savepoint() in a rule',
+      'packages/accounting-kernel/src/rules/journal-voucher.ts',
+      `export const s = (trx: any) => trx.savepoint('sp').execute()`,
+    ],
+    [
+      'Kysely commit() in the period engine',
+      'packages/accounting-kernel/src/periods.ts',
+      `export const c = (trx: any) => trx.commit().execute()`,
+    ],
+    [
+      'Kysely rollbackToSavepoint() in a queries file',
+      'packages/accounting-kernel/src/queries/journal-writes.ts',
+      `export const r = (trx: any) => trx.rollbackToSavepoint('finsoft_posting_number').execute()`,
+    ],
+  ])('rejects %s', async (_label, file, code) => {
+    const messages = await messagesFor(file, code)
+    expect(matching(messages, TX_CONTROL)).toHaveLength(1)
+  })
+
+  it('does not fire on prose or on a CASE ... END inside a query', async () => {
+    const messages = await messagesFor(
+      'packages/accounting-kernel/src/queries/periods.ts',
+      "import { sql } from 'kysely'\n" +
+        `export const m = 'does not balance at commit; rollback happens in the caller'
+         export const q = (tx: any, x: string) => sql\`SELECT CASE WHEN a THEN \${x}
+           END AS b FROM t\`.execute(tx)`,
+    )
+    expect(matching(messages, TX_CONTROL)).toEqual([])
+  })
+
+  it('leaves the real journal-writes.ts and the rest of the kernel clean', async () => {
+    const results = await eslint.lintFiles(['packages/accounting-kernel/src/**/*.ts'])
+    const hits = results.flatMap((r) =>
+      r.messages
+        .filter((m) => m.message.includes(TX_CONTROL))
+        .map((m) => `${r.filePath}:${m.line}`),
+    )
+    expect(hits).toEqual([])
+    const jw = results.find((r) => r.filePath.replace(/\\/g, '/').endsWith(JOURNAL_WRITES))
+    expect(jw, 'journal-writes.ts was linted').toBeDefined()
   })
 })
 
