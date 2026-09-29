@@ -161,8 +161,27 @@ const iconMap: Record<string, LucideIcon> = {
  * functionality") and gets the persistent prototype banner below. As real
  * screens land they are added here, one line each — nothing else about the
  * banner changes.
+ *
+ * An entry ending in `/*` matches that path AND any dynamic sub-path
+ * (`/vouchers/*` covers `/vouchers/new` and `/vouchers/:id` alike) — added
+ * for M2-S, since API_BACKED_ROUTES was exact-match-only while every route it
+ * held was a leaf. Everything else is still an exact match.
  */
-const API_BACKED_ROUTES: string[] = []
+const API_BACKED_ROUTES: string[] = [
+  '/accounts',
+  '/ledgers',
+  '/cash-book',
+  '/trial-balance',
+  '/vouchers',
+  '/vouchers/*',
+  '/period-close',
+]
+
+function isApiBackedRoute(path: string): boolean {
+  return API_BACKED_ROUTES.some((entry) =>
+    entry.endsWith('/*') ? path.startsWith(entry.slice(0, -1)) : path === entry,
+  )
+}
 
 const chevCls = (open: boolean) => 'chev ' + (open ? 'down' : '')
 function renderNodes(
@@ -234,7 +253,7 @@ export function Shell({
     navigate = useNavigate()
   const path = pathname.split('?')[0]
   const { user, tenant, signOut } = useAuth()
-  const isApiBacked = API_BACKED_ROUTES.includes(path)
+  const isApiBacked = isApiBackedRoute(path)
   const [collapsed, setCollapsed] = useState(false),
     [mobileOpen, setMobileOpen] = useState(false),
     [global, setGlobal] = useState(''),

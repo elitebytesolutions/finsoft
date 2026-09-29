@@ -11,6 +11,9 @@
     "./kit.css": "./src/styles/kit.css",
     "./employee-wizard.css": "./src/styles/employee-wizard.css"
   },
+  "dependencies": {
+    "@finsoft/validation": "*"
+  },
   "peerDependencies": {
     "react": "^19",
     "react-dom": "^19",

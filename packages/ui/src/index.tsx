@@ -16,4 +16,4 @@ export {
   Banner,
 } from './components'
 export type { FormEvent } from './components'
-export { money, movementTone } from './format'
+export { money, moneyFromString, movementTone, type MoneyFromStringOptions } from './format'
