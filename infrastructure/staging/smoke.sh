@@ -66,14 +66,29 @@ echo "  no internal detail in the public body"
 #    rather than assuming it.
 # ---------------------------------------------------------------------------
 HOSTONLY=${BASE#http://}
+HOSTONLY=${HOSTONLY#https://}
 HOSTONLY=${HOSTONLY%%/*}
 HOSTONLY=${HOSTONLY%%:*}
 for PORT in 5432 6379 3001 3002; do
   if timeout 3 bash -c "</dev/tcp/$HOSTONLY/$PORT" 2>/dev/null; then
-    fail "port $PORT is reachable from the internet; only 80 may be"
+    fail "port $PORT is reachable from the internet; only 80 and 443 may be"
   fi
 done
 echo "  5432, 6379, 3001, 3002 all closed from outside"
+
+# ---------------------------------------------------------------------------
+# 4b. Plain HTTP redirects to HTTPS. Only meaningful once BASE is itself an
+#    https:// URL — PRD §6.1 requires staging over HTTPS, and a browser that
+#    is ever handed a plain http:// link to this host must land on a secure
+#    origin regardless.
+# ---------------------------------------------------------------------------
+if [ "${BASE#https://}" != "$BASE" ]; then
+  REDIRECT_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://$HOSTONLY/" || echo 000)
+  case "$REDIRECT_CODE" in
+    301 | 302 | 307 | 308) echo "  http://$HOSTONLY/ redirects ($REDIRECT_CODE) to HTTPS" ;;
+    *) fail "http://$HOSTONLY/ returned $REDIRECT_CODE, not a redirect to HTTPS" ;;
+  esac
+fi
 
 # ---------------------------------------------------------------------------
 # 5. A real application request through the proxy.
@@ -115,11 +130,12 @@ echo "$BODY" | grep -qi 'localhost:3001\|127.0.0.1:3001' &&
 #    arrangement ADR-0009's SameSite=Strict refresh cookie requires, and it is
 #    the part a browser would exercise.
 #
-#    What this does NOT prove, and must not be read as proving: that the web
-#    application CALLS the API. It does not. apps/web is currently driven
-#    entirely by @/mocks/api and issues no requests to /api/* at all, so there
-#    is no Next→proxy→API request path in existence to test. When the first
-#    real call lands, the test for it belongs here.
+#    What this does NOT prove: that a real login round-trip through the proxy
+#    behaves like the same journey does in tests/e2e/real-login.spec.ts (the
+#    one place that is exercised, against a spawned API and a real database).
+#    apps/web's login screen (apps/web/src/lib/api/client.ts) DOES call
+#    /api/auth/* now — this step only proves the proxy still answers on /api,
+#    not any particular request shape or cookie behaviour.
 # ---------------------------------------------------------------------------
 API_FROM_WEB_ORIGIN=$(curl -fsS --max-time 10 "$BASE/api/health/ready") ||
   fail "/api/health/ready is not reachable from the web origin — the proxy is not routing /api"

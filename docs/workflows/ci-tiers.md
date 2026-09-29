@@ -59,6 +59,44 @@ changed: a push to `develop`, a push to `release/*`, `workflow_dispatch`, and
 the nightly `schedule` (`0 21 * * *` UTC = 02:00 PKT). This is also when
 `deploy-staging` can run and when container images are published.
 
+## Staging address: `STAGING_URL` vs `STAGING_HOST`
+
+`deploy-staging` uses two different repo variables for two different purposes, and they are not
+interchangeable:
+
+- `vars.STAGING_HOST` — a bare host/IP, e.g. `31.220.74.159`. Used only to SSH in
+  (`$SSH_USER@$HOST`) and to `scp` configuration to the box. This is a transport address, not
+  something a browser or `curl` should ever be pointed at.
+- `vars.STAGING_URL` — the full public base URL a browser uses, e.g.
+  `https://31-220-74-159.sslip.io`. **Mandatory** from this merge onward. Used by the `smoke` step
+  and the `browser against the deployed origin` step as the one and only base URL.
+
+`vars.STAGING_URL` is mandatory, with **no fallback to `http://$STAGING_HOST`**, because that
+fallback does not degrade gracefully — it silently tests nothing. `infrastructure/staging/Caddyfile`
+has exactly one site block, addressed by the hostname `31-220-74-159.sslip.io`; Caddy dispatches by
+Host header, not by which socket the connection landed on. A request with `Host: 31.220.74.159`
+(what `http://$STAGING_HOST` sends) matches no site block Caddy owns for the app, so the old
+fallback was smoke-testing a dead end, not staging. (It now gets a real answer — the bare-IP
+catch-all documented below — but that answer is a redirect, not a running app, so it still cannot
+serve as the smoke/E2E base.) If `vars.STAGING_URL` is unset, `deploy-staging`'s `smoke` and
+`browser against the deployed origin` steps fail fast with `::error::` rather than pass while
+silently exercising nothing.
+
+### Cut-over checklist (one-time, before the first deploy under this rule)
+
+1. Set the repo variable: Settings → Secrets and variables → Actions → Variables →
+   `STAGING_URL` = `https://31-220-74-159.sslip.io`.
+2. On the staging host, open the HTTPS port: `sudo ufw allow 443/tcp`.
+3. Merge to `develop` (or dispatch the workflow) so `deploy-staging` ships the updated
+   `infrastructure/staging/Caddyfile`, which now also serves a bare-IP catch-all on `:80` that
+   redirects `http://31.220.74.159/...` to `https://31-220-74-159.sslip.io/...`.
+4. Verify by hand:
+   - `curl -sI https://31-220-74-159.sslip.io/api/health` returns `HTTP/2 200`.
+   - `curl -sI http://31-220-74-159.sslip.io/` returns a `30x` to the `https://` origin (Caddy's
+     automatic HTTP→HTTPS redirect for the named site).
+   - `curl -sI http://31.220.74.159/` returns a `301` to `https://31-220-74-159.sslip.io/` (the
+     bare-IP catch-all).
+
 ## Images
 
 Each of `api`, `worker`, `web` is rebuilt only when its own paths (or a

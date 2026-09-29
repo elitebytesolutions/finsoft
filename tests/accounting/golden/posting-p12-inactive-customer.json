@@ -1,0 +1,330 @@
+{
+  "id": "P12",
+  "format": "posting-scenario/v1",
+  "name": "An inactive customer cannot be invoiced but is paid in full against its open invoice",
+  "rules": ["CUSTOMER_PAYMENT_RECEIVED@1", "SALE_POSTED/service@1", "REPORT/trial-balance@1"],
+  "source": "docs/posting-rules/customer-receipt.md",
+  "governedBy": [
+    "ADR-0005",
+    "customer-receipt.md ruling R-2 (Accounting seat, 2026-09-28)",
+    "service-sale.md §4 row 7 and §11"
+  ],
+  "executableFrom": "M3",
+  "status": "Specified, hand-computed by the Accounting seat, 2026-09-28 (M3-000c). Not yet executed: needs customers, invoices and receipts (M3).",
+  "description": [
+    "Today is 2026-09-27 (Asia/Karachi). All FY2027 periods OPEN.",
+    "",
+    "Ruling R-2: 'inactive' stops new receivables; it never stops settling existing ones.",
+    "",
+    "Step 1 posts INV-A1, 2026-09-15, 10000.0000 to CUST-A (the P04 invoice).",
+    "  JE-2027-000001  Dr 1200 [CUST-A] 10000.0000 / Cr 4200 10000.0000",
+    "Step 2 deactivates CUST-A. Master data only: no entry.",
+    "Step 3 tries to post a new invoice INV-A2 (1 × 500.000000 = 500.0000) to CUST-A: CUSTOMER_INACTIVE.",
+    "  Nothing written, no INV number consumed.",
+    "Step 4 posts a bank receipt of 6000.0000 from the inactive CUST-A against INV-A1:",
+    "  JE-2027-000002  2026-09-20  Dr 1120 6000.0000 / Cr 1200 [CUST-A] 6000.0000   RCT-2027-000001",
+    "Step 5 posts a cash receipt of the remaining 4000.0000:",
+    "  JE-2027-000003  2026-09-25  Dr 1110 4000.0000 / Cr 1200 [CUST-A] 4000.0000   RCT-2027-000002",
+    "  INV-A1 outstanding = 10000.0000 − 6000.0000 − 4000.0000 = 0.0000",
+    "",
+    "Step 6, by hand, TB as of 2026-09-27:",
+    "  1110  +4000.0000                              = 4000.0000 Dr",
+    "  1120  +6000.0000                              = 6000.0000 Dr",
+    "  1200  +10000.0000 − 6000.0000 − 4000.0000     = 0.0000 (row kept: it has activity)",
+    "  4200  10000.0000 Cr",
+    "  Σ Dr 4000.0000 + 6000.0000 = 10000.0000 = Σ Cr 10000.0000",
+    "  CUST-A ledger running balance 10000.0000, 4000.0000, 0.0000.",
+    "  Invariant 9: GL 0.0000; subledger 10000.0000 − 6000.0000 − 4000.0000 = 0.0000.",
+    "",
+    "Steps 7–8 reactivate CUST-A and post INV-A2 again. It takes INV-2027-000002 and JE-2027-000004,",
+    "which proves step 3's rejection consumed no number:",
+    "  JE-2027-000004  2026-09-22  Dr 1200 [CUST-A] 500.0000 / Cr 4200 500.0000",
+    "Step 9, TB as of 2026-09-27: 1110 4000.0000 Dr; 1120 6000.0000 Dr; 1200 500.0000 Dr;",
+    "  4200 10000.0000 + 500.0000 = 10500.0000 Cr. Σ Dr 4000.0000 + 6000.0000 + 500.0000 = 10500.0000 = Σ Cr."
+  ],
+  "fixture": {
+    "coa": "standard-v1",
+    "timezone": "Asia/Karachi",
+    "fiscalYearStartMonth": 7,
+    "today": "2026-09-27",
+    "periods": { "fiscalYear": 2027, "status": "all OPEN" },
+    "tenants": ["GOLDEN_A"],
+    "customers": [{ "ref": "CUST-A", "tenant": "GOLDEN_A", "status": "ACTIVE" }],
+    "draftInvoices": ["INV-A1", "INV-A2"],
+    "draftReceipts": ["RCT-A1", "RCT-A2"]
+  },
+  "steps": [
+    {
+      "step": 1,
+      "do": "post",
+      "event": "SALE_POSTED",
+      "referenceType": "sales_invoice",
+      "referenceId": "INV-A1",
+      "idempotencyKey": "p12-inv-1",
+      "occurredAt": "2026-09-15",
+      "payload": {
+        "settlement": "CREDIT",
+        "customer": "CUST-A",
+        "lines": [
+          {
+            "kind": "SERVICE",
+            "description": "Monthly maintenance",
+            "quantity": "1.000000",
+            "unitPrice": "7500.000000",
+            "lineNet": "7500.0000"
+          },
+          {
+            "kind": "SERVICE",
+            "description": "Site visit",
+            "quantity": "3.000000",
+            "unitPrice": "833.333333",
+            "lineNet": "2500.0000"
+          }
+        ],
+        "netAmount": "10000.0000"
+      },
+      "expect": {
+        "outcome": "POSTED",
+        "entryNumber": "JE-2027-000001",
+        "documentNumber": "INV-2027-000001",
+        "entriesAfter": 1
+      }
+    },
+    {
+      "step": 2,
+      "do": "customer",
+      "customer": "CUST-A",
+      "action": "deactivate",
+      "expect": {
+        "outcome": "TRANSITIONED",
+        "customerStatus": "INACTIVE",
+        "journalEntriesWritten": 0,
+        "entriesAfter": 1
+      }
+    },
+    {
+      "step": 3,
+      "do": "post",
+      "event": "SALE_POSTED",
+      "referenceType": "sales_invoice",
+      "referenceId": "INV-A2",
+      "idempotencyKey": "p12-inv-2a",
+      "occurredAt": "2026-09-22",
+      "payload": {
+        "settlement": "CREDIT",
+        "customer": "CUST-A",
+        "lines": [
+          {
+            "kind": "SERVICE",
+            "description": "Call-out charge",
+            "quantity": "1.000000",
+            "unitPrice": "500.000000",
+            "lineNet": "500.0000"
+          }
+        ],
+        "netAmount": "500.0000"
+      },
+      "expect": {
+        "outcome": "REJECTED",
+        "error": "CUSTOMER_INACTIVE",
+        "documentStatus": "DRAFT",
+        "documentNumber": null,
+        "entriesAfter": 1
+      }
+    },
+    {
+      "step": 4,
+      "do": "post",
+      "event": "CUSTOMER_PAYMENT_RECEIVED",
+      "referenceType": "customer_receipt",
+      "referenceId": "RCT-A1",
+      "idempotencyKey": "p12-rct-1",
+      "occurredAt": "2026-09-20",
+      "$comment": "Ruling R-2: an inactive customer can be paid. Not CUSTOMER_INACTIVE.",
+      "payload": {
+        "customer": "CUST-A",
+        "method": "BANK",
+        "amount": "6000.0000",
+        "allocations": [{ "invoice": "INV-A1", "amount": "6000.0000" }]
+      },
+      "expect": {
+        "outcome": "POSTED",
+        "entryNumber": "JE-2027-000002",
+        "documentNumber": "RCT-2027-000001",
+        "documentStatus": "POSTED",
+        "period": "2026-09",
+        "postingRule": "CUSTOMER_PAYMENT_RECEIVED@1",
+        "lines": [
+          { "account": "1120", "debit": "6000.0000", "credit": "0.0000" },
+          { "account": "1200", "party": "CUST-A", "debit": "0.0000", "credit": "6000.0000" }
+        ],
+        "totals": { "debit": "6000.0000", "credit": "6000.0000" },
+        "allocations": [{ "invoice": "INV-A1", "amount": "6000.0000", "status": "LIVE" }],
+        "entriesAfter": 2
+      }
+    },
+    {
+      "step": 5,
+      "do": "post",
+      "event": "CUSTOMER_PAYMENT_RECEIVED",
+      "referenceType": "customer_receipt",
+      "referenceId": "RCT-A2",
+      "idempotencyKey": "p12-rct-2",
+      "occurredAt": "2026-09-25",
+      "payload": {
+        "customer": "CUST-A",
+        "method": "CASH",
+        "amount": "4000.0000",
+        "allocations": [{ "invoice": "INV-A1", "amount": "4000.0000" }]
+      },
+      "expect": {
+        "outcome": "POSTED",
+        "entryNumber": "JE-2027-000003",
+        "documentNumber": "RCT-2027-000002",
+        "documentStatus": "POSTED",
+        "period": "2026-09",
+        "postingRule": "CUSTOMER_PAYMENT_RECEIVED@1",
+        "lines": [
+          { "account": "1110", "debit": "4000.0000", "credit": "0.0000" },
+          { "account": "1200", "party": "CUST-A", "debit": "0.0000", "credit": "4000.0000" }
+        ],
+        "totals": { "debit": "4000.0000", "credit": "4000.0000" },
+        "allocations": [{ "invoice": "INV-A1", "amount": "4000.0000", "status": "LIVE" }],
+        "entriesAfter": 3
+      }
+    },
+    {
+      "step": 6,
+      "do": "assert",
+      "trialBalance": {
+        "asOf": "2026-09-27",
+        "rows": [
+          { "account": "1110", "debit": "4000.0000", "credit": "0.0000" },
+          { "account": "1120", "debit": "6000.0000", "credit": "0.0000" },
+          { "account": "1200", "debit": "0.0000", "credit": "0.0000" },
+          { "account": "4200", "debit": "0.0000", "credit": "10000.0000" }
+        ],
+        "totals": { "debit": "10000.0000", "credit": "10000.0000" }
+      },
+      "customerLedger": {
+        "customer": "CUST-A",
+        "from": "2026-07-01",
+        "to": "2026-09-27",
+        "openingBalance": "0.0000",
+        "lines": [
+          {
+            "entryNumber": "JE-2027-000001",
+            "document": "INV-2027-000001",
+            "date": "2026-09-15",
+            "debit": "10000.0000",
+            "credit": "0.0000",
+            "runningBalance": "10000.0000"
+          },
+          {
+            "entryNumber": "JE-2027-000002",
+            "document": "RCT-2027-000001",
+            "date": "2026-09-20",
+            "debit": "0.0000",
+            "credit": "6000.0000",
+            "runningBalance": "4000.0000"
+          },
+          {
+            "entryNumber": "JE-2027-000003",
+            "document": "RCT-2027-000002",
+            "date": "2026-09-25",
+            "debit": "0.0000",
+            "credit": "4000.0000",
+            "runningBalance": "0.0000"
+          }
+        ],
+        "closingBalance": "0.0000"
+      },
+      "invoiceOutstanding": { "INV-A1": "0.0000" },
+      "invariant9": {
+        "customer": "CUST-A",
+        "gl": "0.0000",
+        "subledger": "0.0000",
+        "difference": "0.0000"
+      },
+      "customerStatus": { "CUST-A": "INACTIVE" },
+      "documentNumbersIssued": {
+        "INV": ["INV-2027-000001"],
+        "RCT": ["RCT-2027-000001", "RCT-2027-000002"]
+      },
+      "journalEntryCount": 3,
+      "roundingAccountBalance": "0.0000"
+    },
+    {
+      "step": 7,
+      "do": "customer",
+      "customer": "CUST-A",
+      "action": "reactivate",
+      "expect": {
+        "outcome": "TRANSITIONED",
+        "customerStatus": "ACTIVE",
+        "journalEntriesWritten": 0,
+        "entriesAfter": 3
+      }
+    },
+    {
+      "step": 8,
+      "do": "post",
+      "event": "SALE_POSTED",
+      "referenceType": "sales_invoice",
+      "referenceId": "INV-A2",
+      "idempotencyKey": "p12-inv-2b",
+      "occurredAt": "2026-09-22",
+      "$comment": "The same draft as step 3. INV-2027-000002 proves the rejection in step 3 consumed no number.",
+      "payload": {
+        "settlement": "CREDIT",
+        "customer": "CUST-A",
+        "lines": [
+          {
+            "kind": "SERVICE",
+            "description": "Call-out charge",
+            "quantity": "1.000000",
+            "unitPrice": "500.000000",
+            "lineNet": "500.0000"
+          }
+        ],
+        "netAmount": "500.0000"
+      },
+      "expect": {
+        "outcome": "POSTED",
+        "entryNumber": "JE-2027-000004",
+        "documentNumber": "INV-2027-000002",
+        "period": "2026-09",
+        "postingRule": "SALE_POSTED/service@1",
+        "lines": [
+          { "account": "1200", "party": "CUST-A", "debit": "500.0000", "credit": "0.0000" },
+          { "account": "4200", "debit": "0.0000", "credit": "500.0000" }
+        ],
+        "totals": { "debit": "500.0000", "credit": "500.0000" },
+        "entriesAfter": 4
+      }
+    },
+    {
+      "step": 9,
+      "do": "assert",
+      "trialBalance": {
+        "asOf": "2026-09-27",
+        "rows": [
+          { "account": "1110", "debit": "4000.0000", "credit": "0.0000" },
+          { "account": "1120", "debit": "6000.0000", "credit": "0.0000" },
+          { "account": "1200", "debit": "500.0000", "credit": "0.0000" },
+          { "account": "4200", "debit": "0.0000", "credit": "10500.0000" }
+        ],
+        "totals": { "debit": "10500.0000", "credit": "10500.0000" }
+      },
+      "invoiceOutstanding": { "INV-A1": "0.0000", "INV-A2": "500.0000" },
+      "invariant9": {
+        "customer": "CUST-A",
+        "gl": "500.0000",
+        "subledger": "500.0000",
+        "difference": "0.0000"
+      },
+      "journalEntryCount": 4,
+      "roundingAccountBalance": "0.0000"
+    }
+  ]
+}

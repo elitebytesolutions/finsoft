@@ -41,15 +41,17 @@ belongs in the commit.
 | [P08](posting-p08-idempotent-retry.json) | Three identical requests → one entry; key reuse; source uniqueness | Specified — M2 (JV steps), M3 (invoice steps) |
 | [P09](posting-p09-mvp-journey.json) | The MVP journey across two tenants; trial balance at each checkpoint | Specified — executable from M3; M4 asserts the same figures through the API |
 | [P10](posting-p10-service-line-rounding.json) | A true half-way tie at the service-line boundary: half-up only | Specified — executable from M3 |
+| [P11](posting-p11-receipt-draft-lifecycle.json) | Receipt drafts: no GL, allocation or numbering effect; a draft in a since-closed period rejected, re-dated, posted; a stale proposal rejected at post; draft → cancel | Specified — executable from M3 |
+| [P12](posting-p12-inactive-customer.json) | An inactive customer cannot be invoiced but is paid in full | Specified — executable from M3 |
 
-Eleven of the promised 50–100. The rest arrive with the waves that make them
+Thirteen of the promised 50–100. The rest arrive with the waves that make them
 expressible — there is no value in writing a scenario for a posting engine
 that does not exist, and considerable harm in stubbing one green.
 
 ## Posting scenarios (`posting-scenario/v1`)
 
-P01–P10 were written by the Accounting seat in M2-000, together with the
-rules they pin in [`docs/posting-rules/`](../../../docs/posting-rules/). They
+P01–P10 were written by the Accounting seat in M2-000, and P11–P12 in
+M3-000c (2026-09-28), together with the rules they pin in [`docs/posting-rules/`](../../../docs/posting-rules/). They
 use an **extended format** — steps, rejections, checkpoints — described in
 [`docs/posting-rules/README.md`](../../../docs/posting-rules/README.md) §6,
 because Scenario A's costing shape cannot express a sequence of postings.

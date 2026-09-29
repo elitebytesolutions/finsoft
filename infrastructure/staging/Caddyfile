@@ -1,17 +1,23 @@
 # Staging reverse proxy.
 #
-# A proxy is required here even without TLS, and not as a convenience: the web
+# A proxy is required here regardless of TLS, and not as a convenience: the web
 # app and the API must be SAME-ORIGIN. ADR-0009's refresh cookie is
 # SameSite=Strict, which a cross-origin call from :3000 to :3001 would not
 # send. So the browser sees one origin and `/api/*` is routed behind it,
 # exactly as production does.
 #
-# HTTP only, by decision, for a staging box reached by IP. That has a
-# consequence worth stating rather than leaving implicit: session cookies
-# travel in clear. Nothing involving a real credential should be exercised
-# here until this has a hostname and a certificate.
-
-:80 {
+# HTTPS, on the temporary hostname `31-220-74-159.sslip.io` (PRD §6.1: "Staging
+# over HTTPS ... the real domain later"). sslip.io resolves
+# `<anything>.31-220-74-159.sslip.io` — and the bare form used here —
+# to 31.220.74.159 with no DNS setup of our own; it exists precisely so a box
+# reached by IP can still present a real hostname to Caddy and to Let's
+# Encrypt, which will not issue a certificate for a bare IP address. Caddy's
+# automatic HTTPS then applies to a site block that names a host: it obtains
+# and renews the certificate itself and — because this block is not an
+# explicit `:80` — it ALSO opens :80 on its own and serves the HTTP->HTTPS
+# redirect there, so no separate redirect block is written here to (fail to)
+# keep in sync with this one.
+31-220-74-159.sslip.io {
 	# Caddy's own access log, as JSON, so it lands in the same shape as the
 	# application's structured logs (ADR-0016) rather than as a second format
 	# an aggregator has to be taught.
@@ -43,4 +49,24 @@ The proxy is up. Check /api/health: if that answers, the API is healthy and
 the fault is in the web container alone.
 ` 503
 	}
+}
+
+# Bare-IP catch-all. A request whose Host header is the literal IP
+# (someone typing 31.220.74.159 into a browser, or an old bookmark/link)
+# matches no block above — that block's address is the hostname, and Caddy
+# routes by Host, not by "whatever socket the connection arrived on". Left
+# unhandled, that request would get Caddy's default 421 rather than land
+# anywhere useful.
+#
+# Explicit `http://` and no TLS directives: Caddy does not — and cannot —
+# manage automatic HTTPS for a bare IP address (Let's Encrypt will not issue
+# a certificate for one), so this block only ever answers on :80. It is a
+# distinct site address (`31.220.74.159`, not `31-220-74-159.sslip.io`), so
+# Caddy dispatches it purely by Host header on the same :80 socket the
+# sslip.io block above already opens for its own HTTP->HTTPS redirect and
+# ACME HTTP-01 challenge — those requests arrive with
+# Host: 31-220-74-159.sslip.io and match the more specific block, never this
+# one, so this catch-all cannot shadow or race the certificate issuance.
+http://31.220.74.159 {
+	redir https://31-220-74-159.sslip.io{uri} permanent
 }
