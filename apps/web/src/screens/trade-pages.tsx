@@ -1,20 +1,14 @@
 'use client'
+import { useState, type FormEvent } from 'react'
 import { useNavigate } from '@/lib/router'
-import {
-  ArrowRight,
-  Check,
-  ClipboardCheck,
-  Clock3,
-  FileText,
-  LockKeyhole,
-  TrendingUp,
-  Users,
-  WalletCards,
-} from 'lucide-react'
+import { ArrowRight, ClipboardCheck, Clock3, LockKeyhole, TrendingUp, Users, WalletCards } from 'lucide-react'
 import { employees } from '@/mocks/api'
-import type { AppData } from '@/mocks/api'
-import { Badge, Button, Kpi, PageHead, Panel, Table } from '@finsoft/ui'
+import { Badge, Banner, Button, Field, Kpi, Modal, PageHead, Panel, Table, TextInput } from '@finsoft/ui'
 import { money } from '@finsoft/ui'
+import { useApiQuery } from '@/lib/api/use-api-query'
+import { closePeriod, listPeriods, reopenPeriod } from '@/lib/api/accounting-client'
+import { ApiError } from '@/lib/api/types'
+import type { FiscalPeriodDto } from '@/lib/api/accounting-types'
 
 function FieldSales() {
   const navigate = useNavigate()
@@ -115,104 +109,189 @@ function FieldSales() {
   )
 }
 
-function PeriodClose({ data }: { data: AppData }) {
-  const revenue = data.journals
-    .filter((j) => j.credit === 'Sales Revenue')
-    .reduce((a, j) => a + j.amount, 0)
-  const cogs = data.journals
-    .filter((j) => j.debit === 'Cost of Goods Sold')
-    .reduce((a, j) => a + j.amount, 0)
-  const drafts = data.purchases.filter((p) => p.status === 'Draft')
-  const checks = [
-    ['Journal vouchers balanced', 'All posted entries are double-entry', data.journals.length > 0],
-    ['Bank reconciliation', 'Meezan Bank — 8721 matched for August', false],
-    ['Draft purchase invoices', 'Abbott PUR-2026-0182 is still a draft', drafts.length === 0],
-    ['Date lock', 'Posting window ends 31 Aug 2026', false],
-  ]
+/*
+ * /period-close — M2-S, real API. docs/design-system/pages/period-close/README.md
+ * (superseded API note): GET /api/periods, POST /api/periods/:id/close,
+ * POST /api/periods/:id/reopen. No lock route, no checklist, no revenue/COGS KPIs in M2
+ * (periods.md §7 — deferred).
+ */
+function PeriodClose() {
+  const { state, reload } = useApiQuery(() => listPeriods().then((r) => [...r.periods]), [])
+
   return (
     <>
       <PageHead
         eyebrow="Accounting / Period close"
         title="Period close"
-        description="Lock the fiscal month for posting — a pre-close checklist mirrors the legacy DATASECURE date lock."
-        actions={
-          <Button>
-            <LockKeyhole /> Close August 2026
-          </Button>
-        }
+        description="Lock a fiscal month for posting. Correcting a closed period is by reversal, in an open period — never by reopening it lightly."
       />
-      <div className="kpi-grid">
-        <Kpi
-          label="Period revenue"
-          value={money(revenue)}
-          change="Sales revenue posted"
-          icon={TrendingUp}
-        />
-        <Kpi
-          label="Cost of sales"
-          value={money(cogs)}
-          change="COGS vouchers posted"
-          icon={WalletCards}
-          tone="teal"
-        />
-        <Kpi
-          label="Net surplus"
-          value={money(revenue - cogs)}
-          change="August 2026 · pre-close"
-          icon={Clock3}
-          tone="blue"
-        />
-        <Kpi
-          label="Open drafts"
-          value={String(drafts.length)}
-          change="Must post or cancel"
-          icon={FileText}
-          tone="yellow"
-        />
-      </div>
-      <div className="doc-grid">
-        <Panel title="Pre-close checklist" sub="Run before locking the period">
-          <div className="period-checks">
-            {checks.map(([name, desc, ok]) => (
-              <div key={String(name)}>
-                <span className={ok ? 'ok' : ''}>{ok ? <Check /> : <Clock3 />}</span>
-                <div>
-                  <b>{name}</b>
-                  <p>{desc}</p>
-                </div>
-                <Badge tone={ok ? 'good' : 'warn'}>{ok ? 'Ready' : 'Review'}</Badge>
-              </div>
-            ))}
-          </div>
-        </Panel>
-        <Panel title="Fiscal periods" sub="Closed periods are locked for posting">
-          <Table
-            headers={['Period', 'Opened', 'Status', 'Closed by']}
-            rows={[
-              ['FY 2026-27', '01 Jul 2026', <Badge tone="good">Open</Badge>, '—'],
-              ['FY 2025-26', '01 Jul 2025', <Badge>Closed</Badge>, 'Ahmed Raza'],
-              ['FY 2024-25', '01 Jul 2024', <Badge>Closed</Badge>, 'Ahmed Raza'],
-            ]}
-          />
-        </Panel>
-      </div>
-      <Panel title="What happens at close" sub="Mirrors the legacy posting controls">
-        <div className="summary-strip">
+
+      {state.status === 'loading' && (
+        <div className="state-page" role="status" aria-live="polite">
           <span>
-            Posting<b>Locked for August 2026</b>
+            <Clock3 />
           </span>
-          <span>
-            Vouchers<b>New period numbering</b>
-          </span>
-          <span>
-            Ledgers<b>Opening balances rolled</b>
-          </span>
-          <span>
-            Reports<b>Month frozen</b>
-          </span>
+          <h1>Loading fiscal periods…</h1>
         </div>
-      </Panel>
+      )}
+
+      {state.status === 'forbidden' && (
+        <div className="state-page" role="alert">
+          <span>
+            <LockKeyhole />
+          </span>
+          <h1>Access restricted</h1>
+          <p>Your role does not have permission to view fiscal periods.</p>
+        </div>
+      )}
+
+      {state.status === 'error' && (
+        <div className="state-page" role="alert">
+          <span>
+            <LockKeyhole />
+          </span>
+          <h1>We could not load the fiscal periods</h1>
+          <p>{state.message}</p>
+          <Button onClick={reload}>Try again</Button>
+        </div>
+      )}
+
+      {state.status === 'ready' && <PeriodTable periods={state.data} onChanged={reload} />}
     </>
+  )
+}
+
+function PeriodTable({
+  periods,
+  onChanged,
+}: {
+  periods: FiscalPeriodDto[]
+  onChanged: () => void
+}) {
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [reopenTarget, setReopenTarget] = useState<FiscalPeriodDto | null>(null)
+
+  if (periods.length === 0) {
+    return <div className="empty-state">No fiscal periods exist yet for this tenant.</div>
+  }
+
+  // Order rule (periods.md §4.1): close only the earliest OPEN period; reopen only the
+  // latest CLOSED one. Computed client-side as a UX convenience — the server is the real
+  // gate (409 period_close_out_of_order / period_reopen_out_of_order on any other attempt).
+  const ordered = [...periods].sort((a, b) => a.periodStart.localeCompare(b.periodStart))
+  const earliestOpenId = ordered.find((p) => p.status === 'OPEN')?.id
+  const closedPeriods = ordered.filter((p) => p.status === 'CLOSED')
+  const latestClosedId = closedPeriods[closedPeriods.length - 1]?.id
+
+  const doClose = async (period: FiscalPeriodDto) => {
+    setBusyId(period.id)
+    setError(null)
+    try {
+      await closePeriod(period.id)
+      onChanged()
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not close this period.')
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  return (
+    <>
+      {error && <Banner tone="danger">{error}</Banner>}
+      <Table
+        headers={['Period', 'Status', 'Start', 'End', 'Actions']}
+        rows={ordered.map((p) => [
+          p.label,
+          <Badge tone={p.status === 'OPEN' ? 'good' : p.status === 'CLOSED' ? 'warn' : 'neutral'}>
+            {p.status === 'OPEN' ? 'Open' : p.status === 'CLOSED' ? 'Closed' : 'Locked'}
+          </Badge>,
+          p.periodStart,
+          p.periodEnd,
+          <span style={{ display: 'flex', gap: 8 }}>
+            {p.status === 'OPEN' && (
+              <Button
+                kind="secondary"
+                busy={busyId === p.id}
+                disabled={p.id !== earliestOpenId}
+                onClick={() => doClose(p)}
+              >
+                Close
+              </Button>
+            )}
+            {p.status === 'CLOSED' && p.id === latestClosedId && (
+              <Button kind="danger" onClick={() => setReopenTarget(p)}>
+                Reopen
+              </Button>
+            )}
+          </span>,
+        ])}
+      />
+      {reopenTarget && (
+        <ReopenDialog
+          period={reopenTarget}
+          onClose={() => setReopenTarget(null)}
+          onDone={() => {
+            setReopenTarget(null)
+            onChanged()
+          }}
+        />
+      )}
+    </>
+  )
+}
+
+function ReopenDialog({
+  period,
+  onClose,
+  onDone,
+}: {
+  period: FiscalPeriodDto
+  onClose: () => void
+  onDone: () => void
+}) {
+  const [reason, setReason] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!reason.trim()) {
+      setError('A reason is required.')
+      return
+    }
+    setSubmitting(true)
+    setError(null)
+    try {
+      await reopenPeriod(period.id, { reason: reason.trim() })
+      onDone()
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not reopen this period.')
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <Modal title={`Reopen ${period.label}`} onClose={onClose}>
+      <form onSubmit={submit} noValidate>
+        <p>
+          Reopening {period.label} allows postings into it again. Only the Owner role can do
+          this. State why — this is audited.
+        </p>
+        <Field label="Reason" htmlFor="reopen-reason" required error={error ?? undefined}>
+          <TextInput id="reopen-reason" value={reason} onChange={setReason} required />
+        </Field>
+        <div className="modal-foot">
+          <Button kind="secondary" type="button" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button kind="danger" type="submit" busy={submitting}>
+            Reopen period
+          </Button>
+        </div>
+      </form>
+    </Modal>
   )
 }
 

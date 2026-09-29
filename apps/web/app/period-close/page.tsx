@@ -1,15 +1,13 @@
 'use client'
-/* Route /period-close — generated from the prototype route table in
- * ui-prototype/src/App.tsx. The screen and its props are unchanged. */
+/* Route /period-close — M2-S: wired to the real API (GET /api/periods,
+ * POST /api/periods/:id/{close,reopen}). No lock route in M2 (Council ruling). */
 import { PeriodClose } from '@/screens/trade-pages'
 import { Guard } from '@/components/guard'
-import { useFinsoft } from '@/app-context'
 
 export default function Page() {
-  const f = useFinsoft()
   return (
     <Guard module="Cash, Bank & GL">
-      <PeriodClose data={f.data} />
+      <PeriodClose />
     </Guard>
   )
 }
