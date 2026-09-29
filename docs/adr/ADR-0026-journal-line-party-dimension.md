@@ -1,0 +1,55 @@
+# ADR-0026: The journal-line party dimension is a kernel-owned party registry
+
+**Status:** Proposed
+**Date:** 2026-09-28
+**Deciders:** Database/Security seat, Architecture seat ([ADR-0024](ADR-0024-operating-model.md)). Accounting seat consulted.
+**Authority:** LEVEL 1 — reversing this requires a superseding ADR
+
+## Context
+
+[posting-rules README](../posting-rules/README.md) §4.1 requires every AR-control journal line to carry a customer, and every AP-control line to carry a vendor from Wave 6. This is what makes Invariant 9 (subledger reconciles to GL control) hold by construction. `journal_lines` is created in migration **012** and owned by the accounting kernel. `customers` is created in migration **014** as a `modules/customers` table. [ARCHITECTURE](../ARCHITECTURE.md) §5 says kernels know nothing about modules. Invariant 7 of the FinancialInvariantSuite says a cross-tenant reference must be impossible. Rule 17 says the line stores an id, never a copied name.
+
+PostgreSQL referential-integrity checks **ignore RLS**. A foreign key on `party_id` alone would accept another tenant's customer id. Only a composite key that carries `tenant_id` makes Invariant 7 structural for the party.
+
+Options weighed:
+
+- **(A) `party_type` + `party_id` with no FK, checked by the posting engine plus a reconciliation job.** Rejected. A cross-tenant or dangling party is caught after it is posted, when the line is already immutable and the correction is a reversal. It also contradicts [service-sale.md](../posting-rules/service-sale.md):84, which relies on a database foreign key from the line's party.
+- **(C) Nullable columns in 012, and migration 014 does `ALTER TABLE journal_lines ADD FOREIGN KEY … REFERENCES customers`.** Rejected. It makes a kernel table depend on a module table, so the schema points the opposite way to the code. A module migration would alter a kernel table. The `ALTER` takes `SHARE ROW EXCLUSIVE` on `journal_lines`, which blocks every posting while it validates, unless it uses `NOT VALID`. One column cannot reference both `customers` and `vendors`, so Wave 6 would need a second column or a second `ALTER` on a table that is large by then.
+- **(B) A kernel-owned `parties` registry.** The kernel owns the identity and the modules own the details. Chosen.
+
+## Decision
+
+1. **`parties` is a kernel table, created in migration 012** before `journal_entries` and `journal_lines`. Its columns are `id`, `tenant_id` and `party_type`, plus the mandatory column set. It has no name, no status and no detail. The name and the lifecycle (`ACTIVE`/`INACTIVE`) belong to the module, and a status copy here would be a second source of truth. `party_type` is `CHECK IN ('CUSTOMER','VENDOR')`. It carries `UNIQUE (tenant_id, id)` and `UNIQUE (tenant_id, party_type, id)`. RLS is enabled and forced, with `USING` and `WITH CHECK`. It is **insert-only**: `finsoft_app` holds `SELECT, INSERT` and no `UPDATE` or `DELETE`. A party's identity and type never change.
+2. **A journal line references a party only through `(tenant_id, party_type, party_id) → parties (tenant_id, party_type, id)`**, `MATCH SIMPLE`, `ON DELETE RESTRICT`. A line cannot name another tenant's party, a missing party, or a vendor on a customer line. `MATCH FULL` is wrong here: `tenant_id` is never null, so `MATCH FULL` would reject every line that has no party. The paired check in statement 3 makes `MATCH SIMPLE` safe.
+3. **§4.1's "if and only if" is declarative in 012, not a trigger.** `journal_lines` carries `account_control` (`NOT NULL`). Its composite FK `(tenant_id, account_id, account_control) → accounts (tenant_id, id, control_kind)` is the line's only account FK. It is never null, so it is always checked. Two `CHECK`s tie the party to it: `(party_type IS NULL) = (party_id IS NULL)`, and `(account_control = 'AR' AND party_type = 'CUSTOMER') OR (account_control = 'AP' AND party_type = 'VENDOR') OR (account_control IN ('NONE','INVENTORY') AND party_type IS NULL)`. This requires migration 010 to make `accounts.control_kind` `NOT NULL`, `CHECK IN ('NONE','AR','AP','INVENTORY')` (`'NONE'`, not null), with `UNIQUE (tenant_id, id, control_kind)`. The FK also blocks any change to the control kind of an account that has been posted to ([coa-standard.md](../posting-rules/coa-standard.md) §5).
+4. **Module tables reference the registry 1:1 by shared id. The registry never references a module.** In M3, `customers.id` *is* the party id. `customers` carries `party_type text NOT NULL DEFAULT 'CUSTOMER' CHECK (party_type = 'CUSTOMER')` and `FOREIGN KEY (tenant_id, party_type, id) REFERENCES parties (tenant_id, party_type, id) ON DELETE RESTRICT`. `vendors` does the same with `'VENDOR'` in Wave 6. Neither touches `journal_lines`. A payload's `customerId` is stored as `party_id` unchanged. Rule 17 holds: the line stores the id only.
+5. **Only the kernel writes `parties`.** `accounting-kernel` exposes `registerParty(tx, partyType) → partyId`, and the query body lives in `packages/database`. The customers module creates a customer **in one transaction**: `registerParty(tx, 'CUSTOMER')`, then `INSERT INTO customers (id = partyId, …)`. The immediate FK makes the order compulsory, and a rollback removes both rows. No trigger on a module table writes `parties`.
+6. **The posting engine pre-checks the party** through `parties`, the table it owns, and rejects with `PARTY_NOT_FOUND` / `PARTY_TYPE_MISMATCH`. The FK is the backstop, not the error path. Whether a customer may be invoiced (`CUSTOMER_NOT_FOUND`, `CUSTOMER_INACTIVE`) stays the module's precondition ([service-sale.md](../posting-rules/service-sale.md) row 7).
+7. **Adding a party type** (for example `EMPLOYEE`) is a new ADR and a migration. The migration replaces both `CHECK`s using `NOT VALID` + `VALIDATE CONSTRAINT`, so it never holds `ACCESS EXCLUSIVE` for a full scan of `journal_lines`.
+
+## Consequences
+
+**Positive.** Invariant 7 is structural for parties as well as accounts. The schema dependency runs in the same direction as the code (module → kernel). Migrations 014 and Wave 6 never lock `journal_lines`. The only lock they take is `SHARE ROW EXCLUSIVE` on `parties`, which is small and insert-only, for the FK add on a new, empty table. Invariant 9's per-customer GL figure groups by `party_id` with no join. Parties are never updated, so the `FOR KEY SHARE` taken by FK checks during posting never conflicts.
+
+**Negative / accepted.** A committed party with no detail row (an orphan) is possible if a module registers a party and then commits without inserting its row. It cannot reach AR through a document, because the module validates `customerId` against `customers` first. The reconciliation check below makes any orphan a failure. `account_control` is a copy of an account attribute on every line. It is FK-enforced and immutable, and it is not a name, so rule 17 does not apply. Migration 010 gains a `control_kind` shape requirement.
+
+## Compliance
+
+| # | Mechanism | Lands in |
+|---|---|---|
+| 1 | `database/tests/schema.spec.ts`: new case **"a kernel-owned table references only kernel or platform tables"**, driven by a `KERNEL_TABLES` list in `database/tests/catalog.ts` (`accounts`, `fiscal_periods`, `parties`, `journal_entries`, `journal_lines`, `document_sequences`). Any FK from these tables to a table outside kernel ∪ platform fails | M2-A, with 012 |
+| 2 | `database/tests/parties.spec.ts`: `party_type` CHECK. `finsoft_app` has no `UPDATE` or `DELETE` on `parties` (`has_table_privilege`). An `UPDATE` as the owner is refused. RLS is enabled and forced (also covered generally by `rls.spec.ts`) | M2-A |
+| 3 | `database/tests/journal-lines.spec.ts`: `party_type` without `party_id` (and the reverse) → 23514. An AR line with no party, a non-control line with a party, and an AR line with a VENDOR party → 23514 / 23503. **Another tenant's party**, inserted through the migration role to rule out RLS as the reason → 23503. A line whose `account_control` disagrees with its account → 23503. An `UPDATE accounts SET control_kind` on an account with lines → refused | M2-A |
+| 4 | `tests/accounting/financial-invariant-suite.spec.ts`: Invariant 7 extended from accounts to parties. Invariant 9: `Σ AR-control lines by party = AR control balance`, and `GL(C, D) = document subledger(C, D)` for every customer ([customer-receipt.md](../posting-rules/customer-receipt.md) §8) | Invariant 7: M2 · Invariant 9: M3 |
+| 5 | `database/tests/customers.spec.ts`: a customer with no party → 23503. A customer on a VENDOR party → 23503. `customers.party_type` is constant `'CUSTOMER'` | M3, with 014 |
+| 6 | `tests/reconciliation/party-registry.spec.ts`: every `parties` row has exactly one detail row in its type's table. An orphan is a failure | M3 |
+| 7 | `tests/security/lint-boundaries.spec.ts`: an `insertInto('parties')` outside the kernel's query module in `packages/database` is a lint error | M2-A |
+| 8 | 012 index `journal_lines (tenant_id, party_id, account_id) WHERE party_id IS NOT NULL`, built while the table is empty. `EXPLAIN (ANALYZE, BUFFERS)` of the customer ledger against production-sized data is reviewed by the Database seat before M3 merges | M2-A (index) · M3 (plan) |
+
+## Signatures
+
+| Seat | Verdict |
+|---|---|
+| **Database/Security seat** | ✅ **APPROVED, 2026-09-28.** Author. Options A and C rejected for the reasons in Context. The shape of migration 012 in statements 1–3 is binding on lane M2-A now, ahead of this record's acceptance, because 012 is being written and cannot be edited after release. |
+| **Architecture seat** | ☐ Pending: the kernel/module boundary (statements 4–5), the `registerParty` interface, and Compliance 1 and 7. |
+| Accounting seat | Consulted, not a Decider. §4.1 of the posting-rules README is implemented unchanged. |
