@@ -10,7 +10,12 @@
  * pure decision callback where one is needed.
  */
 
-export { login, ACCESS_TOKEN_TTL_SECONDS } from './login.ts'
+export {
+  login,
+  ACCESS_TOKEN_TTL_SECONDS,
+  failedLoginAuditWorkCountForTests,
+  resetFailedLoginAuditWorkCountForTests,
+} from './login.ts'
 export type {
   LoginInput,
   LoginResult,

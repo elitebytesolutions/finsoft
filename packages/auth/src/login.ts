@@ -1,10 +1,30 @@
-import { withLoginAttempt, type LoginTestHooks } from '@finsoft/database/auth'
+import { decoyAuditRoundTrip, withLoginAttempt, type LoginTestHooks } from '@finsoft/database/auth'
 import { noopAuthAuditSink, type AuthAuditSink } from './audit-sink.ts'
 import { atAuthBoundary } from './db-error.ts'
 import { ACCESS_TOKEN_TTL_SECONDS, signAccessToken } from './jwt.ts'
 import { HashingQueueFullError, verifyCredential } from './password.ts'
 import { mintRefreshToken } from './refresh-token.ts'
-import { checkLayers, loginLayers, refundLayers } from './throttle.ts'
+import { checkLayers, failedLoginAuditLayer, loginLayers, refundLayers } from './throttle.ts'
+
+/*
+ * M1-X, Council Sec 5: a counter mirroring password.ts's
+ * verificationCountForTests — proof, by counting rather than by timing
+ * (flaky), that some audit-shaped DB round trip happens on EVERY login
+ * attempt that reaches the point of deciding success or failure: the real
+ * one on a known tenant, the decoy on an unknown one. See decoyAuditRoundTrip's
+ * own doc comment for what this does and does not equalise.
+ */
+let failedLoginAuditWorkCount = 0
+
+/** TEST ONLY. */
+export function failedLoginAuditWorkCountForTests(): number {
+  return failedLoginAuditWorkCount
+}
+
+/** TEST ONLY. */
+export function resetFailedLoginAuditWorkCountForTests(): void {
+  failedLoginAuditWorkCount = 0
+}
 
 /*
  * POST /api/auth/login. ADR-0023 §1, §4.
@@ -120,12 +140,43 @@ export async function login(
         // M1-X (audit wiring): called from INSIDE whichever transaction
         // decided the outcome — never after this function returns. rule 9.
         async (tx, outcome) => {
+          if (outcome.authenticated) {
+            await auditSink.record(tx, {
+              tenantId: outcome.tenantId,
+              actorUserId: outcome.userId,
+              action: 'USER_SIGNED_IN',
+              entityType: 'session',
+              entityId: outcome.sessionId,
+              ip: input.ip,
+            })
+            return
+          }
+
+          failedLoginAuditWorkCount += 1
+
+          // M1-X, Council Sec 5: bounds the audit chain's per-tenant advisory
+          // lock contention a flood of wrong passwords against a KNOWN
+          // tenant can cause — never the login response itself, which 401s
+          // identically either way (ADR-0023 §4 item 4). Fails OPEN (writes
+          // the audit anyway) if Redis is unreachable: this is a
+          // defence-in-depth cap on a side effect, not the login's own
+          // fail-closed throttle, and the outer layers already succeeded
+          // moments ago for this same request.
+          const budgetExhausted = await checkLayers([failedLoginAuditLayer(normalisedTenantCode)])
+            .then((decision) => decision.throttled)
+            .catch(() => false)
+          if (budgetExhausted) return
+
+          // actorUserId is ALWAYS null here — an unverified credential is
+          // not proof of who acted (Council Sec 5). The candidate user, if
+          // one existed at that email, is the audited EVENT'S TARGET, named
+          // in entityId, never in actorUserId.
           await auditSink.record(tx, {
             tenantId: outcome.tenantId,
-            actorUserId: outcome.userId,
-            action: outcome.authenticated ? 'USER_SIGNED_IN' : 'USER_SIGN_IN_FAILED',
-            entityType: 'session',
-            entityId: outcome.sessionId,
+            actorUserId: null,
+            action: 'USER_SIGN_IN_FAILED',
+            entityType: 'user',
+            entityId: outcome.userId,
             ip: input.ip,
           })
         },
@@ -136,8 +187,14 @@ export async function login(
     if (attempt === null) {
       // Unknown tenant code: the transaction never ran `decide`, so the one
       // mandatory verification happens here instead, against the decoy —
-      // never zero verifications on any path (ADR-0023 §4 item 1).
+      // never zero verifications on any path (ADR-0023 §4 item 1). Also runs
+      // decoyAuditRoundTrip — see its own doc comment (Council Sec 5): a
+      // known tenant's failure does extra DB work writing USER_SIGN_IN_FAILED,
+      // and doing NONE here would make that extra work a timing signal
+      // distinguishing a known tenant code from an unknown one.
       await verifyCredential(null, input.password)
+      failedLoginAuditWorkCount += 1
+      await decoyAuditRoundTrip()
       return { outcome: 'failed', alertedLayers: throttle.alertedLayers }
     }
 

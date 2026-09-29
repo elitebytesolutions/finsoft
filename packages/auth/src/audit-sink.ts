@@ -32,7 +32,14 @@ export interface AuthAuditEvent {
   readonly tenantId: string
   readonly actorUserId: string | null
   readonly action: 'USER_SIGNED_IN' | 'USER_SIGN_IN_FAILED' | 'REFRESH_REUSE_DETECTED'
-  readonly entityType: 'session' | 'refresh_token_family'
+  /**
+   * 'user': M1-X, Council Sec 5 — USER_SIGN_IN_FAILED names its TARGET in
+   * entityId (the candidate user, if one existed at that email; null
+   * otherwise), never its actor. An unverified credential is not proof of
+   * who acted, so actorUserId is always null for this action — see
+   * authAuditSink's own note.
+   */
+  readonly entityType: 'session' | 'refresh_token_family' | 'user'
   readonly entityId: string | null
   /** From the verified request context (trusted-proxy `clientIp`), never re-derived here. */
   readonly ip: string | null

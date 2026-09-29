@@ -15,6 +15,7 @@
  */
 
 export {
+  decoyAuditRoundTrip,
   withLoginAttempt,
   type LoginAttemptResult,
   type LoginAuditHook,

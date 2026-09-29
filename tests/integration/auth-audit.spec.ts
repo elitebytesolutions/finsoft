@@ -5,6 +5,10 @@ import cookieParser from 'cookie-parser'
 import { Redis } from 'ioredis'
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import {
+  failedLoginAuditWorkCountForTests,
+  resetFailedLoginAuditWorkCountForTests,
+} from '@finsoft/auth'
 import { listAuditEvents, withTenant } from '@finsoft/database'
 import { prepareTestDatabase, runAs, teardownTestDatabase } from '@finsoft/database/testing'
 import { initLogger, resetLoggerForTests } from '@finsoft/observability'
@@ -95,7 +99,12 @@ describe('USER_SIGN_IN_FAILED', () => {
 
     const page = await eventsFor(user, 'USER_SIGN_IN_FAILED')
     expect(page.items).toHaveLength(1)
-    expect(page.items[0]?.actorUserId).toBe(user.ownerId)
+    // M1-X, Council Sec 5: an unverified credential is not proof of who
+    // acted — actorUserId is always null for a failed login. The candidate
+    // (target) user is named in entityId instead.
+    expect(page.items[0]?.actorUserId).toBeNull()
+    expect(page.items[0]?.entityType).toBe('user')
+    expect(page.items[0]?.entityId).toBe(user.ownerId)
   })
 
   it('writes nothing for an UNKNOWN tenant code — no tenant, no chain (ADR-0023 §4 item 7)', async () => {
@@ -107,6 +116,56 @@ describe('USER_SIGN_IN_FAILED', () => {
     // makes is simply that the request above did not throw and returned the
     // identical 401, which a crashing "audit an unknown tenant" attempt
     // would not.
+  })
+
+  /*
+   * M1-X, Council Sec 5: proof BY COUNTING, not by wall-clock timing —
+   * exactly the methodology ADR-0023 §4 already established for argon2id
+   * ("asserted by counting invocations, not by timing"). A known tenant's
+   * failure does a REAL audit-shaped DB round trip; an unknown tenant's
+   * failure does a DECOY one (decoyAuditRoundTrip) — never zero on either
+   * path, which is what would make the extra work on the known-tenant path
+   * an observable signal.
+   */
+  it('does an audit-shaped DB round trip on every failed attempt — known (real) or unknown (decoy) tenant', async () => {
+    resetFailedLoginAuditWorkCountForTests()
+    const user = await createActiveUserFixture('AA2B')
+
+    await request(app.getHttpServer())
+      .post('/api/auth/login')
+      .send({ tenantCode: user.code, email: user.email, password: 'wrong' })
+    expect(failedLoginAuditWorkCountForTests()).toBe(1)
+
+    await request(app.getHttpServer())
+      .post('/api/auth/login')
+      .send({ tenantCode: 'NOSUCHTENANT2', email: 'nobody@example.test', password: 'whatever' })
+    expect(failedLoginAuditWorkCountForTests()).toBe(2)
+  })
+
+  /*
+   * M1-X, Council Sec 5: bounds the audit chain's per-tenant advisory lock
+   * contention a flood of wrong passwords can cause, without affecting the
+   * login RESPONSE at all — every attempt below still 401s identically
+   * (ADR-0023 §4 item 4), even once the audit-write budget for this tenant
+   * is spent. Each attempt uses a DIFFERENT email so the OTHER, per-(email,
+   * tenant) throttle layers (packages/auth/src/throttle.ts's loginLayers,
+   * limit 10 and 5 respectively) never block the request itself — only the
+   * audit-write cap (limit 30) is under test here.
+   */
+  it('caps failed-login audit writes per tenant — the response still 401s identically past the cap', async () => {
+    const user = await createActiveUserFixture('AA2C')
+    const attempts = 35
+
+    for (let i = 0; i < attempts; i++) {
+      const res = await request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ tenantCode: user.code, email: `nobody-${i}@example.test`, password: 'whatever' })
+      expect(res.status).toBe(401)
+    }
+
+    const page = await eventsFor(user, 'USER_SIGN_IN_FAILED')
+    expect(page.items.length).toBeGreaterThan(0)
+    expect(page.items.length).toBeLessThanOrEqual(30)
   })
 })
 

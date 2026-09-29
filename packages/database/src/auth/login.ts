@@ -1,5 +1,5 @@
 import { sql } from 'kysely'
-import { withResolvedTenant, type TenantTx } from '../transaction.ts'
+import { withGlobal, withResolvedTenant, type TenantTx } from '../transaction.ts'
 import { tenantByCodeResolver, type ResolvedTenantRow } from './resolvers.ts'
 
 /*
@@ -360,4 +360,33 @@ async function writeLoginSuccess(
     permissionVersion: updated.version,
     refreshTokenExpiresAt: token.expires_at,
   }
+}
+
+/**
+ * M1-X, Council Sec 5. Failing an unknown tenant code does no DB work beyond
+ * the one read `withResolvedTenant` already does — but a KNOWN tenant that
+ * fails to authenticate now ALSO writes a `USER_SIGN_IN_FAILED` audit record,
+ * which is a second transaction, a per-tenant advisory lock acquisition, a
+ * chain-head read and an INSERT. That extra work is a timing signal an
+ * unauthenticated caller could use to distinguish "this tenant code exists"
+ * from "it does not" — precisely the enumeration oracle ADR-0023 §4 already
+ * closes for argon2id verification, reopened here by the audit write.
+ *
+ * This performs a comparable NUMBER of round trips against the global,
+ * pre-tenant `tenants` table — no lock, no write, no data about any specific
+ * tenant — so the unknown-tenant path is not simply "return immediately"
+ * while the known-tenant-failure path does substantially more I/O.
+ *
+ * NOT a perfect timing match: it does not replicate the advisory lock
+ * acquisition or the JCS/SHA-256 hash computation `recordAudit` performs.
+ * Recorded as a residual, bounded gap in the M1-X delivery report rather
+ * than overclaimed here — the two SELECTs below approximate the audit
+ * append's "read the chain head" and "INSERT" round trips in COUNT, not in
+ * cost.
+ */
+export async function decoyAuditRoundTrip(): Promise<void> {
+  await withGlobal(async (tx) => {
+    await tx.selectFrom('tenants').select('id').limit(1).executeTakeFirst()
+    await tx.selectFrom('tenants').select('id').limit(1).executeTakeFirst()
+  })
 }

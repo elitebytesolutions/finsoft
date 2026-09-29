@@ -305,3 +305,23 @@ export function refreshLayers(input: {
     { key: `refresh:token:${input.presentedTokenHash}`, limit: 10, windowSeconds: 5 * 60 },
   ]
 }
+
+/**
+ * M1-X, Council Sec 5. A blocking cap, per TENANT CODE ALONE (not combined
+ * with email — every one of `loginLayers`' existing layers is already keyed
+ * that way, and none of them bounds the TOTAL number of failed-login AUDIT
+ * WRITES a tenant's chain absorbs when the attacker varies the email tried).
+ *
+ * This does not throttle the LOGIN response — ADR-0023 §4's identical-401 is
+ * unaffected either way, and a login is never rejected because of this layer.
+ * It bounds only whether `USER_SIGN_IN_FAILED` gets WRITTEN: once a tenant's
+ * budget for failed-login audits is spent in the window, further failures in
+ * that window still 401 normally, and simply stop appending to the chain —
+ * which is what keeps an unauthenticated attacker from being able to
+ * serialise a tenant's whole audit chain behind a flood of wrong passwords
+ * (ADR-0020 §5's per-tenant advisory lock is exactly what a flood of these
+ * would otherwise contend on).
+ */
+export function failedLoginAuditLayer(normalisedTenantCode: string): ThrottleLayer {
+  return { key: `login:failed-audit:${normalisedTenantCode}`, limit: 30, windowSeconds: 5 * 60 }
+}
