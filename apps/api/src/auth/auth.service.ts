@@ -10,7 +10,7 @@ import {
   type LoginResult,
   type RefreshResult,
 } from '@finsoft/auth'
-import { getAuthenticatedProfile } from '@finsoft/database/auth'
+import { getAuthenticatedProfile, updateOwnFullName } from '@finsoft/database/auth'
 import type { AuthContext } from '@finsoft/shared-types'
 import type { JWK } from 'jose'
 
@@ -69,6 +69,16 @@ export class AuthService {
     const profile = await getAuthenticatedProfile(auth.userId)
     if (!profile) return null
     return { ...profile, sessionId: auth.sessionId, permissionVersion: auth.permissionVersion }
+  }
+
+  /**
+   * PATCH /api/auth/me. M1-X, W1-006 exit criterion 1: the minimal
+   * authorised write "tenant A can read and update its own record" needs.
+   * No TenantContext.run here either — see .me()'s comment above; the same
+   * reasoning applies.
+   */
+  updateMe(userId: string, fullName: string) {
+    return updateOwnFullName(userId, fullName)
   }
 
   hashRefreshToken(raw: string): string {

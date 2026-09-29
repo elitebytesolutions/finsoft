@@ -5,6 +5,7 @@ import {
   Get,
   HttpCode,
   HttpException,
+  Patch,
   Post,
   Req,
   Res,
@@ -21,6 +22,7 @@ import { ZodValidationPipe } from '../common/zod-validation.pipe'
 import { AuthService } from './auth.service'
 import { clearRefreshCookie, hasCsrfHeader, readRefreshCookie, setRefreshCookie } from './cookie'
 import { LoginSchema, type LoginDto } from './dto/login.dto'
+import { UpdateMeSchema, type UpdateMeDto } from './dto/update-me.dto'
 import { clientIp, deviceFingerprint, ipPrefix } from './request-context'
 
 /*
@@ -216,6 +218,24 @@ export class AuthController {
     if (!auth) throw new UnauthorizedException(INVALID_CREDENTIALS)
 
     const profile = await this.auth.me(auth)
+    if (!profile) throw new UnauthorizedException(INVALID_CREDENTIALS)
+    return profile
+  }
+
+  /**
+   * M1-X, W1-006 exit criterion 1: the minimal authorised write "tenant A
+   * can read and update its own record" needs. Updates only fullName —
+   * audited by updateOwnFullName itself (packages/database/src/auth/
+   * session.ts), inside the same transaction as the write.
+   */
+  @AuthenticatedOnly()
+  @Patch('me')
+  @UsePipes(new ZodValidationPipe(UpdateMeSchema))
+  async updateMe(@Body() body: UpdateMeDto, @Req() req: Request) {
+    const auth = req.auth
+    if (!auth) throw new UnauthorizedException(INVALID_CREDENTIALS)
+
+    const profile = await this.auth.updateMe(auth.userId, body.fullName)
     if (!profile) throw new UnauthorizedException(INVALID_CREDENTIALS)
     return profile
   }

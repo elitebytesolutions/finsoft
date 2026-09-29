@@ -157,3 +157,63 @@ export async function getAuthenticatedProfile(
     }
   })
 }
+
+export interface UpdatedProfile {
+  readonly id: string
+  readonly email: string
+  readonly fullName: string
+}
+
+/**
+ * PATCH /api/auth/me. M1-X, W1-006 exit criterion 1: the minimal authorised
+ * write "tenant A can read AND update its own record" needs — updates only
+ * `full_name`, nothing financial and nothing that touches a kernel.
+ *
+ * Audited directly, the same shape `revokeSession` above already
+ * establishes: this file carries no restriction against calling
+ * `recordAudit` (unlike login.ts/refresh.ts), `TenantContext` is already
+ * established by the caller (the request-wide interceptor, for this route),
+ * and there is exactly one caller — a user changing their own display name —
+ * so the action is not a business decision this function is guessing at.
+ */
+export async function updateOwnFullName(
+  userId: string,
+  fullName: string,
+): Promise<UpdatedProfile | null> {
+  return withTenant(async (tx) => {
+    const before = await tx
+      .selectFrom('users')
+      .select(['id', 'email', 'full_name', 'created_by'])
+      .where('id', '=', userId)
+      .executeTakeFirst()
+    if (!before) return null
+
+    const updated = await tx
+      .updateTable('users')
+      .set({
+        full_name: fullName,
+        // See LoginCandidateUser.createdBy's comment (login.ts): the
+        // provisioned owner's updated_by must stay NULL, or
+        // users_authorship_pair_or_neither fails. Every other user updates
+        // their own row as themselves.
+        updated_by: before.created_by === null ? null : userId,
+        version: sql`version + 1`,
+      })
+      .where('id', '=', userId)
+      .returning(['id', 'email', 'full_name'])
+      .executeTakeFirstOrThrow()
+
+    await recordAudit(tx, {
+      actorUserId: userId,
+      action: 'USER_PROFILE_UPDATED',
+      entityType: 'user',
+      entityId: userId,
+      beforeJson: { fullName: before.full_name },
+      afterJson: { fullName: updated.full_name },
+      ip: null,
+      requestId: null,
+    })
+
+    return { id: updated.id, email: updated.email, fullName: updated.full_name }
+  })
+}

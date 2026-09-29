@@ -42,6 +42,8 @@ export {
   isSessionActive,
   revokeSession,
   touchSessionLastSeen,
+  updateOwnFullName,
   type AccountState,
   type AuthenticatedProfile,
+  type UpdatedProfile,
 } from './session.ts'
