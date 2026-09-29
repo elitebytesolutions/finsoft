@@ -308,7 +308,7 @@ export function PartyList({
                 setPage(1)
               }}
               disabled={isCustomer}
-              title={isCustomer ? 'Customer type is not tracked in this release.' : undefined}
+              title={isCustomer ? 'Not tracked yet.' : undefined}
             >
               <option>All</option>
               {isCustomer ? (
@@ -344,7 +344,7 @@ export function PartyList({
                 setPage(1)
               }}
               disabled={isCustomer}
-              title={isCustomer ? 'Area is not tracked in this release.' : undefined}
+              title={isCustomer ? 'Not tracked yet.' : undefined}
             >
               <option value="All">{isCustomer ? 'All Areas' : 'All'}</option>
               {secondaryOptions.map((value) => (
@@ -1302,7 +1302,7 @@ function PartyWizard({
                     onChange={set('creditLimit')}
                     placeholder="2,000,000"
                     disabled={isCustomer}
-                    title={isCustomer ? 'Credit limits are not part of this release.' : undefined}
+                    title={isCustomer ? 'Not tracked yet.' : undefined}
                   />
                 </label>
                 <label>
@@ -1325,9 +1325,7 @@ function PartyWizard({
                     onChange={set('stn')}
                     placeholder="3277876-5"
                     disabled={isCustomer}
-                    title={
-                      isCustomer ? 'Sales tax registration is not part of this release.' : undefined
-                    }
+                    title={isCustomer ? 'Not tracked yet.' : undefined}
                   />
                 </label>
                 <label>
@@ -1754,17 +1752,17 @@ export function CustomerDetail() {
             <div className="pt-fin-tile">
               <b>—</b>
               <small>Total Sales</small>
-              <small className="right">Coming with receivables</small>
+              <small className="right">Available once invoicing is live</small>
             </div>
             <div className="pt-fin-tile">
               <b>—</b>
               <small>Total Payments</small>
-              <small className="right">Coming with receivables</small>
+              <small className="right">Available once invoicing is live</small>
             </div>
             <div className="pt-fin-tile">
               <b>—</b>
               <small>Credit Limit</small>
-              <small className="right">Not tracked in this release</small>
+              <small className="right">Not tracked yet</small>
             </div>
           </div>
           <div className="pt-good">
@@ -1773,7 +1771,7 @@ export function CustomerDetail() {
             </span>
             <div>
               <b>Balance as of {x.balanceAsOf || '—'}</b>
-              <small>Computed by the server from the AR ledger below — never in the browser.</small>
+              <small>Calculated from this customer's ledger below.</small>
             </div>
           </div>
         </Card>
@@ -1813,7 +1811,11 @@ export function CustomerDetail() {
             </label>
             <label>
               Payment Terms (credit days)
-              <select value={f.terms} onChange={(e) => setForm({ ...f, terms: e.target.value })}>
+              <select
+                className="text-input"
+                value={f.terms}
+                onChange={(e) => setForm({ ...f, terms: e.target.value })}
+              >
                 {['0', '7', '15', '30', '45', '60'].map((t) => (
                   <option key={t} value={t}>
                     {t === '0' ? 'Cash' : `${t} Days`}
