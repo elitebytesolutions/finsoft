@@ -293,7 +293,7 @@ describe('TenantContext is importable only by the interceptor, apps/worker, data
     expect(matching(messages, 'M1-X T2')).toHaveLength(1)
   })
 
-  it('still catches it even when the code goes on to use bracket access (TenantContext[\'run\'])', async () => {
+  it("still catches it even when the code goes on to use bracket access (TenantContext['run'])", async () => {
     const messages = await messagesFor(
       'apps/api/src/thing.ts',
       `import { TenantContext } from '@finsoft/database'

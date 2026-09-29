@@ -117,10 +117,9 @@ export class RouteDecorationCheck implements OnModuleInit {
           this.reflector.get<boolean | undefined>(PUBLIC_ROUTE, handler) === true ||
           this.reflector.get<boolean | undefined>(PUBLIC_ROUTE, metatype) === true
 
-        const permissionCodes = this.reflector.get<unknown[] | undefined>(
-          REQUIRE_PERMISSION,
-          handler,
-        ) ?? this.reflector.get<unknown[] | undefined>(REQUIRE_PERMISSION, metatype)
+        const permissionCodes =
+          this.reflector.get<unknown[] | undefined>(REQUIRE_PERMISSION, handler) ??
+          this.reflector.get<unknown[] | undefined>(REQUIRE_PERMISSION, metatype)
         const requiresPermission = permissionCodes !== undefined
 
         const authenticatedOnly =

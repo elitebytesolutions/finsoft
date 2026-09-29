@@ -609,7 +609,9 @@ export default tseslint.config(
     rules: {
       'no-restricted-imports': [
         'error',
-        { paths: [...DECIMAL_LIB_IMPORT_PATHS, REQUEST_SCOPE_IMPORT_BAN, TENANT_CONTEXT_IMPORT_BAN] },
+        {
+          paths: [...DECIMAL_LIB_IMPORT_PATHS, REQUEST_SCOPE_IMPORT_BAN, TENANT_CONTEXT_IMPORT_BAN],
+        },
       ],
     },
   },
@@ -677,7 +679,9 @@ export default tseslint.config(
     rules: {
       'no-restricted-imports': [
         'error',
-        { paths: [...DECIMAL_LIB_IMPORT_PATHS, REQUEST_SCOPE_IMPORT_BAN, TENANT_CONTEXT_IMPORT_BAN] },
+        {
+          paths: [...DECIMAL_LIB_IMPORT_PATHS, REQUEST_SCOPE_IMPORT_BAN, TENANT_CONTEXT_IMPORT_BAN],
+        },
       ],
     },
   },
@@ -790,7 +794,9 @@ export default tseslint.config(
     rules: {
       'no-restricted-imports': [
         'error',
-        { paths: [...DECIMAL_LIB_IMPORT_PATHS, REQUEST_SCOPE_IMPORT_BAN, TENANT_CONTEXT_IMPORT_BAN] },
+        {
+          paths: [...DECIMAL_LIB_IMPORT_PATHS, REQUEST_SCOPE_IMPORT_BAN, TENANT_CONTEXT_IMPORT_BAN],
+        },
       ],
     },
   },
