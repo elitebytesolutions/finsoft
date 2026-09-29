@@ -95,6 +95,24 @@ export interface CorrelationContext {
   readonly sessionCorrelationId?: SessionCorrelationId
   /** Set on the worker side: which job produced this line. */
   readonly jobName?: string
+  /**
+   * The caller's address, as resolved by the one trusted-proxy-aware
+   * extraction (`clientIp`, apps/api/src/auth/request-context.ts) — never a
+   * raw header read a second time. Set at the edge, alongside `requestId`,
+   * by apps/api/src/correlation/request-correlation.middleware.ts. M1-C.
+   *
+   * Undefined for a job or another system-originated event: there is no
+   * client to attribute an address to, and nothing here may invent one —
+   * `packages/database`'s `recordAudit` treats an absent `ip` (here or on
+   * its own caller's explicit input) as `null`, never as a value to guess.
+   *
+   * Deliberately the RAW textual form, not the canonicalised one
+   * `packages/database/src/audit/ip.ts`'s `normalizeIp` produces — this
+   * package cannot depend on `packages/database` (`observability-imports-
+   * almost-nothing`), and canonicalisation belongs at the one point a value
+   * is about to be hashed into the audit chain, not at every log line.
+   */
+  readonly ip?: string
 }
 
 const storage = new AsyncLocalStorage<CorrelationContext>()
