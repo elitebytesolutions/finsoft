@@ -33,34 +33,80 @@ function meaningfulSource(relative: string): string {
     .trim()
 }
 
+/*
+ * M2-A: THE ACCOUNTING HALF OF THIS TRIPWIRE FIRED, AS DESIGNED, AND WAS
+ * ANSWERED RATHER THAN DELETED (Accounting seat, 2026-09-28).
+ *
+ * Migration 012 created journal_entries/journal_lines and the accounting
+ * kernel gained a posting engine, so both original accounting assertions
+ * failed. Their instruction — wire reconcileSubledgerToGeneralLedger to live
+ * rows — cannot be carried out yet: it compares a DOCUMENT subledger
+ * (invoices, receipts, allocations) with the AR/AP control accounts, and no
+ * document subledger exists until M3. Nothing live can break Invariant 9 in
+ * the meantime, because no enabled path reaches a control account: a manual
+ * voucher to AR/AP is ACCOUNT_CONTROL_MANUAL_FORBIDDEN (golden P03 step 9),
+ * and SALE_POSTED / CUSTOMER_PAYMENT_RECEIVED are RULE_NOT_ENABLED.
+ *
+ * So the tripwire is re-armed on exactly those two preconditions. It fires
+ * the moment either stops being true — a rule that can reach AR/AP is
+ * enabled, or a subledger table is migrated — which is the moment live
+ * reconciliation becomes both possible and necessary. The inventory half is
+ * unchanged. The GL half now exists and is covered live by the
+ * FinancialInvariantSuite (Invariants 1, 2, 6) for every tenant.
+ */
+const RECONCILE_LIVE_INSTRUCTIONS =
+  'THE RECONCILIATION SUITE IS NOW UNDER-POWERED. It proves its reconcilers\n' +
+  'against fixtures only, which is correct only while there is nothing to\n' +
+  'reconcile. Before re-arming or deleting this assertion:\n\n' +
+  '  1. Wire reconcileSubledgerToGeneralLedger / reconcileValuationToStockLedger\n' +
+  '     to real rows, per tenant, through withTenant.\n' +
+  '  2. Run them after a mixed sequence of postings AND REVERSALS — a\n' +
+  '     reconciliation that only holds when nothing was corrected is not one.\n' +
+  '  3. Keep every fixture test in this directory. They are what prove the\n' +
+  '     comparison detects a break; live data proves there is not one today.\n' +
+  '  4. Update tests/reconciliation/README.md and the Wave 0 register entry\n' +
+  '     for FND-012, which both record this as deferred.'
+
 describe('the reconciliation deferral is still valid', () => {
-  it.each([
-    ['packages/accounting-kernel/src/index.ts', 'ADR-0005 posting engine', 'Wave 5'],
-    ['packages/inventory-kernel/src/index.ts', 'ADR-0008/0018 movement ledger', 'Wave 6'],
-  ])('%s is still empty', (path, what, wave) => {
+  it('no enabled posting rule can reach an AR/AP control account (M2-A re-arm)', async () => {
+    const { IMPLEMENTED_EVENTS } = await import('@finsoft/accounting-kernel')
     expect(
-      meaningfulSource(path),
-      `${path} has content, so ${what} may now exist.\n\n` +
-        'THE RECONCILIATION SUITE IS NOW UNDER-POWERED. It proves its reconcilers\n' +
-        'against fixtures only, which was correct while there was nothing to\n' +
-        `reconcile and is not correct now. Before deleting this assertion (${wave}):\n\n` +
-        '  1. Wire reconcileSubledgerToGeneralLedger / reconcileValuationToStockLedger\n' +
-        '     to real rows, per tenant, through withTenant.\n' +
-        '  2. Run them after a mixed sequence of postings AND REVERSALS — a\n' +
-        '     reconciliation that only holds when nothing was corrected is not one.\n' +
-        '  3. Keep every fixture test in this directory. They are what prove the\n' +
-        '     comparison detects a break; live data proves there is not one today.\n' +
-        '  4. Update tests/reconciliation/README.md and the Wave 0 register entry\n' +
-        '     for FND-012, which both record this as deferred.',
-    ).toBe('export {}')
+      [...IMPLEMENTED_EVENTS].sort(),
+      'A posting rule beyond the manual journal voucher is now enabled, so a\n' +
+        'customer or vendor balance can now exist in the GL.\n\n' +
+        RECONCILE_LIVE_INSTRUCTIONS,
+    ).toEqual(['JOURNAL_VOUCHER_POSTED'])
   })
 
-  it('no table that would need reconciling has been migrated', () => {
+  it.each([['packages/inventory-kernel/src/index.ts', 'ADR-0008/0018 movement ledger', 'Wave 6']])(
+    '%s is still empty',
+    (path, what, wave) => {
+      expect(
+        meaningfulSource(path),
+        `${path} has content, so ${what} may now exist.\n\n` +
+          'THE RECONCILIATION SUITE IS NOW UNDER-POWERED. It proves its reconcilers\n' +
+          'against fixtures only, which was correct while there was nothing to\n' +
+          `reconcile and is not correct now. Before deleting this assertion (${wave}):\n\n` +
+          '  1. Wire reconcileSubledgerToGeneralLedger / reconcileValuationToStockLedger\n' +
+          '     to real rows, per tenant, through withTenant.\n' +
+          '  2. Run them after a mixed sequence of postings AND REVERSALS — a\n' +
+          '     reconciliation that only holds when nothing was corrected is not one.\n' +
+          '  3. Keep every fixture test in this directory. They are what prove the\n' +
+          '     comparison detects a break; live data proves there is not one today.\n' +
+          '  4. Update tests/reconciliation/README.md and the Wave 0 register entry\n' +
+          '     for FND-012, which both record this as deferred.',
+      ).toBe('export {}')
+    },
+  )
+
+  it('no subledger or stock table that would need reconciling has been migrated', () => {
     /*
      * The second precondition, and the one that can change without either
-     * kernel gaining a line: a migration adding `journal_entries` or
-     * `stock_movements` makes live reconciliation possible whatever the
-     * TypeScript looks like.
+     * kernel gaining a line: a migration adding a document subledger
+     * (customers, invoices, receipts, allocations — M3) or `stock_movements`
+     * makes live reconciliation possible whatever the TypeScript looks like.
+     * journal_entries / journal_lines (M2-A) are the GL side only; there is
+     * nothing to reconcile them AGAINST until one of these exists.
      *
      * Reads the migration FILES rather than the database, so this runs
      * without a cluster and fails in the pull request that adds the table
@@ -80,8 +126,13 @@ describe('the reconciliation deferral is still valid', () => {
       })
       .filter(Boolean)
 
+    // The GL side must exist for the re-arm above to mean anything.
+    expect(created).toEqual(expect.arrayContaining(['journal_entries', 'journal_lines', 'parties']))
+
     const reconcilable = created.filter((t) =>
-      ['journal_entries', 'journal_lines', 'stock_movements', 'stock_balances'].includes(t),
+      /^(stock_|sales_|purchase_|customer|vendor|supplier|receipt|invoice|payment)|allocation/.test(
+        t,
+      ),
     )
 
     expect(

@@ -132,7 +132,7 @@ describe(`Golden Scenario ${scenarioA.id}: ${scenarioA.name}`, () => {
   })
 
   it('computes the weighted average to six decimal places', () => {
-    expect(UnitCost.serialize(average)).toBe(expected.weightedAverageCost)
+    expect(UnitCost.serialize(average, 6)).toBe(expected.weightedAverageCost)
   })
 
   it('reproduces every presented figure to the paisa', () => {
@@ -255,7 +255,7 @@ describe(`Golden Scenario ${scenarioA.id}: ${scenarioA.name}`, () => {
     const valueTen = Money.subtract(v, cogsTen)
 
     it('still reconciles exactly at ten times the quantity', () => {
-      expect(UnitCost.serialize(avg)).toBe(timesTen.weightedAverageCost)
+      expect(UnitCost.serialize(avg, 6)).toBe(timesTen.weightedAverageCost)
       expect(Money.serialize(cogsTen, 4)).toBe(timesTen.cogs)
       expect(Money.serialize(valueTen, 4)).toBe(timesTen.valueOnHand)
       expect(Money.serialize(valueTen, 4)).toBe(timesTen.inventoryGlBalance)

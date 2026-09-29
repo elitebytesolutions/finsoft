@@ -1,7 +1,9 @@
 {
   "$comment": [
     "FinancialInvariantSuite invariants that cannot yet be executed, because the",
-    "posting engine, fiscal calendar and stock ledger they describe do not exist.",
+    "stock ledger (3, 10: Wave 5) and the customer/invoice subledger (9: M3) they",
+    "describe do not exist. 1, 2, 4, 5, 6, 8 left this list in M2-A, enforced by",
+    "financial-invariant-suite.spec.ts against the real kernel and database.",
     "",
     "This list is a RATCHET. It may shrink and may never grow.",
     "financial-invariant-suite.spec.ts fails if an invariant becomes pending that is",
@@ -11,5 +13,5 @@
     "Never add an id to this file to make a failing suite green. A failing invariant",
     "is a financial incident (NON_NEGOTIABLES §4), not a baseline to be widened."
   ],
-  "pending": [1, 2, 3, 4, 5, 6, 8, 9, 10]
+  "pending": [3, 9, 10]
 }

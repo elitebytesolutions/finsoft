@@ -170,8 +170,8 @@ describe('Money.round agrees with PostgreSQL numeric', () => {
       scalarOn<string>(tx, 'select round(13000::numeric / 150::numeric, 6)::text'),
     )
 
-    expect(UnitCost.serialize(ours)).toBe('86.666667')
+    expect(UnitCost.serialize(ours, 6)).toBe('86.666667')
     expect(theirs).toBe('86.666667')
-    expect(UnitCost.serialize(ours)).toBe(theirs)
+    expect(UnitCost.serialize(ours, 6)).toBe(theirs)
   })
 })

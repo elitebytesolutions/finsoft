@@ -230,8 +230,8 @@ export function reconcileValuationToStockLedger(
         tenantId,
         scope,
         reason: qtyZero
-          ? `quantity is zero but value on hand is ${Money.serialize(actualValue)}: value left behind by stock that is gone`
-          : `value is zero but quantity on hand is ${Quantity.serialize(actualQty)}: stock carried at nothing`,
+          ? `quantity is zero but value on hand is ${Money.serialize(actualValue, 4)}: value left behind by stock that is gone`
+          : `value is zero but quantity on hand is ${Quantity.serialize(actualQty, 6)}: stock carried at nothing`,
       })
     }
   }
