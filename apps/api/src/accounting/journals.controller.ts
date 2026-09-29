@@ -10,7 +10,16 @@ import {
   Query,
   Req,
 } from '@nestjs/common'
-import { ApiTags } from '@nestjs/swagger'
+import {
+  ApiBadRequestResponse,
+  ApiConflictResponse,
+  ApiForbiddenResponse,
+  ApiNotFoundResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+  ApiUnauthorizedResponse,
+} from '@nestjs/swagger'
 import type { Request } from 'express'
 import {
   FinancialEvent,
@@ -27,10 +36,18 @@ import {
   type JournalEntryRow,
   type JournalLineRow,
 } from '@finsoft/database'
+import type {
+  JournalEntryDto,
+  JournalEntryWithLinesDto,
+  JournalLineDto,
+  JournalListResponseDto,
+  PostJournalVoucherResponseDto,
+  ReverseJournalEntryResponseDto,
+} from '@finsoft/shared-types'
 import { RequirePermission } from '../common/permission.decorator'
 import { ZodValidationPipe } from '../common/zod-validation.pipe'
 import { callerTenantId } from './caller'
-import { decodeCursor, encodeCursor, isJournalEntryCursorShape } from './cursor'
+import { decodeRegisterCursor, encodeCursor } from './cursor'
 import { JournalListQuerySchema, type JournalListQueryDto } from './dto/journal-query.dto'
 import {
   PostJournalVoucherSchema,
@@ -53,7 +70,7 @@ import { mapPostingError } from './posting-error.mapper'
  * @finsoft/database's already-tenant-scoped query surface.
  */
 
-function entryDto(entry: JournalEntryRow) {
+function entryDto(entry: JournalEntryRow): JournalEntryDto {
   return {
     id: entry.id,
     entryNumber: entry.entryNumber,
@@ -71,7 +88,7 @@ function entryDto(entry: JournalEntryRow) {
   }
 }
 
-function lineDto(line: JournalLineRow) {
+function lineDto(line: JournalLineRow): JournalLineDto {
   return {
     lineNumber: line.lineNumber,
     accountId: line.accountId,
@@ -82,7 +99,10 @@ function lineDto(line: JournalLineRow) {
   }
 }
 
-function entryWithLinesDto(entry: JournalEntryRow, lines: readonly JournalLineRow[]) {
+function entryWithLinesDto(
+  entry: JournalEntryRow,
+  lines: readonly JournalLineRow[],
+): JournalEntryWithLinesDto {
   return { ...entryDto(entry), lines: lines.map(lineDto) }
 }
 
@@ -99,6 +119,12 @@ function notFoundBody(id: string) {
  * across retries of the SAME (tenant, idempotencyKey) — see the comment at
  * this function's one call site (`post`, below) for why it must not be
  * `randomUUID()` per HTTP call.
+ *
+ * TECH_DEBT.md: this is a posting-identity rule (part of what makes a
+ * replay a replay) sitting in an apps/api controller rather than in the
+ * kernel that owns every other piece of that rule. Not moved here — out of
+ * this lane's ALLOWED paths (packages/accounting-kernel/src/** beyond
+ * importing its index) — flagged for the Accounting seat.
  */
 function deriveReferenceId(tenantId: string, idempotencyKey: string): string {
   const hex = createHash('sha256').update(`${tenantId}:${idempotencyKey}`).digest('hex')
@@ -110,11 +136,21 @@ function deriveReferenceId(tenantId: string, idempotencyKey: string): string {
 export class JournalsController {
   @Get()
   @RequirePermission('voucher.view')
+  @ApiOperation({
+    summary: "List the caller's tenant's journal register, newest first.",
+    description:
+      'Filters: status, from/to (occurred_at range). Entry headers only — GET /api/journals/:id ' +
+      'for line detail. Cursor pagination.',
+  })
+  @ApiOkResponse({ description: 'A page of journal entries.' })
+  @ApiUnauthorizedResponse({ description: 'Missing, invalid, expired or revoked credentials.' })
+  @ApiForbiddenResponse({ description: 'The caller lacks voucher.view.' })
+  @ApiBadRequestResponse({ description: 'An unknown query key, or a malformed cursor.' })
   async list(
     @Query(new ZodValidationPipe(JournalListQuerySchema)) query: JournalListQueryDto,
     @Req() req: Request,
-  ) {
-    const after = decodeCursor(query.cursor, isJournalEntryCursorShape)
+  ): Promise<JournalListResponseDto> {
+    const after = decodeRegisterCursor(query.cursor)
     const tenantId = callerTenantId(req)
 
     // exactOptionalPropertyTypes: an optional field must be OMITTED, never
@@ -135,7 +171,14 @@ export class JournalsController {
 
   @Get(':id')
   @RequirePermission('voucher.view')
-  async getOne(@Param('id') id: string, @Req() req: Request) {
+  @ApiOperation({ summary: 'A journal entry and its lines.' })
+  @ApiOkResponse({ description: 'The entry, with its full line set.' })
+  @ApiUnauthorizedResponse({ description: 'Missing, invalid, expired or revoked credentials.' })
+  @ApiForbiddenResponse({ description: 'The caller lacks voucher.view.' })
+  @ApiNotFoundResponse({
+    description: 'Unknown id, malformed id, or another tenant’s id — identically.',
+  })
+  async getOne(@Param('id') id: string, @Req() req: Request): Promise<JournalEntryWithLinesDto> {
     if (!isUuidShaped(id)) throw new NotFoundException(notFoundBody(id))
     const tenantId = callerTenantId(req)
 
@@ -153,10 +196,27 @@ export class JournalsController {
   @Post()
   @HttpCode(200)
   @RequirePermission('voucher.post')
+  @ApiOperation({
+    summary: 'Post a manual journal voucher.',
+    description:
+      'Requires the Idempotency-Key header (ADR-0027). Three identical requests produce one ' +
+      'posting — outcome distinguishes POSTED from REPLAYED, the body is otherwise identical.',
+  })
+  @ApiOkResponse({ description: 'The posted (or replayed) entry, with its lines.' })
+  @ApiUnauthorizedResponse({ description: 'Missing, invalid, expired or revoked credentials.' })
+  @ApiForbiddenResponse({ description: 'The caller lacks voucher.post.' })
+  @ApiBadRequestResponse({
+    description:
+      'An unknown body key, a missing Idempotency-Key header, or a kernel validation ' +
+      'rejection (JV_UNBALANCED, AMOUNT_SCALE, ACCOUNT_NOT_FOUND, ...) — see the contract §7.',
+  })
+  @ApiConflictResponse({
+    description: 'PERIOD_CLOSED, PERIOD_LOCKED, or IDEMPOTENCY_KEY_REUSED.',
+  })
   async post(
     @Body(new ZodValidationPipe(PostJournalVoucherSchema)) body: PostJournalVoucherDto,
     @Req() req: Request,
-  ) {
+  ): Promise<PostJournalVoucherResponseDto> {
     const idempotencyKey = requireIdempotencyKey(req)
     const tenantId = callerTenantId(req)
 
@@ -200,6 +260,28 @@ export class JournalsController {
   @Post(':id/reverse')
   @HttpCode(200)
   @RequirePermission('voucher.reverse')
+  @ApiOperation({
+    summary: 'Reverse a posted journal voucher.',
+    description:
+      'Requires the Idempotency-Key header and a reason. Only a manual JV is reversed directly ' +
+      'from the journal (reversal.md §5) — a document-sourced entry refuses with ' +
+      'REVERSAL_VIA_SOURCE_REQUIRED.',
+  })
+  @ApiOkResponse({ description: 'The reversal entry, with its lines and the disclosure flag.' })
+  @ApiUnauthorizedResponse({ description: 'Missing, invalid, expired or revoked credentials.' })
+  @ApiForbiddenResponse({ description: 'The caller lacks voucher.reverse.' })
+  @ApiNotFoundResponse({
+    description: 'Unknown id, malformed id, or another tenant’s id — identically.',
+  })
+  @ApiBadRequestResponse({
+    description:
+      'An unknown body key, a missing Idempotency-Key header, or REVERSAL_REASON_REQUIRED.',
+  })
+  @ApiConflictResponse({
+    description:
+      'PERIOD_CLOSED, PERIOD_LOCKED, IDEMPOTENCY_KEY_REUSED, ALREADY_REVERSED, ' +
+      'REVERSAL_OF_REVERSAL, or REVERSAL_VIA_SOURCE_REQUIRED.',
+  })
   async reverse(
     @Param('id') id: string,
     // Bound directly to @Body, not via method-level @UsePipes: a
@@ -210,7 +292,7 @@ export class JournalsController {
     // only) does not have this problem.
     @Body(new ZodValidationPipe(ReverseJournalEntrySchema)) body: ReverseJournalEntryDto,
     @Req() req: Request,
-  ) {
+  ): Promise<ReverseJournalEntryResponseDto> {
     const idempotencyKey = requireIdempotencyKey(req)
     if (!isUuidShaped(id)) throw new NotFoundException(notFoundBody(id))
 

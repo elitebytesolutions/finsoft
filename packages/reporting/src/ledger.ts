@@ -1,4 +1,5 @@
 import {
+  accountLedgerBalanceThrough,
   accountLedgerLines,
   accountOpeningBalance,
   LEDGER_PAGE_MAX,
@@ -52,13 +53,6 @@ export interface AccountLedgerOptions {
   readonly limit?: number
   /** Pass back `AccountLedgerResult.next` unchanged to fetch the next page. */
   readonly after?: LedgerCursor | null
-  /**
-   * Required when `after` is set: `AccountLedgerResult.closingBalance` from
-   * the previous page. Running balance cannot be recomputed from `from`
-   * alone once paging past it — the opening balance is only correct for
-   * page 1.
-   */
-  readonly carryForwardBalance?: string
 }
 
 export interface AccountLedgerResult {
@@ -97,18 +91,31 @@ export async function accountLedger(
   const limit = options.limit ?? LEDGER_PAGE_MAX
   const after = options.after ?? null
 
+  /*
+   * M2-B Council ruling, 2026-09-29: the carry-forward balance for a resumed
+   * page is RECOMPUTED here from the cursor's POSITION, never trusted from
+   * the caller. Mathematically this is the opening balance (everything
+   * strictly before `from`) plus everything from `from` through the cursor
+   * row inclusive — accountLedgerBalanceThrough's own `from` bound makes
+   * that addition explicit and auditable, even though (because a cursor
+   * position is always >= from) it is also exactly the running balance
+   * accountLedger itself would have accumulated by that row on a single,
+   * unpaged pass.
+   */
   let running: MoneyAmount
   if (after === null) {
     const opening = await accountOpeningBalance(tx, tenantId, accountId, options.from, partyId)
     running = Money.subtract(Money.from(opening.debit), Money.from(opening.credit))
   } else {
-    if (options.carryForwardBalance == null) {
-      throw new Error(
-        'accountLedger: resuming with `after` requires `carryForwardBalance` (the previous ' +
-          "page's closingBalance) — the opening-balance query is only correct for page 1.",
-      )
-    }
-    running = Money.from(options.carryForwardBalance)
+    const through = await accountLedgerBalanceThrough(
+      tx,
+      tenantId,
+      accountId,
+      options.from,
+      after,
+      partyId,
+    )
+    running = Money.subtract(Money.from(through.debit), Money.from(through.credit))
   }
   const openingBalance = Money.serialize(running, 4)
 

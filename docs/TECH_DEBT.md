@@ -270,3 +270,48 @@ proportional to how often a tenant's users change roles relative to how often
 they edit their own profile or sign in from a second device, and a
 role-management screen is what turns the first number from "rare" to
 "routine."
+
+---
+
+## TD-009 · `deriveReferenceId` is a posting-identity rule living in an `apps/api` controller
+
+**What.** `POST /api/journals` (`apps/api/src/accounting/journals.controller.ts`)
+mints the `referenceId` `postingEngine.post` requires for a manual journal
+voucher. `journal-voucher.md` §2 says this id is "generated server-side for
+this voucher" — but a retry of the SAME voucher (identical `Idempotency-Key`)
+is a separate HTTP request, and `referenceId` is one of the inputs
+`computeRequestFingerprint` hashes (README §4). A fresh `randomUUID()` per
+call therefore makes every retry look like a NEW request reusing the key
+(`IDEMPOTENCY_KEY_REUSED`) rather than a replay — found by this lane's own
+integration tests before it shipped (three-identical-requests case).
+`deriveReferenceId` fixes it by hashing `(tenantId, idempotencyKey)`
+deterministically (`sha256`, formatted as a uuid), so retries of one
+submission always mint the same id.
+
+That fix is correct, but it is a rule about what makes two postings "the same
+voucher" — squarely a posting-identity concern, which is otherwise entirely
+the kernel's (`packages/accounting-kernel`, ADR-0005/ADR-0027). It sits in
+`apps/api` only because this lane's ALLOWED paths stop at "importing the
+kernel's index" and do not include
+`packages/accounting-kernel/src/**` for a change to the rule itself.
+
+**Why it is accepted.** The fix is correct and tested (`tests/integration/
+accounting-api.spec.ts`, "is idempotent: three identical requests produce one
+entry, one number"), and every `POST /api/journals` request goes through
+this exact function — there is no path that bypasses it. Moving the logic is
+a kernel change requiring Accounting-seat review, not something this HTTP
+lane should decide unilaterally.
+
+**Owner.** Accounting seat (kernel).
+
+**What would force it — and the fix.** Give `postingEngine.post` (or the
+journal-voucher rule specifically) the option to derive `referenceId` itself
+from `(tenantId, idempotencyKey)` when the caller is `JOURNAL_VOUCHER_POSTED`
+and no source document already provides one — the same computation, moved to
+`packages/accounting-kernel/src/rules/journal-voucher.ts` or
+`posting-engine.ts`, with `apps/api` no longer minting an id at all. Due
+before a second caller of `postingEngine.post` for a client-triggered,
+document-less event needs the same derivation and either duplicates this
+function or imports it from `apps/api` (which dependency-cruiser would
+correctly refuse, `apps/api` not being an allowed import for a module or
+another lane).

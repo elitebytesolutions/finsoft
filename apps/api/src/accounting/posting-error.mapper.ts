@@ -26,6 +26,15 @@ const STATUS_409: ReadonlySet<PostingErrorCode> = new Set([
   'ALREADY_REVERSED',
   'REVERSAL_OF_REVERSAL',
   'REVERSAL_VIA_SOURCE_REQUIRED',
+  // M2-B Council ruling, 2026-09-29: period.md §4.1's ordering rules and
+  // §4's reopen-only-when-closed rule are, like the codes above, "the
+  // request is individually valid but conflicts with the current state of
+  // something it names" — the period named is real, but out of order or
+  // not in the state this transition requires.
+  'PERIOD_CLOSE_OUT_OF_ORDER',
+  'PERIOD_REOPEN_OUT_OF_ORDER',
+  'PERIOD_LOCK_OUT_OF_ORDER',
+  'PERIOD_NOT_CLOSED',
 ])
 
 const STATUS_403: ReadonlySet<PostingErrorCode> = new Set(['FORBIDDEN'])

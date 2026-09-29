@@ -163,7 +163,7 @@ export {
 } from './accounting/accounts.ts'
 export type { AccountRow } from './accounting/accounts.ts'
 
-export { findPeriodById, findPeriodForDate } from './accounting/periods.ts'
+export { findPeriodById, findPeriodForDate, listPeriods } from './accounting/periods.ts'
 export type { FiscalPeriodRow, PeriodStatus } from './accounting/periods.ts'
 
 export { assignDocumentNumber, assignTenantDocumentNumber } from './accounting/sequences.ts'
@@ -191,6 +191,7 @@ export type {
 } from './accounting/journal.ts'
 
 export {
+  accountLedgerBalanceThrough,
   accountLedgerLines,
   LEDGER_PAGE_MAX,
   accountOpeningBalance,

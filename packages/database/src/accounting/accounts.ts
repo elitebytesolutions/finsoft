@@ -22,6 +22,8 @@ export interface AccountRow {
   readonly role: string | null
   readonly restricted: boolean
   readonly isActive: boolean
+  /** Null for a HEADER account. GET /api/accounts' tree is built from this. */
+  readonly parentId: string | null
 }
 
 function mapRow(row: {
@@ -36,6 +38,7 @@ function mapRow(row: {
   role: string | null
   restricted: boolean
   is_active: boolean
+  parent_id: string | null
 }): AccountRow {
   return {
     id: row.id,
@@ -49,6 +52,7 @@ function mapRow(row: {
     role: row.role,
     restricted: row.restricted,
     isActive: row.is_active,
+    parentId: row.parent_id,
   }
 }
 
