@@ -437,6 +437,32 @@ describe('@finsoft/database/testing is importable only from a test file (M1-X, C
     )
     expect(matching(messages, 'Council re-review 1')).toEqual([])
   })
+
+  /*
+   * Security seat, final check on a7576ac (medium): the request-scoping
+   * interceptor and the outbox dispatcher are excluded (`ignores`) from the
+   * general apps/** TenantContext-ban block so their own legitimate
+   * TenantContext import is not caught — but with no block of their own,
+   * that exclusion let them escape every OTHER ban that block carries too,
+   * including this one. A dedicated block now covers them.
+   */
+  it('catches it in the request-scoping interceptor, which is otherwise allowed to import TenantContext directly', async () => {
+    const messages = await messagesFor(
+      'apps/api/src/common/tenant-context.interceptor.ts',
+      `import { runAs } from '@finsoft/database/testing'
+       export const use = runAs`,
+    )
+    expect(matching(messages, 'Council re-review 1')).toHaveLength(1)
+  })
+
+  it('catches it in the outbox dispatcher, which is otherwise allowed to import TenantContext directly', async () => {
+    const messages = await messagesFor(
+      'apps/worker/src/outbox/dispatcher.ts',
+      `import { runAs } from '@finsoft/database/testing'
+       export const use = runAs`,
+    )
+    expect(matching(messages, 'Council re-review 1')).toHaveLength(1)
+  })
 })
 
 describe('@finsoft/database/provisioning is importable only from tools/seed/** or a test file (M1-X, Council re-review 1)', () => {
@@ -494,6 +520,29 @@ describe('@finsoft/database/provisioning is importable only from tools/seed/** o
     expect(matching(messages, 'Council re-review 1')).toEqual([])
   })
 
+  /*
+   * Security seat, final check on a7576ac (medium): same gap as testing's
+   * own describe block above — the interceptor and the dispatcher escaped
+   * this ban too, with no block of their own to catch it.
+   */
+  it('catches it in the request-scoping interceptor, which is otherwise allowed to import TenantContext directly', async () => {
+    const messages = await messagesFor(
+      'apps/api/src/common/tenant-context.interceptor.ts',
+      `import { createTenant } from '@finsoft/database/provisioning'
+       export const use = createTenant`,
+    )
+    expect(matching(messages, 'Council re-review 1')).toHaveLength(1)
+  })
+
+  it('catches it in the outbox dispatcher, which is otherwise allowed to import TenantContext directly', async () => {
+    const messages = await messagesFor(
+      'apps/worker/src/outbox/dispatcher.ts',
+      `import { createTenant } from '@finsoft/database/provisioning'
+       export const use = createTenant`,
+    )
+    expect(matching(messages, 'Council re-review 1')).toHaveLength(1)
+  })
+
   it('leaves a test file alone', async () => {
     const messages = await messagesFor(
       'tests/integration/thing.spec.ts',
@@ -501,6 +550,53 @@ describe('@finsoft/database/provisioning is importable only from tools/seed/** o
        export const use = createTenant`,
     )
     expect(matching(messages, 'Council re-review 1')).toEqual([])
+  })
+})
+
+describe('tools/ scripts still carry the repo-wide decimal-library and request-scope bans (Security seat, final check on a7576ac, low regression)', () => {
+  /*
+   * The two tools/ script blocks this task added for the testing/
+   * provisioning bans (eslint.config.mjs) each set no-restricted-imports —
+   * which, for every file they match, REPLACES the repo-wide block's own
+   * setting (DECIMAL_LIB_IMPORT_PATHS + REQUEST_SCOPE_IMPORT_BAN) rather
+   * than adding to it. Without restating both lists in both blocks, every
+   * tools/ script silently lost protection it had before this task touched
+   * the file at all.
+   */
+  it('catches a decimal library imported from an ordinary tools/ script', async () => {
+    const messages = await messagesFor(
+      'tools/db/thing.mjs',
+      `import Decimal from 'decimal.js'
+       export const use = Decimal`,
+    )
+    expect(matching(messages, 'ADR-0011/ADR-0014')).toHaveLength(1)
+  })
+
+  it('catches a decimal library imported from tools/seed/**', async () => {
+    const messages = await messagesFor(
+      'tools/seed/thing.mjs',
+      `import Decimal from 'decimal.js'
+       export const use = Decimal`,
+    )
+    expect(matching(messages, 'ADR-0011/ADR-0014')).toHaveLength(1)
+  })
+
+  it('catches @finsoft/database/request-scope imported from an ordinary tools/ script', async () => {
+    const messages = await messagesFor(
+      'tools/db/thing.mjs',
+      `import { withTenantAsPrincipal } from '@finsoft/database/request-scope'
+       export const use = withTenantAsPrincipal`,
+    )
+    expect(matching(messages, 'M1-X T1')).toHaveLength(1)
+  })
+
+  it('catches @finsoft/database/request-scope imported from tools/seed/**', async () => {
+    const messages = await messagesFor(
+      'tools/seed/thing.mjs',
+      `import { withTenantAsPrincipal } from '@finsoft/database/request-scope'
+       export const use = withTenantAsPrincipal`,
+    )
+    expect(matching(messages, 'M1-X T1')).toHaveLength(1)
   })
 })
 

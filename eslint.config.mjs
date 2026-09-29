@@ -664,6 +664,41 @@ export default tseslint.config(
   },
 
   /* ---------------------------------------------------------------- *
+   * Security seat, final check on a7576ac (medium). The interceptor and
+   * the outbox dispatcher are excluded from the block above (`ignores`)
+   * specifically so their own legitimate `TenantContext` import is not
+   * caught by `TENANT_CONTEXT_IMPORT_BAN` — but `ignores` means the WHOLE
+   * block skips them, not just that one entry, so they were also escaping
+   * every other ban that block carries: decimal libraries, request-scope,
+   * and (Council re-review item 1) testing/provisioning. Nothing else in
+   * this file matched them, so nothing replaced the missing rule either —
+   * this is the block that should have existed alongside the `ignores`.
+   *
+   * `TenantContext` itself is deliberately absent from this list: that
+   * import is the entire reason these two files are named here rather than
+   * covered by the block above.
+   * ---------------------------------------------------------------- */
+  {
+    files: [
+      'apps/api/src/common/tenant-context.interceptor.ts',
+      'apps/worker/src/outbox/dispatcher.ts',
+    ],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            ...DECIMAL_LIB_IMPORT_PATHS,
+            REQUEST_SCOPE_IMPORT_BAN,
+            TESTING_IMPORT_BAN,
+            PROVISIONING_IMPORT_BAN,
+          ],
+        },
+      ],
+    },
+  },
+
+  /* ---------------------------------------------------------------- *
    * The one file allowed to import withTenantAsPrincipal from
    * request-scope (M1-X T1) — and, per T2, ALSO banned from importing
    * TenantContext directly: PermissionGuard establishes its tenant scope
@@ -1036,11 +1071,25 @@ export default tseslint.config(
    * database, not a provisioning or seeding mechanism. Every tools/ script,
    * including tools/seed/**, is banned — a separate, narrower block below
    * allows tools/seed/** to import @finsoft/database/provisioning instead.
+   *
+   * Security seat, final check on a7576ac (low regression): restates
+   * DECIMAL_LIB_IMPORT_PATHS and REQUEST_SCOPE_IMPORT_BAN, which the
+   * repo-wide block above already bans for every file with no `files` key
+   * — including every tools/ script — until a LATER, more specific block
+   * matches the same file and flat config replaces its no-restricted-imports
+   * setting wholesale rather than merging it. Without restating them here,
+   * this block's own match on every tools/ script silently dropped both
+   * bans the moment this task added it.
    * ---------------------------------------------------------------- */
   {
     files: ['tools/**/*.mjs'],
     rules: {
-      'no-restricted-imports': ['error', { paths: [TESTING_IMPORT_BAN] }],
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [...DECIMAL_LIB_IMPORT_PATHS, REQUEST_SCOPE_IMPORT_BAN, TESTING_IMPORT_BAN],
+        },
+      ],
     },
   },
 
@@ -1053,13 +1102,25 @@ export default tseslint.config(
    * config replaces no-restricted-imports per matching file: without this,
    * a tools/seed/** file matching BOTH this block and the one above would
    * keep only whichever config happens to be listed last, silently
-   * dropping the other ban.
+   * dropping the other ban. DECIMAL_LIB_IMPORT_PATHS and
+   * REQUEST_SCOPE_IMPORT_BAN restated for the same reason as the block
+   * above (Security seat, final check on a7576ac).
    * ---------------------------------------------------------------- */
   {
     files: ['tools/**/*.mjs'],
     ignores: ['tools/seed/**'],
     rules: {
-      'no-restricted-imports': ['error', { paths: [TESTING_IMPORT_BAN, PROVISIONING_IMPORT_BAN] }],
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            ...DECIMAL_LIB_IMPORT_PATHS,
+            REQUEST_SCOPE_IMPORT_BAN,
+            TESTING_IMPORT_BAN,
+            PROVISIONING_IMPORT_BAN,
+          ],
+        },
+      ],
     },
   },
   {
