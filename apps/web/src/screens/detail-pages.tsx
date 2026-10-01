@@ -1,5 +1,5 @@
 'use client'
-import { type ReactNode } from 'react'
+import { useState, type FormEvent, type ReactNode } from 'react'
 import { useNavigate, useParams } from '@/lib/router'
 import {
   ArrowDownRight,
@@ -21,10 +21,15 @@ import {
 } from 'lucide-react'
 import { users } from '@/mocks/api'
 import type { AppData } from '@/mocks/api'
-import { Badge, Button, Kpi, PageHead, Panel, Table } from '@finsoft/ui'
+import { Badge, Banner, Button, Field, Kpi, Modal, PageHead, Panel, Table, TextInput } from '@finsoft/ui'
 import { AccountSelect, LedgerBook, LedgerKpis } from './ledger'
 import { exportLedgerCsv, netOf } from './ledger-data'
-import { money, movementTone } from '@finsoft/ui'
+import { money, moneyFromString, movementTone } from '@finsoft/ui'
+import { useAuth } from '@/lib/api/auth-context'
+import { useApiQuery } from '@/lib/api/use-api-query'
+import { useIdempotencyKey } from '@/lib/api/idempotency-key'
+import { ApiError } from '@/lib/api/types'
+import { getInvoice, reverseInvoice } from '@/lib/api/invoices-client'
 
 function DetailField({ label, value }: { label: string; value: ReactNode }) {
   return (
@@ -368,124 +373,326 @@ function PurchaseDetail({ data }: { data: AppData }) {
   )
 }
 
-function SaleDetail({ data }: { data: AppData }) {
+/*
+ * Invoice detail — /sales/:id. Real API (I3 `GET /api/invoices/:id`), replacing the mock's
+ * product/batch/GST sale record. `data` is kept in the signature only because the route table
+ * still passes it uniformly to every detail page in this file; the real invoice no longer
+ * needs it (M4-W2).
+ */
+function SaleDetail(_props: { data: AppData }) {
   const { id } = useParams()
-  const sale = data.sales.find((s) => s.id === id)
-  if (!sale) return <MissingRecord label="invoice" />
-  const gst = Math.round(sale.amount * 0.17)
-  const journals = data.journals.filter((j) => j.reference === id)
-  const product = data.products.find((p) => p.name === sale.product)
+  const navigate = useNavigate()
+  const { can } = useAuth()
+  const { state, reload } = useApiQuery(
+    () => (id ? getInvoice(id) : Promise.reject(new Error('missing id'))),
+    [id],
+  )
+  const [reverseOpen, setReverseOpen] = useState(false)
+
+  if (state.status === 'loading') {
+    return (
+      <div className="state-page" role="status" aria-live="polite">
+        <h1>Loading invoice…</h1>
+      </div>
+    )
+  }
+  if (state.status === 'forbidden') {
+    return (
+      <div className="state-page" role="alert">
+        <h1>Access restricted</h1>
+        <p>Your role does not have permission to view invoices.</p>
+      </div>
+    )
+  }
+  if (state.status === 'error') {
+    if (state.message.toLowerCase().includes('not found')) {
+      return <MissingRecord label="invoice" />
+    }
+    return (
+      <div className="state-page" role="alert">
+        <h1>We could not load this invoice</h1>
+        <p>{state.message}</p>
+        <Button onClick={reload}>Try again</Button>
+      </div>
+    )
+  }
+
+  const invoice = state.data
+  const statusTone =
+    invoice.status === 'POSTED'
+      ? 'good'
+      : invoice.status === 'DRAFT'
+        ? 'info'
+        : invoice.status === 'REVERSED'
+          ? 'danger'
+          : 'neutral'
+  const settlementLabel =
+    invoice.settlement === 'PAID'
+      ? 'Paid'
+      : invoice.settlement === 'PARTIALLY_PAID'
+        ? 'Partially paid'
+        : invoice.settlement === 'OPEN'
+          ? 'Open'
+          : '—'
+  // `invoice.post` + `voucher.reverse` (privileged) — matches the controller's
+  // @RequirePermission on POST /invoices/:id/reverse (I8). UI affordance only; the server
+  // re-checks under lock.
+  const canReverse =
+    invoice.status === 'POSTED' &&
+    invoice.reversalBlockedBy.length === 0 &&
+    can('invoice.post') &&
+    can('voucher.reverse')
+  const blockedByReverse = invoice.status === 'POSTED' && invoice.reversalBlockedBy.length > 0
+
   return (
     <>
       <DocHeader
         eyebrow="Trading / Sales"
-        title={`Invoice ${sale.id}`}
-        sub={`${sale.date} · ${sale.customer}`}
+        title={invoice.number ?? 'Draft invoice'}
+        sub={`${invoice.invoiceDate} · ${invoice.customer.name}`}
         back="/sales"
-        meta={<span>Fiscal period FY 2026–27 · Branch Lahore Main</span>}
+        meta={
+          <span>
+            <Badge tone={statusTone}>{invoice.status}</Badge>{' '}
+            {invoice.settlement && <Badge tone="info">{settlementLabel}</Badge>}
+          </span>
+        }
         actions={
           <>
-            <Button kind="secondary">
-              <Printer /> Print
-            </Button>
-            <Button>
-              <Download /> PDF copy
-            </Button>
+            {invoice.status === 'DRAFT' && can('invoice.create') && (
+              <Button onClick={() => navigate(`/sales/voucher?invoice=${invoice.id}`)}>
+                Edit draft
+              </Button>
+            )}
+            {canReverse && (
+              <Button kind="danger" onClick={() => setReverseOpen(true)}>
+                Reverse
+              </Button>
+            )}
           </>
         }
       />
+      {invoice.status === 'DRAFT' && (
+        <Banner tone="info">This invoice is a draft. It has not been posted to the ledger.</Banner>
+      )}
+      {blockedByReverse && (
+        <Banner tone="warn">
+          This invoice cannot be reversed while it has live receipt allocations. Reverse{' '}
+          {invoice.reversalBlockedBy.map((r) => r.number).join(', ')} first.
+        </Banner>
+      )}
+      {invoice.reversal && (
+        <Banner tone="danger">
+          Reversed by {invoice.reversal.entryNumber} — {invoice.reversal.reason}
+        </Banner>
+      )}
       <div className="kpi-grid">
-        <Kpi label="Quantity" value={`${sale.qty} packs`} change="Single line item" icon={Boxes} />
         <Kpi
-          label="Unit price"
-          value={money(sale.amount / sale.qty)}
-          change={`Batch ${sale.batch}`}
-          icon={WalletCards}
-          tone="teal"
+          label="Lines"
+          value={String(invoice.lines.length)}
+          change="Service lines"
+          icon={Boxes}
         />
         <Kpi
-          label="Invoice total"
-          value={money(sale.amount)}
-          change={`GST 17% ${money(gst)}`}
+          label="Net amount"
+          value={moneyFromString(invoice.netAmount)}
+          change={invoice.number ?? 'Not yet posted'}
           icon={ReceiptText}
           tone="blue"
         />
         <Kpi
-          label="Payment"
-          value={sale.status}
-          change={sale.status === 'Paid' ? 'Received in full' : 'Awaiting settlement'}
+          label="Outstanding"
+          value={invoice.outstanding ? moneyFromString(invoice.outstanding) : '—'}
+          change={invoice.outstanding ? 'Still to collect' : 'Not posted'}
+          icon={WalletCards}
+          tone="teal"
+        />
+        <Kpi
+          label="Settlement"
+          value={settlementLabel}
+          change={invoice.status}
           icon={TrendingUp}
           tone="yellow"
         />
       </div>
       <div className="detail-grid">
-        <DetailField label="Customer" value={sale.customer} />
-        <DetailField label="Mode" value={<Badge tone="info">{sale.mode}</Badge>} />
+        <DetailField label="Customer" value={`${invoice.customer.name} (${invoice.customer.code})`} />
+        <DetailField label="Status" value={<Badge tone={statusTone}>{invoice.status}</Badge>} />
+        <DetailField label="Invoice date" value={invoice.invoiceDate} />
+        <DetailField label="Due date" value={invoice.dueDate ?? '—'} />
+        <DetailField label="Narration" value={invoice.narration ?? '—'} />
         <DetailField
-          label="Payment status"
+          label="Journal entry"
           value={
-            sale.status === 'Paid' ? (
-              <Badge tone="good">Paid</Badge>
+            invoice.journalEntry ? (
+              <button
+                className="linkable"
+                onClick={() => navigate(`/vouchers/${invoice.journalEntry!.id}`)}
+              >
+                {invoice.journalEntry.number}
+              </button>
             ) : (
-              <Badge tone="warn">Credit</Badge>
+              '—'
             )
           }
         />
-        <DetailField label="Product" value={sale.product} />
-        <DetailField label="Batch (FEFO)" value={sale.batch} />
-        <DetailField label="Invoice date" value={sale.date} />
       </div>
       <div className="doc-grid">
-        <Panel title="Line items" sub="Goods dispensed on this invoice">
+        <Panel title="Line items" sub="Service lines on this invoice">
           <Table
-            headers={['Product', 'Batch', 'Qty', 'Unit price', 'Amount']}
-            rows={[
-              [
-                product ? <b>{product.name}</b> : <b>{sale.product}</b>,
-                sale.batch,
-                sale.qty,
-                money(sale.amount / sale.qty),
-                <b>{money(sale.amount)}</b>,
-              ],
-            ]}
+            headers={['#', 'Description', 'Qty', 'Unit price', 'Net amount']}
+            rows={
+              invoice.lines.length
+                ? invoice.lines.map((line) => [
+                    line.lineNo,
+                    line.description,
+                    line.quantity,
+                    moneyFromString(line.unitPrice),
+                    <b key="net">{moneyFromString(line.lineNet)}</b>,
+                  ])
+                : [[<EmptyState key="e">No lines</EmptyState>]]
+            }
           />
         </Panel>
         <Panel title="Invoice totals">
           <div className="totals-card">
             <div>
-              <span>Subtotal</span>
-              <b>{money(sale.amount)}</b>
+              <span>Net amount</span>
+              <b>{moneyFromString(invoice.netAmount)}</b>
             </div>
             <div>
-              <span>GST 17%</span>
-              <b>{money(gst)}</b>
-            </div>
-            <div>
-              <span>Grand total</span>
-              <b>{money(sale.amount + gst)}</b>
+              <span>Outstanding</span>
+              <b>{invoice.outstanding ? moneyFromString(invoice.outstanding) : '—'}</b>
             </div>
           </div>
         </Panel>
       </div>
-      <Panel title="Ledger impact" sub="Revenue and cost journal entries posted with this invoice">
+      <Panel title="Allocations" sub="Receipts applied against this invoice">
         <Table
-          headers={['Journal', 'Date', 'Description', 'Debit', 'Credit', 'Amount']}
+          headers={['Receipt', 'Date', 'Amount', 'Status']}
           rows={
-            journals.length
-              ? journals.map((j) => [
-                  <b>{j.id}</b>,
-                  j.date,
-                  j.description,
-                  j.debit,
-                  j.credit,
-                  <b>{money(j.amount)}</b>,
+            invoice.allocations.length
+              ? invoice.allocations.map((a) => [
+                  <button
+                    key="r"
+                    className="linkable"
+                    onClick={() => navigate(`/receipts/${a.receiptId}`)}
+                  >
+                    {a.receiptNumber}
+                  </button>,
+                  a.receiptDate,
+                  moneyFromString(a.amount),
+                  <Badge key="s" tone={a.status === 'LIVE' ? 'good' : 'neutral'}>
+                    {a.status}
+                  </Badge>,
                 ])
-              : [[<EmptyState key="e">No journal entry yet</EmptyState>]]
+              : [[<EmptyState key="e">No receipts allocated yet</EmptyState>]]
           }
         />
       </Panel>
+      {reverseOpen && (
+        <InvoiceReverseDialog
+          invoiceId={invoice.id}
+          onClose={() => setReverseOpen(false)}
+          onDone={() => {
+            setReverseOpen(false)
+            reload()
+          }}
+        />
+      )}
     </>
   )
+}
+
+function InvoiceReverseDialog({
+  invoiceId,
+  onClose,
+  onDone,
+}: {
+  invoiceId: string
+  onClose: () => void
+  onDone: () => void
+}) {
+  const [reason, setReason] = useState('')
+  const [confirmed, setConfirmed] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const { key } = useIdempotencyKey()
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (submitting) return
+    if (!reason.trim()) {
+      setError('A reason is required.')
+      return
+    }
+    if (!confirmed) {
+      setError('Confirm that you understand this posts a new reversing entry.')
+      return
+    }
+    setSubmitting(true)
+    setError(null)
+    try {
+      await reverseInvoice(invoiceId, { reason: reason.trim() }, key)
+      onDone()
+    } catch (err) {
+      setError(invoiceReverseErrorMessage(err))
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <Modal title="Reverse invoice" onClose={onClose}>
+      <form onSubmit={submit} noValidate>
+        <p>
+          This posts a new reversing journal entry that exactly neutralises this invoice. Both
+          entries remain in the ledger permanently. This cannot be undone.
+        </p>
+        <Field label="Reason" htmlFor="invoice-reverse-reason" required error={error ?? undefined}>
+          <TextInput id="invoice-reverse-reason" value={reason} onChange={setReason} required />
+        </Field>
+        <label style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '12px 0' }}>
+          <input
+            type="checkbox"
+            checked={confirmed}
+            onChange={(e) => setConfirmed(e.target.checked)}
+          />
+          I understand this cannot be undone.
+        </label>
+        <div className="modal-foot">
+          <Button kind="secondary" onClick={onClose} type="button">
+            Cancel
+          </Button>
+          <Button kind="danger" type="submit" busy={submitting}>
+            Reverse invoice
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+/*
+ * Maps the receivables error-code table (modules/receivables/api/errors.ts) to end-user copy.
+ * `INVOICE_HAS_LIVE_ALLOCATIONS` carries the PO-mandated wording (reverse the receipt first);
+ * `PERIOD_CLOSED` names the reason the server gave rather than a generic failure.
+ */
+export function invoiceReverseErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    switch (err.serverCode) {
+      case 'invoice_has_live_allocations':
+        return 'This invoice has live receipt allocations. Reverse the receipt first, then reverse the invoice.'
+      case 'period_closed':
+        return 'The fiscal period for this invoice is closed. It cannot be reversed.'
+      case 'already_reversed':
+        return 'This invoice has already been reversed.'
+      case 'invoice_not_posted':
+        return 'Only a posted invoice can be reversed.'
+      default:
+        return err.message
+    }
+  }
+  return 'Could not reverse this invoice. Try again.'
 }
 
 function MasterDetail({ data }: { data: AppData }) {
