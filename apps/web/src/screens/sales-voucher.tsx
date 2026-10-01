@@ -179,7 +179,13 @@ export function SalesVoucher() {
     const t = setTimeout(() => {
       listCustomers({ q, status: 'ACTIVE', limit: 8 })
         .then((page) => {
-          if (active) setCustomerOptions([...page.items])
+          if (!active) return
+          setCustomerOptions([...page.items])
+          // The text may already be a complete, exact match (typed fast, pasted, or filled by
+          // a test/automation tool) that arrived before this search resolved — resolve it now
+          // rather than silently leaving customerId unset.
+          const exact = page.items.find((c) => `${c.name} (${c.code})` === q)
+          if (exact) setCustomerId(exact.id)
         })
         .catch(() => {
           if (active) setCustomerOptions([])

@@ -367,7 +367,14 @@ function NewReceiptDialog({ onClose, onDone }: { onClose: () => void; onDone: ()
     let active = true
     const t = setTimeout(() => {
       listCustomers({ q, status: 'ACTIVE', limit: 8 })
-        .then((page) => active && setCustomerOptions([...page.items]))
+        .then((page) => {
+          if (!active) return
+          setCustomerOptions([...page.items])
+          // Same reasoning as sales-voucher.tsx: resolve an exact match that arrived after it
+          // was typed, instead of silently leaving customerId unset.
+          const exact = page.items.find((c) => `${c.name} (${c.code})` === q)
+          if (exact) setCustomerId(exact.id)
+        })
         .catch(() => active && setCustomerOptions([]))
     }, 300)
     return () => {
