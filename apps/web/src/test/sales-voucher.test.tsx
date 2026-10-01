@@ -5,6 +5,7 @@ import { MemoryRouter } from './harness'
 import { SalesVoucher } from '@/screens/sales-voucher'
 import { AuthContext, type AuthContextValue } from '@/lib/api/auth-context'
 import { setAccessToken } from '@/lib/api/session'
+import { FinsoftProvider } from '@/app-context'
 
 const fakeAuth: AuthContextValue = {
   status: 'authenticated',
@@ -65,7 +66,13 @@ function renderScreen(path = '/sales/voucher', can: (code: string) => boolean = 
   return render(
     <MemoryRouter initialEntries={[path]}>
       <AuthContext.Provider value={{ ...fakeAuth, can }}>
-        <SalesVoucher />
+        {/* SalesVoucher's outer mode-switch wrapper reads useFinsoft() even in Service mode
+            (it needs `data` to hand ProductSalesVoucher if the user switches), same nesting
+            order as harness.tsx's App (AuthContext outside FinsoftProvider — FinsoftProvider
+            itself reads useAuth()). */}
+        <FinsoftProvider>
+          <SalesVoucher />
+        </FinsoftProvider>
       </AuthContext.Provider>
     </MemoryRouter>,
   )
@@ -120,6 +127,34 @@ describe('SalesVoucher', () => {
   it('shows Access restricted without invoice.create', () => {
     renderScreen('/sales/voucher', () => false)
     expect(screen.getByText('Access restricted')).toBeInTheDocument()
+  })
+
+  it('Product mode shows the restored prototype, with Save/Post disabled and never calling the API', async () => {
+    renderScreen()
+    await waitFor(() => expect(screen.getByLabelText('Customer')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Product' }))
+
+    expect(screen.getByText('Prototype — not connected to the ledger')).toBeInTheDocument()
+    // The restored product/batch/GST form, not the service-line form.
+    expect(screen.getByText('Fulfillment & Sales Team')).toBeInTheDocument()
+    expect(screen.getByText('Sale No')).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: /GST %/ })).toBeInTheDocument()
+
+    const saveDraft = screen.getByRole('button', { name: /save draft/i })
+    const savePost = screen.getByRole('button', { name: /save & post/i })
+    expect(saveDraft).toBeDisabled()
+    expect(savePost).toBeDisabled()
+    expect(saveDraft).toHaveAttribute('title', 'Coming with inventory and tax (Waves 5–9)')
+    expect(savePost).toHaveAttribute('title', 'Coming with inventory and tax (Waves 5–9)')
+
+    const fetchMock = fetch as ReturnType<typeof vi.fn>
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    // Switching back to Service restores the real form and drops the banner.
+    fireEvent.click(screen.getByRole('button', { name: 'Service' }))
+    expect(screen.queryByText('Prototype — not connected to the ledger')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Customer')).toBeInTheDocument()
   })
 
   it('calculates the line net amount and invoice total via I6, never in the browser', async () => {
