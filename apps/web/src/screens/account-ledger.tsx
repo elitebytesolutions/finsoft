@@ -240,26 +240,38 @@ function LedgerBody({
         </div>
       </section>
 
-      <div className="al-filter" style={{ display: 'flex', gap: 12, margin: '12px 0' }}>
-        <label>
-          From{' '}
-          <input
-            aria-label="From date"
-            type="date"
-            value={from}
-            onChange={(e) => setFrom(e.target.value)}
-            max={to}
-          />
+      {/* The one live filter on this page — styled like New Voucher's date field (`vn-fld`/
+       * `vn-in`, vouchers.tsx), not a raw native date input, per the design-system review. */}
+      <div className="al-daterange">
+        <label className="vn-fld">
+          <span>From</span>
+          <span className="vn-in">
+            <i>
+              <CalendarDays />
+            </i>
+            <input
+              aria-label="From date"
+              type="date"
+              value={from}
+              onChange={(e) => setFrom(e.target.value)}
+              max={to}
+            />
+          </span>
         </label>
-        <label>
-          To{' '}
-          <input
-            aria-label="To date"
-            type="date"
-            value={to}
-            onChange={(e) => setTo(e.target.value)}
-            max={todayIso()}
-          />
+        <label className="vn-fld">
+          <span>To</span>
+          <span className="vn-in">
+            <i>
+              <CalendarDays />
+            </i>
+            <input
+              aria-label="To date"
+              type="date"
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+              max={todayIso()}
+            />
+          </span>
         </label>
       </div>
 
@@ -505,6 +517,20 @@ function LedgerBody({
               ) : (
                 <div className="table-wrap al-table">
                   <table>
+                    {/* Fixed column widths (colgroup, not per-cell guesses) so Particulars is
+                     * the only column that stretches — Balance (with its Dr/Cr suffix) keeps a
+                     * guaranteed width instead of being squeezed or clipped by a long
+                     * narration. Design-system review: the table was overflowing `.al-table`'s
+                     * old `overflow:hidden` at 1440, cutting Balance off entirely. */}
+                    <colgroup>
+                      <col style={{ width: 108 }} />
+                      <col style={{ width: 150 }} />
+                      <col />
+                      <col style={{ width: 114 }} />
+                      <col style={{ width: 114 }} />
+                      <col style={{ width: 134 }} />
+                      <col style={{ width: 38 }} />
+                    </colgroup>
                     <thead>
                       <tr>
                         <th>Date</th>
