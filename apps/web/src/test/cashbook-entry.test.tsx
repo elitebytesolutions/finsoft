@@ -203,9 +203,10 @@ describe('Cash Book entry — Cash Out', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: /post entry/i }))
 
     await waitFor(() => expect(posted).not.toBeNull())
+    // buildCashEntryRequest always puts the CASH line first, regardless of direction.
     expect(posted!.lines).toEqual([
-      { accountId: 'a6300', debit: '1200' },
       { accountId: 'a1110', credit: '1200' },
+      { accountId: 'a6300', debit: '1200' },
     ])
   })
 })
