@@ -11,6 +11,7 @@ import {
   checkInvariant9,
   computeInvariant9Rows,
   invariant9Available,
+  isTestOnlyKernelPostingTenant,
 } from '../accounting/ar-invariant-9.ts'
 import { describeBreaks, reconcileSubledgerToGeneralLedger } from './reconciler.ts'
 
@@ -67,35 +68,23 @@ describe('AR subledger reconciles to AR_CONTROL — real rows, gated on M3-P', (
     }
 
     const asOf = new Date().toISOString().slice(0, 10)
-    const tenantIds = (
-      await withGlobal((tx) => tx.selectFrom('tenants').select('id').execute())
-    ).map((row) => row.id)
+    const tenants = await withGlobal((tx) =>
+      tx.selectFrom('tenants').select(['id', 'code']).execute(),
+    )
 
     /*
-     * Scoped to tenants with subledger activity of their own — see
-     * financial-invariant-suite.spec.ts's identical Invariant 9 block for
-     * why: a tenant from tests/accounting/kernel-rules.spec.ts posts an
-     * AR_CONTROL journal line through the kernel's internal pipeline
-     * directly (test-only, by that file's own comment), with no
-     * `sales_invoices` row ever created for it. That tenant genuinely has
-     * GL activity with nothing to reconcile against — not a posted-data
-     * defect, a fact about a lower-level kernel test this lane does not
-     * own and must not edit.
+     * EVERY tenant is checked — Accounting seat ruling, 2026-10-01
+     * (rejecting this lane's first attempt, which skipped any tenant with
+     * no subledger activity: that hides the exact break Invariant 9 exists
+     * to catch, AR in the GL with no document behind it). The ONE
+     * exemption is the named allowlist `ar-invariant-9.ts`'s
+     * `isTestOnlyKernelPostingTenant` documents — see that file's own comment.
      */
     const checkedTenantIds: string[] = []
     const subledger = []
     const generalLedger = []
-    for (const tenantId of tenantIds) {
-      const hasSubledgerActivity = await runAs({ tenantId, userId: null }, () =>
-        withTenant(async (tx) => {
-          const [invoice, receipt] = await Promise.all([
-            tx.selectFrom('sales_invoices').select('id').limit(1).executeTakeFirst(),
-            tx.selectFrom('customer_receipts').select('id').limit(1).executeTakeFirst(),
-          ])
-          return invoice !== undefined || receipt !== undefined
-        }),
-      )
-      if (!hasSubledgerActivity) continue
+    for (const { id: tenantId, code } of tenants) {
+      if (isTestOnlyKernelPostingTenant(code)) continue
       checkedTenantIds.push(tenantId)
 
       const result = await runAs({ tenantId, userId: null }, () =>

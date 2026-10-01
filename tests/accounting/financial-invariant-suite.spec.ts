@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { closeDatabase, openDatabase, withGlobal, withTenant } from '@finsoft/database'
 import {
@@ -10,11 +11,21 @@ import {
   prepareTestDatabase,
   runAs,
 } from '@finsoft/database/testing'
+import { createFiscalYear, seedChartOfAccounts } from '@finsoft/database/provisioning'
+import { registerParty } from '@finsoft/accounting-kernel'
+// Clock injection is test-only: deliberately not on the package's public surface.
+import { fixedClock } from '../../packages/accounting-kernel/src/clock.ts'
+import { createPostingEngine } from '../../packages/accounting-kernel/src/posting-engine.ts'
+import { createReversalEngine } from '../../packages/accounting-kernel/src/reversal.ts'
 import { constraints, columns } from '../../database/tests/catalog.ts'
 import { GLOBAL_TABLES } from '@finsoft/database'
 import { INVARIANTS, enforcedIds, pendingIds } from './invariants.ts'
 import { registerPostingInvariantChecks } from './posting-invariants.ts'
-import { checkInvariant9, invariant9Available } from './ar-invariant-9.ts'
+import {
+  checkInvariant9,
+  invariant9Available,
+  isTestOnlyKernelPostingTenant,
+} from './ar-invariant-9.ts'
 
 /*
  * The FinancialInvariantSuite. NON_NEGOTIABLES §3: it runs on every PR, and
@@ -173,11 +184,22 @@ describe('Invariant 9, AR half (M3-Q) — gated on M3-P', () => {
    * docs/posting-rules/customer-receipt.md §8. M3-P merged (@2a02731):
    * `sales_invoices` / `customer_receipts` exist and SALE_POSTED /
    * CUSTOMER_PAYMENT_RECEIVED are IMPLEMENTED_EVENTS. This describe block
-   * now runs the check FOR REAL, against every tenant that has subledger
-   * activity — `invariants.ts` id 9 (AR half) moves to 'enforced' and
-   * `pending-baseline.json` drops it in the SAME commit as this change,
-   * per the ratchet's own rule: shrinking it requires a genuine live run,
-   * which this is.
+   * now runs the check FOR REAL, against EVERY tenant — `invariants.ts`
+   * id 9 (AR half) moves to 'enforced' and `pending-baseline.json` drops
+   * it in the SAME commit as this change, per the ratchet's own rule:
+   * shrinking it requires a genuine live run, which this is.
+   *
+   * Accounting seat ruling, 2026-10-01 (REJECTING this lane's first
+   * attempt): skipping a tenant with no subledger activity was wrong — it
+   * hides the exact break Invariant 9 exists to catch (AR in the GL with
+   * no document behind it). A tenant with no documents must show ZERO AR
+   * in the GL; anything else is a break, and the sweep below checks every
+   * tenant, no exceptions except the one EXPLICIT, NAMED allowlist
+   * `ar-invariant-9.ts`'s `isTestOnlyKernelPostingTenant` documents (see that
+   * file's own comment for why: `tests/accounting/kernel-rules.spec.ts`,
+   * a file this lane does not own, posts a synthetic AR_CONTROL line with
+   * no document behind it BY DESIGN, to prove the kernel's own schema —
+   * that is the ONE tenant kind this invariant is not about).
    */
   it('the AR-half gate correctly reports unavailable until M3-P lands, or runs for real once it has', async () => {
     const tenant = await createTenantFixture('INV9')
@@ -194,78 +216,168 @@ describe('Invariant 9, AR half (M3-Q) — gated on M3-P', () => {
     }
 
     /*
-     * M3-P HAS LANDED. From here the check is real: every tenant WITH
-     * SUBLEDGER ACTIVITY, GL(C, D) must equal SUB(C, D) exactly, and Σ
-     * GL(C, D) must equal the AR_CONTROL balance at D (structural,
-     * README §4.1).
-     *
-     * Each tenant is skipped (not asserted on) unless it has at least one
-     * `sales_invoices` or `customer_receipts` row of its own — checked
-     * PER TENANT, inside `withTenant`, never by querying a tenant-owned
-     * table through `withGlobal` (schema.ts's GlobalDatabase deliberately
-     * excludes them; this stays inside that boundary rather than
-     * widening it for a test). Found running this for real: a tenant from
-     * `tests/accounting/kernel-rules.spec.ts`'s "a kernel-built AR line
-     * satisfies migration 012 end to end" test has an AR_CONTROL journal
-     * line with a genuinely RANDOM, synthetic `source_id` — that test is
-     * explicit that it is "test-only: proves the schema accepts what the
-     * rule builds. Not a path any caller has", deliberately bypassing
-     * `modules/receivables` via `runPostingPipeline` directly, so no
-     * `sales_invoices` row for it ever exists or ever will. Invariant 9 is
-     * a GL-TO-SUBLEDGER reconciliation; a tenant that never created a
-     * subledger document was never exercising the path this invariant
-     * reconciles, and is not a tenant this check is about — a REAL
-     * production tenant can never reach this state, because
-     * `modules/receivables` always creates the document first. This is a
-     * test-suite-construction fact, not a posted-data defect: the file
-     * this scoping works around is explicitly out of this lane's ALLOWED
-     * paths (tests/accounting/kernel-rules.spec.ts, M3-P/M2-A owned), so
-     * the fix lives on this check's OWN sweep instead of on that file.
+     * M3-P HAS LANDED. From here the check is real: EVERY tenant (except
+     * the named kernel-rules.spec.ts allowlist), GL(C, D) must equal
+     * SUB(C, D) exactly, and Σ GL(C, D) must equal the AR_CONTROL
+     * account's balance at D (structural, README §4.1) — computed by
+     * `arControlAccountBalance` independently of whether an AR_CONTROL
+     * ROLE resolves (ar-invariant-9.ts's own fallback).
      */
     const asOf = new Date().toISOString().slice(0, 10)
-    const tenantIds = (
-      await withGlobal((tx) => tx.selectFrom('tenants').select('id').execute())
-    ).map((row) => row.id)
+    const tenants = await withGlobal((tx) =>
+      tx.selectFrom('tenants').select(['id', 'code']).execute(),
+    )
 
     let tenantsChecked = 0
-    for (const tenantId of tenantIds) {
-      const hasSubledgerActivity = await runAs({ tenantId, userId: null }, () =>
-        withTenant(async (tx) => {
-          const [invoice, receipt] = await Promise.all([
-            tx.selectFrom('sales_invoices').select('id').limit(1).executeTakeFirst(),
-            tx.selectFrom('customer_receipts').select('id').limit(1).executeTakeFirst(),
-          ])
-          return invoice !== undefined || receipt !== undefined
-        }),
-      )
-      if (!hasSubledgerActivity) continue
+    for (const { id: tenantId, code } of tenants) {
+      if (isTestOnlyKernelPostingTenant(code)) continue
 
       const result = await runAs({ tenantId, userId: null }, () =>
         withTenant((tx) => checkInvariant9(tx, tenantId, asOf)),
       )
-      // Per-customer: GL(C, D) = SUB(C, D) exactly, for every customer.
-      expect(result.breaks, `tenant ${tenantId}: Invariant 9 AR-half breaks`).toEqual([])
+      // Per-customer: GL(C, D) = SUB(C, D) exactly, for every customer —
+      // including a tenant with NO documents, which must show gl = sub = 0.
+      expect(result.breaks, `tenant ${tenantId} (${code}): Invariant 9 AR-half breaks`).toEqual([])
       /*
        * Structural: Σ over C of GL(C, D) = AR_CONTROL balance at D
-       * (README §4.1). `result.accountBalance` is read DIRECTLY from the
-       * AR_CONTROL account, with no party filter — independent of the
+       * (README §4.1). `result.accountBalance` is read DIRECTLY — by role
+       * when one resolves, by `account_control = 'AR'` across every such
+       * account when none does (ar-invariant-9.ts) — independent of the
        * per-customer `rows` above. `result.totalGl` is the sum of THOSE
        * SAME rows, so comparing it to itself would prove nothing
        * (Accounting seat review, 2026-09-29, 43be499); comparing it to the
        * independently-read `accountBalance` is the actual structural
-       * check, and it is what would catch a line that reached AR_CONTROL
-       * without `party_type = 'CUSTOMER'` — structurally forbidden by
-       * migration 012's CHECK, so this is a belt-and-braces proof that the
-       * check would fire if that constraint were ever weakened, not an
-       * expectation that it ever fires today.
+       * check, and it is what would catch a line that reached an
+       * AR-control account without `party_type = 'CUSTOMER'` —
+       * structurally forbidden by migration 012's CHECK, so this is a
+       * belt-and-braces proof that the check would fire if that
+       * constraint were ever weakened, not an expectation that it ever
+       * fires today.
        */
       expect(
         result.totalGl,
-        `tenant ${tenantId}: Σ GL(C, D) disagrees with the AR_CONTROL account's own balance`,
+        `tenant ${tenantId} (${code}): Σ GL(C, D) disagrees with the AR_CONTROL account's own balance`,
       ).toBe(result.accountBalance)
       tenantsChecked += 1
     }
     expect(tenantsChecked).toBeGreaterThan(0)
+  })
+
+  /*
+   * THE NEGATIVE CASE Invariant 9 exists to catch, proved live — Accounting
+   * seat ruling, 2026-10-01, item 4: "a tenant with an AR GL line and no
+   * documents must make the invariant FAIL." Posts a SALE_POSTED entry
+   * through the kernel directly (`createPostingEngine`, exactly as
+   * `golden-posting-runner.ts`'s `level: "kernel"` steps and
+   * kernel-rules.spec.ts's own "a kernel-built AR line satisfies migration
+   * 012 end to end" test do — never through `modules/receivables`, so no
+   * `sales_invoices` row is ever created for this tenant), on a tenant
+   * fixture labelled 'INV9NEG' — NOT 'KR'/'KR2'/'M3RUNNER', so
+   * `isTestOnlyKernelPostingTenant` does NOT exempt it. `checkInvariant9`
+   * must report exactly this customer as a break: GL has the posting, SUB
+   * has nothing.
+   *
+   * REVERSED at the end, on purpose: this harness never truncates between
+   * test runs (packages/database/src/testing/harness.ts's own header —
+   * "rows accumulate until someone destroys the volume"), and this test's
+   * whole point is to commit a REAL, permanent row that genuinely breaks
+   * Invariant 9 for this tenant. Left unreversed, that break would still
+   * be there — correctly — the next time ANY "every tenant" sweep in this
+   * file or subledger-to-gl-ar.spec.ts runs against the same database,
+   * failing a test that has nothing to do with this one. The reversal
+   * neutralises the GL side (Invariant 6) by the time any OTHER test's
+   * `asOf` (always today's real date) reads it, so this test proves the
+   * break exists AT THE MOMENT it is created without leaving a live
+   * tripwire for every future run. The assertion above happens BEFORE the
+   * reversal, against the posting's own date — it observes the real break,
+   * not a reconstruction of one.
+   */
+  it('a tenant with an AR GL line and no sales_invoices/customer_receipts row FAILS the invariant', async () => {
+    const tenant = await createTenantFixture('INV9NEG')
+    expect(
+      isTestOnlyKernelPostingTenant(tenant.code),
+      'this fixture must NOT be on the test-only allowlist, or the negative case proves nothing',
+    ).toBe(false)
+
+    const customerId = await runAs({ tenantId: tenant.tenantId, userId: tenant.ownerId }, () =>
+      withTenant(async (tx) => {
+        await seedChartOfAccounts(tx, tenant.tenantId)
+        await createFiscalYear(tx, tenant.tenantId, 2027)
+        return registerParty(tx, 'CUSTOMER')
+      }),
+    )
+
+    const clock = fixedClock('2026-09-15T12:00:00.000Z')
+    const engine = createPostingEngine(clock)
+    const referenceId = randomUUID()
+    await runAs({ tenantId: tenant.tenantId, userId: tenant.ownerId }, () =>
+      withTenant((tx) =>
+        engine.post(
+          {
+            event: 'SALE_POSTED',
+            referenceType: 'sales_invoice',
+            referenceId,
+            occurredAt: '2026-09-15',
+            idempotencyKey: 'inv9-negative-case',
+            payload: {
+              settlement: 'CREDIT',
+              customerId,
+              lines: [
+                {
+                  kind: 'SERVICE',
+                  description: 'No document behind this line',
+                  quantity: '1.000000',
+                  unitPrice: '500.000000',
+                  lineNet: '500.0000',
+                },
+              ],
+              netAmount: '500.0000',
+            },
+          },
+          tx,
+        ),
+      ),
+    )
+
+    const result = await runAs({ tenantId: tenant.tenantId, userId: null }, () =>
+      withTenant((tx) => checkInvariant9(tx, tenant.tenantId, '2026-09-15')),
+    )
+    expect(result.breaks, 'the AR GL line with no document must be reported as a break').toEqual([
+      { customerId, gl: '500.0000', sub: '0.0000', difference: '-500.0000' },
+    ])
+    // The structural check still holds: the account genuinely has 500.0000,
+    // whichever way it is read. The BREAK is per-customer, not structural.
+    expect(result.totalGl).toBe(result.accountBalance)
+    expect(result.accountBalance).toBe('500.0000')
+
+    // Clean up for every OTHER "sweep every tenant" test — see the header
+    // comment above. reverseForSource is the sanctioned via-source path
+    // (reversal.md §4), exactly as a real caller reversing this document
+    // would use it.
+    const reversal = createReversalEngine(clock)
+    await runAs({ tenantId: tenant.tenantId, userId: tenant.ownerId }, () =>
+      withTenant((tx) =>
+        reversal.reverseForSource(
+          {
+            referenceType: 'sales_invoice',
+            referenceId,
+            reason: 'Negative-case cleanup: neutralise before any other sweep runs',
+            idempotencyKey: 'inv9-negative-case-cleanup',
+            actor: { userId: tenant.ownerId },
+          },
+          tx,
+        ),
+      ),
+    )
+    const asOfToday = new Date().toISOString().slice(0, 10)
+    const afterReversal = await runAs({ tenantId: tenant.tenantId, userId: null }, () =>
+      withTenant((tx) => checkInvariant9(tx, tenant.tenantId, asOfToday)),
+    )
+    expect(
+      afterReversal.breaks,
+      'reversed: this tenant must be clean for every later sweep in this run',
+    ).toEqual([])
+    expect(afterReversal.accountBalance).toBe('0.0000')
   })
 })
 

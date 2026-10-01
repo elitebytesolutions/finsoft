@@ -227,34 +227,99 @@ export async function arControlAccountBalance(
   assertIssuedTenantTx(tx)
   const accounts = await resolveAccountsByRole(tx, tenantId, ['AR_CONTROL'])
   const account = accounts.get('AR_CONTROL')
-  /*
-   * `0.0000`, not a throw (found running the FULL FinancialInvariantSuite
-   * against the real M3-P module: `checkInvariant9` is asked, by the
-   * suite's own design, to run for EVERY tenant row in the shared test
-   * database — not only the ones this file's own fixtures create. A tenant
-   * left behind by an unrelated spec file (auth/RBAC/security tests that
-   * exercise signup without ever provisioning a chart of accounts) has no
-   * AR_CONTROL account, and previously crashed this check outright. That
-   * is provably safe to treat as zero, not a workaround: the kernel's own
-   * `requireResolvedRole` (service-sale.ts, customer-receipt's rule) would
-   * refuse SALE_POSTED/CUSTOMER_PAYMENT_RECEIVED for a tenant with no
-   * resolvable AR_CONTROL role, so such a tenant provably has zero
-   * journal_lines on any AR-control account — its true balance is zero by
-   * construction, not by assumption.
-   */
-  if (!account) return Money.serialize(Money.zero(), 4)
 
-  const result = await sql<{ debit: string; credit: string }>`
-    SELECT coalesce(sum(jl.debit), 0)::text  AS debit,
-           coalesce(sum(jl.credit), 0)::text AS credit
-      FROM journal_lines jl
-      JOIN journal_entries je ON je.tenant_id = jl.tenant_id AND je.id = jl.entry_id
-     WHERE jl.tenant_id = ${tenantId}
-       AND jl.account_id = ${account.id}
-       AND je.occurred_at <= ${asOf}::date
-  `.execute(tx)
+  /*
+   * Accounting seat ruling, 2026-10-01 (rejecting this lane's first
+   * attempt): NEVER return zero by default when no account resolves the
+   * AR_CONTROL role. Returning zero there is exactly the flaw Invariant 9
+   * exists to catch wearing a different hat — it would silently hide a
+   * real AR balance sitting on an account whose ROLE mapping is missing
+   * or misconfigured while its `control_kind` is still 'AR' (TD-011: a
+   * tenant could in principle hold more than one AR-control account, and
+   * role resolution finds only one by design). The role lookup above is
+   * the FAST, common path; this is the fallback that makes the function
+   * independent of role resolution ever having succeeded at all — it sums
+   * every journal line on EVERY account whose control_kind is 'AR' for
+   * this tenant, by account_control (a denormalised copy of accounts.
+   * control_kind onto every line, migration 012), not by account_id.
+   */
+  const result = account
+    ? await sql<{ debit: string; credit: string }>`
+        SELECT coalesce(sum(jl.debit), 0)::text  AS debit,
+               coalesce(sum(jl.credit), 0)::text AS credit
+          FROM journal_lines jl
+          JOIN journal_entries je ON je.tenant_id = jl.tenant_id AND je.id = jl.entry_id
+         WHERE jl.tenant_id = ${tenantId}
+           AND jl.account_id = ${account.id}
+           AND je.occurred_at <= ${asOf}::date
+      `.execute(tx)
+    : await sql<{ debit: string; credit: string }>`
+        SELECT coalesce(sum(jl.debit), 0)::text  AS debit,
+               coalesce(sum(jl.credit), 0)::text AS credit
+          FROM journal_lines jl
+          JOIN journal_entries je ON je.tenant_id = jl.tenant_id AND je.id = jl.entry_id
+         WHERE jl.tenant_id = ${tenantId}
+           AND jl.account_control = 'AR'
+           AND je.occurred_at <= ${asOf}::date
+      `.execute(tx)
   const row = result.rows[0] ?? { debit: '0', credit: '0' }
   return Money.serialize(Money.subtract(Money.from(row.debit), Money.from(row.credit)), 4)
+}
+
+/*
+ * Accounting seat ruling, 2026-10-01: an EXPLICIT, NAMED allowlist of
+ * tenants a known test harness creates by posting AR_CONTROL journal
+ * lines WITHOUT ever creating the matching document — never "skip any
+ * tenant with no subledger activity", which was REJECTED for hiding the
+ * exact break Invariant 9 exists to catch (AR in the GL with no document
+ * behind it). Identified by tenant CODE PREFIX, not by behaviour:
+ * `createTenantFixture` (packages/database/src/testing/harness.ts) builds
+ * a tenant's `code` as `T${label}${unique()}`.slice(0, 16)`. A tenant
+ * matching one of these prefixes is excluded BY NAME; any other tenant
+ * with an AR GL line and no documents still fails the sweep, which is the
+ * whole point (see the negative test in financial-invariant-suite.spec.ts
+ * proving exactly that).
+ *
+ * Two sources, each grepped across tests/, database/ and modules/ to
+ * confirm no OTHER file uses the same label prefix:
+ *
+ *   'TKR'       — tests/accounting/kernel-rules.spec.ts (a file this lane
+ *                 does not own and must not edit), labels 'KR'/'KR2'.
+ *                 Posts a SALE_POSTED entry through the kernel's internal
+ *                 pipeline directly (`runPostingPipeline`), by its own
+ *                 comment "test-only... not a path any caller has", with
+ *                 a synthetic `randomUUID()` source id.
+ *
+ *   'TM3RUNNER' — tests/accounting/golden-posting-runner-m3.spec.ts (this
+ *                 lane's OWN file), label 'M3RUNNER' throughout: its
+ *                 hand-built R1-R4/customer-verb/draft-lifecycle scenarios,
+ *                 AND its "P12 against the fake port" test, which
+ *                 deliberately runs the REAL P12 golden file's steps
+ *                 through `createFakeReceivablesPort` — a kernel-only
+ *                 stand-in with the SAME property: it posts SALE_POSTED/
+ *                 CUSTOMER_PAYMENT_RECEIVED through the kernel directly,
+ *                 never writing a `sales_invoices`/`customer_receipts`
+ *                 row. That test overrides the golden file's own
+ *                 "GOLDEN_A" tenant alias to "M3RUNNER" IN MEMORY ONLY —
+ *                 never on disk — specifically so its tenant is
+ *                 distinguishable by code from a REAL module run of the
+ *                 SAME file, which also uses "GOLDEN_A" and must NOT be
+ *                 exempt (reusing the SAME label as R1-R4, rather than a
+ *                 distinct "M3RUNNERP12", keeps `createTenantFixture`'s
+ *                 16-character code truncation from leaving this one
+ *                 fixture with far less random suffix than the others —
+ *                 found causing exactly the `tenants_code_key` collision
+ *                 this harness is already prone to, worse).
+ *
+ * In both cases these are fake/kernel-only test doubles proving RUNNER
+ * LOGIC, not module or production behaviour — structurally impossible
+ * through any real path, where `modules/receivables` always creates the
+ * document first.
+ */
+const TEST_ONLY_TENANT_CODE_PREFIXES = ['TKR', 'TM3RUNNER'] as const
+
+export function isTestOnlyKernelPostingTenant(code: string): boolean {
+  return TEST_ONLY_TENANT_CODE_PREFIXES.some((prefix) => code.startsWith(prefix))
 }
 
 /**

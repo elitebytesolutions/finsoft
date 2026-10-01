@@ -393,7 +393,31 @@ describe('customer verb: deactivate/reactivate a zero-balance customer through t
 
 describe('P12 (real file, rewritten per Accounting seat ruling 2) against the fake port', () => {
   it('runs every step through the real file, up to (not including) its one invariant9 checkpoint', async () => {
-    const scenario = loadScenario('posting-p12-inactive-customer.json')
+    const rawScenario = loadScenario('posting-p12-inactive-customer.json')
+    /*
+     * The fixture's tenant alias is overridden here, IN MEMORY ONLY — the
+     * golden FILE on disk is untouched — from "GOLDEN_A" to "M3RUNNER".
+     * "GOLDEN_A" is also the alias the REAL module run of this exact file
+     * uses (posting-scenarios-m3.spec.ts), and `ar-invariant-9.ts`'s
+     * `isTestOnlyKernelPostingTenant` exemption (Accounting seat ruling,
+     * 2026-10-01) must be able to tell THIS fake-port tenant apart from a
+     * real one by tenant CODE PREFIX alone — two "GOLDEN_A" tenants
+     * created by different test runs are otherwise indistinguishable from
+     * the database's own point of view. "M3RUNNER" joins this file's
+     * own "M3RUNNER" family (FIXTURE_BASE above), so the exemption stays
+     * one documented pattern instead of two unrelated ones.
+     */
+    const scenario: PostingScenario = {
+      ...rawScenario,
+      fixture: {
+        ...rawScenario.fixture,
+        tenants: ['M3RUNNER'],
+        customers: (rawScenario.fixture.customers ?? []).map((c) => ({
+          ...(c as Record<string, unknown>),
+          tenant: 'M3RUNNER',
+        })),
+      },
+    }
     const receivables = createFakeReceivablesPort(`${scenario.fixture.today}T12:00:00.000Z`)
 
     /*
