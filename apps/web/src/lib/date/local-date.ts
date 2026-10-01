@@ -43,3 +43,16 @@ export function nextLocalDayIso(dateStr: string): string {
   const [year, month, day] = dateStr.split('-').map(Number)
   return new Date(year, month - 1, day + 1).toISOString()
 }
+
+/**
+ * The UTC instant of the START of the LOCAL day `dateStr` (`YYYY-MM-DD`) — the inclusive
+ * lower bound for "from the start of `dateStr`, local time". Mirrors `nextLocalDayIso`'s own
+ * reasoning the other direction: `new Date(dateStr).toISOString()` is that date's own UTC
+ * midnight, which in a timezone AHEAD of UTC (Pakistan, UTC+5, no daylight saving) drops the
+ * first few hours of the local day — 00:00 to 04:59 PKT belongs to `dateStr` locally but
+ * falls before `dateStr`'s UTC midnight, so a naive "From" filter silently excluded it.
+ */
+export function startOfLocalDayIso(dateStr: string): string {
+  const [year, month, day] = dateStr.split('-').map(Number)
+  return new Date(year, month - 1, day).toISOString()
+}

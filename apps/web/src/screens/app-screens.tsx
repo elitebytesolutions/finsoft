@@ -77,7 +77,7 @@ import { useApiQuery } from '@/lib/api/use-api-query'
 import { listAuditEvents } from '@/lib/api/audit-client'
 import type { AuditEvent, AuditPage } from '@/lib/api/audit-types'
 import { humanizeAction, actorLabel, entityLabel } from '@/lib/adapters/audit'
-import { todayIso, nextLocalDayIso } from '@/lib/date/local-date'
+import { todayIso, nextLocalDayIso, startOfLocalDayIso } from '@/lib/date/local-date'
 
 export function Dashboard({
   go,
@@ -1734,7 +1734,10 @@ function AuditLogPanel() {
   const [loadMoreError, setLoadMoreError] = useState<string | null>(null)
 
   const query = (cursor?: string) => ({
-    from: applied.from ? new Date(applied.from).toISOString() : undefined,
+    // Start of the selected LOCAL day, not its own UTC midnight — see startOfLocalDayIso's
+    // own comment (Security seat follow-up: 00:00-04:59 PKT on the start day was being
+    // dropped).
+    from: applied.from ? startOfLocalDayIso(applied.from) : undefined,
     // Exclusive start-of-next-local-day, not the selected day's own midnight UTC — see
     // nextLocalDayIso's own comment (Security seat condition 4: the selected day was
     // being excluded in any timezone ahead of UTC, Pakistan included).
