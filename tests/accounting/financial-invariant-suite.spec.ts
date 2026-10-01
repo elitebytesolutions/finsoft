@@ -1,14 +1,17 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { Client } from 'pg'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { closeDatabase, openDatabase, withGlobal, withTenant } from '@finsoft/database'
 import {
+  ACCOUNTING_TEST_TARGET,
   REPO_ROOT,
-  TEST_TARGET,
+  buildTenantCode,
   createTenantFixture,
+  migrateAccountingTestDatabase,
   migrateTestDatabase,
-  prepareTestDatabase,
+  prepareAccountingTestDatabase,
   runAs,
 } from '@finsoft/database/testing'
 import { createFiscalYear, seedChartOfAccounts } from '@finsoft/database/provisioning'
@@ -22,6 +25,7 @@ import { GLOBAL_TABLES } from '@finsoft/database'
 import { INVARIANTS, enforcedIds, pendingIds } from './invariants.ts'
 import { registerPostingInvariantChecks } from './posting-invariants.ts'
 import {
+  assertInvariant9SweepIsIsolated,
   checkInvariant9,
   invariant9Available,
   isTestOnlyKernelPostingTenant,
@@ -59,11 +63,11 @@ const BASELINE = join(REPO_ROOT, 'tests', 'accounting', 'pending-baseline.json')
  * connections for this file, restore the deterministic default afterwards.
  */
 beforeAll(async () => {
-  await prepareTestDatabase()
-  await migrateTestDatabase()
+  await prepareAccountingTestDatabase()
+  await migrateAccountingTestDatabase()
   await closeDatabase()
   process.env['DATABASE_POOL_MAX'] = '4'
-  await openDatabase(TEST_TARGET)
+  await openDatabase(ACCOUNTING_TEST_TARGET)
 }, 120_000)
 
 afterAll(async () => {
@@ -228,6 +232,15 @@ describe('Invariant 9, AR half (M3-Q) — gated on M3-P', () => {
       tx.selectFrom('tenants').select(['id', 'code']).execute(),
     )
 
+    // QA-001 tripwire: proves, not assumes, that this sweep is isolated
+    // from database/tests' own database before trusting anything below.
+    await withGlobal((tx) =>
+      assertInvariant9SweepIsIsolated(
+        tx,
+        tenants.map((t) => t.code),
+      ),
+    )
+
     let tenantsChecked = 0
     for (const { id: tenantId, code } of tenants) {
       if (isTestOnlyKernelPostingTenant(code)) continue
@@ -378,6 +391,52 @@ describe('Invariant 9, AR half (M3-Q) — gated on M3-P', () => {
       'reversed: this tenant must be clean for every later sweep in this run',
     ).toEqual([])
     expect(afterReversal.accountBalance).toBe('0.0000')
+  })
+
+  /*
+   * Accounting seat follow-up, 2026-10-01 (approving 15644fe): proves the
+   * CONTENT half of `assertInvariant9SweepIsIsolated`
+   * (tests/accounting/ar-invariant-9.ts) — not just the structural
+   * `current_database()` check (already proved adversarially during
+   * development: pointing TEST_ACCOUNTING_DATABASE_URL at the schema
+   * database fails loudly). A tenant code is inserted directly into the
+   * SCHEMA suite's OWN database (a raw connection via
+   * TEST_MIGRATION_DATABASE_URL, never through this file's own pool, which
+   * stays pointed at the accounting database throughout this whole file —
+   * see the top-level `beforeAll`) and then handed to the function as
+   * something this sweep is "about to check". The two databases really are
+   * different here; the code is the only thing that leaked — exactly the
+   * case the structural check cannot catch on its own.
+   */
+  it('assertInvariant9SweepIsIsolated fails when a swept tenant code also exists in the schema database', async () => {
+    // Self-sufficient regardless of invocation context: `test:gate` runs
+    // test:schema (which migrates this database) first, but
+    // `npm run test:financial-invariant-suite` on its own (CI's `invariants`
+    // job runs `db:migrate:test` as a prior step; an ad-hoc local run might
+    // not) does not guarantee it. migrateTestDatabase is independent of the
+    // pool singleton this file's own beforeAll opened against the
+    // accounting database (see the header comment there) — it only runs
+    // migrations through its own raw connection.
+    await migrateTestDatabase()
+
+    const leakedCode = buildTenantCode('LEAK')
+    const schemaMigrationUrl = process.env['TEST_MIGRATION_DATABASE_URL']
+    if (!schemaMigrationUrl) throw new Error('TEST_MIGRATION_DATABASE_URL is not set')
+
+    const client = new Client({ connectionString: schemaMigrationUrl })
+    await client.connect()
+    try {
+      await client.query('INSERT INTO tenants (code, name) VALUES ($1, $2)', [
+        leakedCode,
+        `Isolation-tripwire probe ${leakedCode}`,
+      ])
+    } finally {
+      await client.end()
+    }
+
+    await expect(
+      withGlobal((tx) => assertInvariant9SweepIsIsolated(tx, [leakedCode])),
+    ).rejects.toThrow(/ALSO exist in the schema suite's own database/)
   })
 })
 

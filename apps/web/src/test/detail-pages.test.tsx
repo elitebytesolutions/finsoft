@@ -78,7 +78,9 @@ describe('Finsoft detail pages', () => {
         for (const c of it.children ?? [])
           expect(screen.getAllByText(c.label).length).toBeGreaterThan(0)
       }
-  })
+    // One getAllByText per nav entry over the whole rendered shell: the nav has grown to
+    // the point where this legitimately takes 5-8 s under load. Same assertions, longer budget.
+  }, 20_000)
 
   // The voucher-register filter/accordion tests, the voucher-detail test and the two
   // new-voucher-form tests were removed here — M2-S wired /vouchers, /vouchers/:id and

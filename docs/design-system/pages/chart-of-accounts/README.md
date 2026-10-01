@@ -1,5 +1,17 @@
 # Chart of Accounts
 
+> **Updated — M2-UI restoration.** The PO rejected the M2-S screens for abandoning the original
+> design ("the ui is shit why does not it look like the demo screens i provided"). This screen
+> was restored to the original `8c5c283` markup/layout (search, view toggle, KPI row, bulk
+> toolbar, hierarchy map, pagination) wired to the real API via
+> `apps/web/src/lib/adapters/chart-of-accounts.ts`. §2, §6 and §11 below (written for the M2-S
+> read-only rewrite) are superseded by §2a/§6a. The chart is **still read-only server-side** —
+> `coa-standard.md` §5 has not changed — but the PO now wants account creation in the MVP, so
+> Add/Edit/Move/Activate/Deactivate/Delete/Import are back in the DOM, gated behind
+> `ACCOUNT_CREATE_ENABLED` (`apps/web/src/lib/feature-flags.ts`, off by default) rather than
+> removed, so the affordance is ready the moment the M2-C accounts-write API lands (in progress
+> at time of writing — the coordinator is wiring the flag once it merges).
+
 | | |
 |---|---|
 | **Route** | `/accounts` |
@@ -38,6 +50,31 @@ sub-account` / `Edit` / `Move` / `Activate`/`Deactivate` / `Delete`, `Change` sp
 `Last modified` column (no such field is specified), selection checkboxes. Every one of these
 either requires a mutation the MVP does not offer, or a figure (day-over-day change, last-modified
 actor) no posting rule computes.
+
+### 2a. Anatomy (M2-UI restoration — current)
+
+```
+Head         icon · "Chart of Accounts" · description · search · Table/Map toggle ·
+             category filter · Import/Export · + Add Account (disabled)
+Banner       "Adding, editing, moving and deactivating accounts is not available yet..."
+             (shown while ACCOUNT_CREATE_ENABLED is off)
+KpiRow (n)   Total <root account>... for every real level-1 account in this tenant's chart,
+             plus Total Accounts — server-computed rollups (adaptChartOfAccounts's `rollup()`,
+             Money.sum over trial-balance lines, never journals)
+BulkToolbar  select-all · Edit/Move/Activate/Deactivate/Delete (disabled) · type/status/level
+             filters (real, client-side — the whole chart is one bounded GET, not paginated) ·
+             density toggle
+TreeTable    Account name · Code · Type (Header/Group/Postable, from real `kind` + depth) ·
+             Parent account · Sub-accounts · Balance (PKR, Dr/Cr) · Change (—, not fabricated) ·
+             Last Modified (—, not tracked) · Status · Actions (ellipsis → ledger, for
+             postable; delete dialog, disabled, for others)
+Map view     Same hierarchy, card layout — unchanged from the restored design
+Footer       Showing n–m of <total> accounts · rows-per-page · pager
+```
+
+`Change` and `Last Modified` render as em dashes, not the mock's hash-derived fake percentage and
+fake author/date — see CLAUDE.md's "never fake data." They stay as columns (not deleted) so the
+table's grid layout matches the original design pixel-for-pixel.
 
 ## 3. Components
 
@@ -83,6 +120,20 @@ are **not editable** in the MVP (nothing is).
 Per the mid-task correction: don't fake any of these with mock data. They are removed, not
 greyed-out placeholders wired to nothing.
 
+### 6a. Actions (M2-UI restoration — current)
+
+| Action | Kind | Available | Notes |
+|---|---|---|---|
+| View ledger | row action (postable rows) | **yes** | `/ledgers?account=<code>` |
+| Search / category / type / status / level filters | control | **yes** | client-side over the fully-loaded chart (`GET /accounts` returns the whole chart, not a page of it — this is not the "filter server data in the browser" anti-pattern) |
+| Export | button | **yes** | client-side CSV of the currently-loaded, already-filtered rows |
+| Add Account, Edit, Move, Activate, Deactivate, Delete, Import | button | **present, `disabled`, tooltip "Coming soon"** | restored per the PO's brief; wired the moment `ACCOUNT_CREATE_ENABLED` flips true behind a real accounts-write API (M2-C, in progress) |
+
+The Add-account form's fields, for the M2-C spec (from the restored `MasterModal` /
+`master-form.tsx`, unchanged since it is not API-driven): Record type, Record name (required),
+City, Contact / NTN / account no., Balance type (Debit/Credit/—), Opening balance (PKR), Chart
+level (1–4), Parent account. Code is server/sequence-assigned, never user-entered.
+
 ## 7. States
 
 - **Loading:** skeleton rows in the tree shape (header rows collapsed), not a spinner over a blank
@@ -121,11 +172,15 @@ Tree rows use `role="treegrid"` with `aria-level` and `aria-expanded`; indent ra
 
 ## 11. Deviations from the prototype
 
-- The prototype (`apps/web/src/screens/chart-of-accounts.tsx`) offers add/edit/move/delete, a
-  hierarchy-map canvas, CSV import/export, and computes every balance client-side from seed
-  journals. None of that ships against the real API in M2. The screen is trimmed to match this
-  document, not the other way round.
-- `Change` (sparkline) and `Last modified` are dropped — no posting rule produces either figure.
+- **Superseded by the M2-UI restoration.** The screen now matches the prototype's markup/layout
+  (search, hierarchy map, KPI row, bulk toolbar, pagination) almost exactly — see §2a/§6a. The
+  two real deviations that remain:
+  - Every balance is server-computed (`adaptChartOfAccounts`'s `rollup()`, summing already-
+    computed trial-balance lines with `Money`) — never a client-side journal sum, unlike the
+    prototype's own `valueOfTree`/`netOf`.
+  - `Change` (sparkline) and `Last modified` render as em dashes — no posting rule produces
+    either figure — instead of the prototype's hash-derived fake values. The columns themselves
+    are kept (not dropped) to preserve the table's fixed grid layout.
 
 ## 12. Open questions
 

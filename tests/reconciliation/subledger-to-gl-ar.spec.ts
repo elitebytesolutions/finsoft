@@ -1,13 +1,14 @@
 import { closeDatabase, withGlobal, withTenant } from '@finsoft/database'
 import {
   createTenantFixture,
-  migrateTestDatabase,
-  prepareTestDatabase,
+  migrateAccountingTestDatabase,
+  prepareAccountingTestDatabase,
   runAs,
 } from '@finsoft/database/testing'
 import { Money } from '@finsoft/validation'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
+  assertInvariant9SweepIsIsolated,
   checkInvariant9,
   computeInvariant9Rows,
   invariant9Available,
@@ -47,8 +48,8 @@ import { describeBreaks, reconcileSubledgerToGeneralLedger } from './reconciler.
  */
 
 beforeAll(async () => {
-  await prepareTestDatabase()
-  await migrateTestDatabase()
+  await prepareAccountingTestDatabase()
+  await migrateAccountingTestDatabase()
 }, 120_000)
 
 afterAll(async () => {
@@ -70,6 +71,15 @@ describe('AR subledger reconciles to AR_CONTROL — real rows, gated on M3-P', (
     const asOf = new Date().toISOString().slice(0, 10)
     const tenants = await withGlobal((tx) =>
       tx.selectFrom('tenants').select(['id', 'code']).execute(),
+    )
+
+    // QA-001 tripwire: proves, not assumes, that this sweep is isolated
+    // from database/tests' own database before trusting anything below.
+    await withGlobal((tx) =>
+      assertInvariant9SweepIsIsolated(
+        tx,
+        tenants.map((t) => t.code),
+      ),
     )
 
     /*

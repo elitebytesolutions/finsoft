@@ -9,6 +9,32 @@
 | **Reference frame** | `ui-prototype/design/closing period page .png` |
 | **Posts to the ledger** | no — but it **stops** everything else from posting |
 
+## API note — M2-UI (restoration)
+
+Restored to the prototype's `PageHead` + `kpi-grid` + two-panel `doc-grid` (checklist panel +
+periods table) + "what happens at close" summary strip layout, on top of M2-S's real
+`GET /api/periods`, `POST /api/periods/:id/close`, `POST /api/periods/:id/reopen` (unchanged —
+`PeriodTable`/`ReopenDialog`, including the Owner-only reopen message, are the same components,
+just restyled into the original panels). What could not be a literal restore:
+
+- **Revenue/COGS/"net surplus" KPIs are gone** — the prototype computed them by summing
+  `data.journals` in the browser (forbidden: "React computes presentation, not accounting"), and
+  no fiscal-periods endpoint provides them in M2 (periods.md §7, deferred). The KPI row shows
+  real period counts (fiscal periods / open / closed / locked) instead.
+- **The pre-close checklist is an honest "not available yet" notice**, not the prototype's four
+  invented pass/fail rows (bank reconciliation, draft purchases — neither backed by any M2
+  endpoint).
+- `FieldSales` (same file, a different lane's screen) is untouched — byte-identical to
+  `8c5c283` and to the M2-S-era `trade-pages.tsx`.
+
+**OBSERVED, not fixed (out of this lane's scope):** `PeriodTable`'s Close action posts
+immediately on click, with no confirm dialog — unlike Reverse and Reopen, which both require a
+reason and/or a second click. CLAUDE.md lists closing a period among the actions that must
+"confirm, and say exactly what will happen." Fixing this would change
+`period-close.test.tsx`'s "closes the earliest open period and refreshes" test's behaviour (it
+asserts a single click POSTs immediately), which is outside this lane's "adapt only selectors"
+mandate — flagged for the M2-B/QA seat.
+
 ## API note — M2-S (2026-09-29)
 
 **§6 below ("Reopening is not an in-app action for any role") is superseded.**

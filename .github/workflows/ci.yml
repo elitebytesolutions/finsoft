@@ -431,6 +431,39 @@ jobs:
   # re-runs the invariant suite alongside them — harmless duplication on a
   # tier that specifically touches posting/money/inventory/tax/periods) and
   # test:reconciliation. T3 or a full run.
+  #
+  # QA-001, Accounting seat ruling 2026-10-01 (option c): Invariant 9's
+  # sweep (ar-invariant-9.ts, run from test:accounting and
+  # test:reconciliation here) must run against a database database/tests
+  # has never touched — database/tests' own fixtures (under labels this
+  # job never sees, like journal-lines.spec.ts's 'JLP') were tripping it
+  # whenever a leftover tenant from an earlier test:schema run shared the
+  # same database.
+  #
+  # CONFIRMED: this job already cannot reproduce that failure, structurally,
+  # independent of the fix below. `db-suites` (which runs test:schema) and
+  # `financial` are SEPARATE JOBS, each with its own `docker compose up -d
+  # --wait` on its own fresh ubuntu-latest runner — this job's Postgres
+  # container is never the one database/tests ran against; it has no
+  # persisted volume carrying anything over. The bug is a LOCAL
+  # ("npm run test:gate" against one persistent cluster) and laptop-gate
+  # (tools/ship/staging.mjs, which reuses one throwaway cluster across every
+  # phase-3 suite) failure mode, not a CI one.
+  #
+  # The fix (packages/database/src/testing/harness.ts's
+  # ACCOUNTING_TEST_TARGET: test:accounting/test:reconciliation get their
+  # own database, TEST_ACCOUNTING_DATABASE_URL, falling back to a name
+  # derived from TEST_DATABASE_URL if that is not set) applies here too,
+  # transparently — this job sets no accounting-specific env var and needs
+  # none: `cp .env.example .env` below has no TEST_ACCOUNTING_DATABASE_URL
+  # entry, so the harness derives one from TEST_DATABASE_URL and creates it
+  # itself, on first use, the same way it would on a laptop. This job's own
+  # isolation (above) means that fallback happens to be redundant with job
+  # separation today — it is still correct to keep it wired, because this
+  # job's separation is an accident of CI topology, not something this
+  # mechanism depends on, and a future change that folds `db-suites` and
+  # `financial` into one job (to save CI minutes, say) would otherwise
+  # silently reintroduce the exact bug this fixes.
   # ------------------------------------------------------------------ #
   financial:
     name: financial gate

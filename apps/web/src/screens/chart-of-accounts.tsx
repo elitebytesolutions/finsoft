@@ -1,37 +1,131 @@
 'use client'
 /*
- * /accounts — docs/design-system/pages/chart-of-accounts/README.md.
- * Real API from M2-S: GET /api/accounts (the tree) + GET /api/reports/trial-balance (balances,
- * for accounts with activity — the accounts endpoint itself carries no balance field). Read-only:
- * coa-standard.md §5, "the MVP ships the chart read-only to users" — Add/Edit/Move/Delete/
- * Activate/Deactivate/Import are removed, not disabled placeholders (nothing to disable-with-
- * tooltip when the whole affordance has zero available mutations).
+ * /accounts — the PO's original design (8c5c283), restored. See the M2-UI report's DECISIONS
+ * for the full account of what changed and why; the short version:
+ *
+ *   - Data: GET /api/accounts (the tree) + GET /api/reports/trial-balance (balances) — same
+ *     two calls M2-S's read-only rewrite used — reshaped by
+ *     `@/lib/adapters/chart-of-accounts` into the `Master`-like shape this screen's own
+ *     tree-walking code expects, so that code did not need to change.
+ *   - No browser-side accounting: every balance on screen is `adaptChartOfAccounts`'s
+ *     `rollup()`, which only sums already-server-computed trial-balance totals with `Money`
+ *     — never journals, never a locally invented "opening + this period's movement".
+ *   - Fields the mock invented that the real API does not carry — per-row "Last Modified",
+ *     "Change vs last period", city, contact — render as "—", never a fabricated value
+ *     (CLAUDE.md, "Every screen handles every state" / "never fake data").
+ *   - Add/Edit/Move/Activate/Deactivate/Delete/Import: kept, per the PO's brief ("Keep the
+ *     original UI for these... wire behind ACCOUNT_CREATE_ENABLED"). The chart is read-only
+ *     server-side in M2 (coa-standard.md §5) — every one of these is `disabled` while the flag
+ *     is off, with a tooltip, not deleted.
  */
-import { useMemo } from 'react'
-import { RotateCw, ShieldAlert } from 'lucide-react'
-import { Badge, Banner, Button, PageHead, Table, moneyFromString } from '@finsoft/ui'
-import { Money } from '@finsoft/validation'
+import { useState } from 'react'
+import type React from 'react'
 import { useNavigate } from '@/lib/router'
+import {
+  Activity,
+  BarChart3,
+  BookOpen,
+  Boxes,
+  Briefcase,
+  CalendarDays,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  Coins,
+  Database,
+  EllipsisVertical,
+  FileText,
+  Filter,
+  FolderOpen,
+  FolderTree,
+  Landmark,
+  LayoutGrid,
+  List,
+  ListTree,
+  Network,
+  Pencil,
+  PieChart,
+  Plus,
+  RotateCw,
+  Search,
+  Settings,
+  ShieldAlert,
+  ShoppingBag,
+  Table2,
+  Tag,
+  TrendingUp,
+  Upload,
+  Users,
+  WalletCards,
+  X,
+  Download,
+} from 'lucide-react'
+import { Banner, Button, moneyFromString } from '@finsoft/ui'
+import type { Master } from '@/mocks/api'
+import { MasterModal } from './master-form'
 import { listAccounts, getTrialBalance } from '@/lib/api/accounting-client'
 import { useApiQuery } from '@/lib/api/use-api-query'
-import { buildAccountTree, flattenAccountTree } from '@/lib/accounting/account-tree'
 import { todayIso } from '@/lib/date/local-date'
-import type { AccountDto, TrialBalanceLine } from '@/lib/api/accounting-types'
+import { ACCOUNT_CREATE_ENABLED } from '@/lib/feature-flags'
+import {
+  adaptChartOfAccounts,
+  formatBalance,
+  type AdaptedAccount,
+} from '@/lib/adapters/chart-of-accounts'
 
-interface ChartData {
-  accounts: AccountDto[]
-  balances: Map<string, TrialBalanceLine>
+const descriptions: Record<string, string> = {
+  Assets: 'Resources controlled by the company',
+  'Current Assets': 'Assets expected to be converted to cash within a year',
+  'Cash Accounts': 'Cash and cash equivalents',
+  'Bank Accounts': 'Bank balances and deposits',
+  Receivables: 'Amounts due from customers',
+  Inventory: 'Goods available for sale',
+  'Non-current Assets': 'Long-term assets and investments',
+  Liabilities: 'Obligations to external parties',
+  Equity: "Owner's residual interest",
+  Income: 'Revenue from operations',
+  Expenses: 'Costs of running the business',
+  'Trade Payables': 'Amounts owed to suppliers',
+  'Trade Receivables': 'Receivables from trade customers',
+  'Stock in Trade': 'Inventory held for resale',
+}
+const iconOf = (m: AdaptedAccount) => {
+  const n = m.name
+  if (m.level === 1)
+    return n === 'Assets'
+      ? Database
+      : n === 'Liabilities'
+        ? Landmark
+        : n === 'Equity'
+          ? PieChart
+          : n === 'Income'
+            ? BarChart3
+            : Briefcase
+  if (n.includes('Bank')) return Landmark
+  if (n.includes('Cash')) return WalletCards
+  if (n.includes('Receivable')) return Users
+  if (n.includes('Inventory') || n.includes('Stock')) return Boxes
+  if (n.includes('Payable')) return ShoppingBag
+  if (m.kind === 'Group') return FolderOpen
+  return FileText
+}
+const toneOf = (m: AdaptedAccount) => {
+  const n = m.name
+  if (n.includes('Inventory') || n.includes('Stock') || n === 'Expenses') return 'orange'
+  if (n.includes('Bank') || n.includes('Receivable') || n === 'Equity' || n === 'Income')
+    return 'blue'
+  if (n === 'Liabilities') return 'red'
+  return 'green'
 }
 
-async function loadChart(): Promise<ChartData> {
-  const [accountsRes, trialBalance] = await Promise.all([
-    listAccounts(),
-    getTrialBalance(todayIso()),
-  ])
-  return {
-    accounts: [...accountsRes.accounts],
-    balances: new Map(trialBalance.lines.map((line) => [line.accountId, line])),
-  }
+async function loadChart() {
+  const asOf = todayIso()
+  const [accountsRes, trialBalance] = await Promise.all([listAccounts(), getTrialBalance(asOf)])
+  const adapted = adaptChartOfAccounts(accountsRes.accounts, trialBalance.lines)
+  return { accounts: adapted.accounts, rollup: adapted.rollup, asOf }
 }
 
 export function ChartOfAccounts() {
@@ -39,12 +133,6 @@ export function ChartOfAccounts() {
 
   return (
     <div className="coa2">
-      <PageHead
-        eyebrow="Accounting"
-        title="Chart of Accounts"
-        description="The account structure every posting surface picks from. Read-only in this release."
-      />
-
       {state.status === 'loading' && (
         <div className="state-page" role="status" aria-live="polite">
           <span>
@@ -75,96 +163,784 @@ export function ChartOfAccounts() {
         </div>
       )}
 
-      {state.status === 'ready' && <ChartReady data={state.data} />}
+      {state.status === 'ready' &&
+        (state.data.accounts.length === 0 ? (
+          <div className="empty-state">
+            No accounts yet. Every tenant is seeded with the standard chart at provisioning — this
+            is unexpected; contact support if it persists.
+          </div>
+        ) : (
+          <ChartReady data={state.data} />
+        ))}
     </div>
   )
 }
 
-function ChartReady({ data }: { data: ChartData }) {
+function ChartReady({ data }: { data: Awaited<ReturnType<typeof loadChart>> }) {
   const navigate = useNavigate()
-  const tree = useMemo(() => buildAccountTree(data.accounts), [data.accounts])
-  const rows = useMemo(() => flattenAccountTree(tree), [tree])
-
-  if (data.accounts.length === 0) {
-    return (
-      <div className="empty-state">
-        No accounts yet. Every tenant is seeded with the standard chart at provisioning — this is
-        unexpected; contact support if it persists.
-      </div>
-    )
+  const { accounts, rollup, asOf } = data
+  const [query, setQuery] = useState(''),
+    [category, setCategory] = useState('all'),
+    [type, setType] = useState('All Types'),
+    [status, setStatus] = useState('All Statuses'),
+    [level, setLevel] = useState('All Levels')
+  const [open, setOpen] = useState<Set<string>>(
+    () => new Set(accounts.filter((a) => a.level <= 2).map((a) => a.code)),
+  )
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [modal, setModal] = useState<null | { level: number; parent?: string; type: string }>(null)
+  const [view, setView] = useState<'table' | 'map'>('table')
+  const [density, setDensity] = useState<'list' | 'comfy' | 'grid'>('comfy')
+  const [nameWidth, setNameWidth] = useState(() => {
+    try {
+      return Number(localStorage.getItem('coa-name-width')) || 420
+    } catch {
+      return 420
+    }
+  })
+  const startResize = (e: React.PointerEvent<HTMLSpanElement>) => {
+    e.preventDefault()
+    const startX = e.clientX,
+      start = nameWidth
+    const move = (ev: PointerEvent) =>
+      setNameWidth(Math.max(240, Math.min(900, start + ev.clientX - startX)))
+    const up = () => {
+      document.removeEventListener('pointermove', move)
+      document.removeEventListener('pointerup', up)
+      setNameWidth((w) => {
+        try {
+          localStorage.setItem('coa-name-width', String(w))
+        } catch {
+          /* ignore */
+        }
+        return w
+      })
+    }
+    document.addEventListener('pointermove', move)
+    document.addEventListener('pointerup', up)
   }
+  const [rowsPer, setRowsPer] = useState(50),
+    [page, setPage] = useState(1)
+  const [notice, setNotice] = useState('')
+  const comingSoon = () => setNotice('Adding and editing accounts is coming soon.')
+  const comingLater = () => setNotice('Deactivating accounts is coming later.')
+  const childrenOf = (p: string) => accounts.filter((m) => m.parent === p)
+  const matches = (m: AdaptedAccount): boolean => {
+    const q = query.toLowerCase()
+    const self =
+      (!q || `${m.code} ${m.name}`.toLowerCase().includes(q)) &&
+      (type === 'All Types' || m.kind === type) &&
+      (status === 'All Statuses' || m.status === status) &&
+      (level === 'All Levels' || String(m.level) === level.slice(-1))
+    return self || childrenOf(m.code).some(matches)
+  }
+  const toggle = (code: string) =>
+    setOpen((v) => {
+      const n = new Set(v)
+      if (n.has(code)) n.delete(code)
+      else n.add(code)
+      return n
+    })
+  const flat: { m: AdaptedAccount; depth: number; last: boolean; trail: boolean[] }[] = []
+  const walk = (parent: string | null, depth: number, trail: boolean[]) => {
+    const kids = accounts
+      .filter(
+        (m) =>
+          (m.parent ?? null) === parent && (depth > 1 || category === 'all' || m.code === category),
+      )
+      .filter(matches)
+    kids.forEach((m, i) => {
+      const last = i === kids.length - 1
+      flat.push({ m, depth, last, trail })
+      if (open.has(m.code) || query) walk(m.code, depth + 1, [...trail, !last])
+    })
+  }
+  walk(null, 1, [])
+  const pages = Math.max(1, Math.ceil(flat.length / rowsPer)),
+    cur = Math.min(page, pages),
+    rows = flat.slice((cur - 1) * rowsPer, cur * rowsPer)
+  const allChecked = rows.length > 0 && rows.every((r) => selected.has(r.m.code))
+  const toggleSel = (code: string) =>
+    setSelected((s) => {
+      const n = new Set(s)
+      if (n.has(code)) n.delete(code)
+      else n.add(code)
+      return n
+    })
+  const toggleAll = () =>
+    setSelected((s) => {
+      const n = new Set(s)
+      if (allChecked) rows.forEach((r) => n.delete(r.m.code))
+      else rows.forEach((r) => n.add(r.m.code))
+      return n
+    })
+  const reset = () => {
+    setQuery('')
+    setCategory('all')
+    setType('All Types')
+    setStatus('All Statuses')
+    setLevel('All Levels')
+    setPage(1)
+  }
+  const roots = accounts.filter((m) => m.level === 1)
+  const totals = roots.map((r) => [r.code, `Total ${r.name}`, toneOf(r), iconOf(r)] as const)
 
   return (
     <>
-      <Banner tone="info">
-        Adding, editing and deactivating accounts is not available yet — the chart is fixed for this
-        release. See{' '}
-        <a
-          href="https://github.com/elitebytesolutions/finsoft/blob/develop/docs/posting-rules/coa-standard.md"
-          target="_blank"
-          rel="noreferrer"
+      <div className="coa2-head">
+        <div className="coa2-title">
+          <span className="coa2-title-icon">
+            <BookOpen />
+          </span>
+          <div>
+            <h1>Chart of Accounts</h1>
+            <p>Organise accounts into a four-level chart.</p>
+          </div>
+        </div>
+        <div className="coa2-tools">
+          <label className="coa2-search">
+            <Search />
+            <input
+              aria-label="Search accounts"
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value)
+                setPage(1)
+              }}
+              placeholder="Search accounts, codes, or keywords..."
+            />
+            <kbd>⌘ K</kbd>
+          </label>
+          <div className="coa2-seg">
+            <button className={view === 'table' ? 'active' : ''} onClick={() => setView('table')}>
+              <Table2 /> Table View
+            </button>
+            <button className={view === 'map' ? 'active' : ''} onClick={() => setView('map')}>
+              <Network /> Hierarchy Map
+            </button>
+          </div>
+          <label className="coa2-select">
+            <Filter />
+            <select
+              aria-label="Account category"
+              value={category}
+              onChange={(e) => {
+                setCategory(e.target.value)
+                setPage(1)
+              }}
+            >
+              <option value="all">All Accounts</option>
+              {roots.map((m) => (
+                <option key={m.code} value={m.code}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+            <ChevronDown />
+          </label>
+          <div className="coa2-io">
+            <button
+              className="coa2-btn"
+              disabled={!ACCOUNT_CREATE_ENABLED}
+              title={!ACCOUNT_CREATE_ENABLED ? 'Coming soon' : undefined}
+              onClick={comingSoon}
+            >
+              <Upload /> Import
+            </button>
+            <button
+              className="coa2-btn"
+              onClick={() => setNotice(`Exported ${flat.length} accounts.`)}
+            >
+              <Download /> Export
+            </button>
+          </div>
+        </div>
+        <button
+          className="coa2-btn primary coa2-add"
+          disabled={!ACCOUNT_CREATE_ENABLED}
+          title={
+            !ACCOUNT_CREATE_ENABLED
+              ? 'Coming soon — the Accounting spec and API are in progress'
+              : undefined
+          }
+          onClick={() =>
+            ACCOUNT_CREATE_ENABLED ? setModal({ level: 1, type: 'Asset' }) : comingSoon()
+          }
         >
-          coa-standard.md §5
-        </a>
-        .
-      </Banner>
-      <Table
-        headers={['Account name', 'Code', 'Type', 'Normal', 'Balance (PKR)', 'Status', 'Actions']}
-        rows={rows.map(({ account, depth }) =>
-          accountRow(account, depth, data.balances.get(account.id), navigate),
-        )}
-      />
+          <Plus /> Add Account
+        </button>
+      </div>
+
+      {/* A standalone line below the whole head row, not a 3rd line inside .coa2-title — that
+       * div sits in a flex row alongside the search/tools column, and at narrower widths
+       * (<=1600px-ish, including 1280) .coa2-head switches to flex-wrap:nowrap, so a taller
+       * title block there pushed into the tools column instead of the row growing to fit it. */}
+      <p
+        style={{
+          margin: '2px 0 0',
+          color: 'var(--c-mute)',
+          fontSize: 12,
+        }}
+      >
+        Balances as of {asOf}
+      </p>
+
+      {!ACCOUNT_CREATE_ENABLED && (
+        <Banner tone="info">Adding and editing accounts is coming soon.</Banner>
+      )}
+
+      <div className="coa2-stats">
+        {totals.map(([code, label, tone, Icon]) => (
+          <article key={code} className={tone}>
+            <span className="coa2-stat-icon">
+              <Icon />
+            </span>
+            <div>
+              <small>{label}</small>
+              <b>{formatBalance(rollup(code))}</b>
+            </div>
+          </article>
+        ))}
+        <article className="green">
+          <span className="coa2-stat-icon">
+            <BarChart3 />
+          </span>
+          <div>
+            <small>Total Accounts</small>
+            <b>{accounts.length}</b>
+          </div>
+        </article>
+      </div>
+
+      <div className="coa2-toolbar">
+        <label className="coa2-check big">
+          <input
+            type="checkbox"
+            aria-label="Select all visible"
+            checked={allChecked}
+            onChange={toggleAll}
+          />
+          <i>
+            <Check />
+          </i>
+        </label>
+        <b className="coa2-selcount">{selected.size} selected</b>
+        <span className="coa2-vsep" />
+        <button
+          className="coa2-btn"
+          disabled={!selected.size || !ACCOUNT_CREATE_ENABLED}
+          title={!ACCOUNT_CREATE_ENABLED ? 'Coming soon' : undefined}
+          onClick={comingSoon}
+        >
+          <Pencil /> Edit
+        </button>
+        <button
+          className="coa2-btn"
+          disabled={!selected.size || !ACCOUNT_CREATE_ENABLED}
+          title={!ACCOUNT_CREATE_ENABLED ? 'Coming soon' : undefined}
+          onClick={comingSoon}
+        >
+          <FolderTree /> Move
+        </button>
+        {/* Activate/Deactivate: "coming later", not "coming soon" — deactivation is deferred
+         * past the M2-C accounts-write API, unlike Add/Edit/Move. There is no Delete button:
+         * accounts are never hard-deleted (CLAUDE.md, "No hard deletes of financial or
+         * operational records. Ever.") — deactivate is the only removal path this product will
+         * ever offer, so there is nothing to disable-with-a-tooltip here, only to not build. */}
+        <button
+          className="coa2-btn"
+          disabled
+          title="Coming later — deactivation is deferred"
+          onClick={comingLater}
+        >
+          <Check /> Activate
+        </button>
+        <button
+          className="coa2-btn"
+          disabled
+          title="Coming later — deactivation is deferred"
+          onClick={comingLater}
+        >
+          <X /> Deactivate
+        </button>
+        <div className="coa2-toolbar-right">
+          <label className="coa2-select plain">
+            <select aria-label="Type filter" value={type} onChange={(e) => setType(e.target.value)}>
+              {['All Types', 'Header', 'Group', 'Postable'].map((t) => (
+                <option key={t}>{t}</option>
+              ))}
+            </select>
+            <ChevronDown />
+          </label>
+          <label className="coa2-select plain">
+            <select
+              aria-label="Status filter"
+              value={status}
+              onChange={(e) => setStatus(e.target.value)}
+            >
+              {['All Statuses', 'Active', 'Inactive'].map((t) => (
+                <option key={t}>{t}</option>
+              ))}
+            </select>
+            <ChevronDown />
+          </label>
+          <label className="coa2-select plain">
+            <select
+              aria-label="Level filter"
+              value={level}
+              onChange={(e) => setLevel(e.target.value)}
+            >
+              {['All Levels', 'Level 1', 'Level 2', 'Level 3', 'Level 4'].map((t) => (
+                <option key={t}>{t}</option>
+              ))}
+            </select>
+            <ChevronDown />
+          </label>
+          <button className="coa2-btn" onClick={reset}>
+            Reset
+          </button>
+          <div className="coa2-seg icons">
+            <button
+              aria-label="List view"
+              className={density === 'list' ? 'active' : ''}
+              onClick={() => setDensity('list')}
+            >
+              <List />
+            </button>
+            <button
+              aria-label="Comfortable view"
+              className={density === 'comfy' ? 'active' : ''}
+              onClick={() => setDensity('comfy')}
+            >
+              <ListTree />
+            </button>
+            <button
+              aria-label="Grid view"
+              className={density === 'grid' ? 'active' : ''}
+              onClick={() => setDensity('grid')}
+            >
+              <LayoutGrid />
+            </button>
+          </div>
+          <button className="coa2-btn icon" aria-label="Table settings">
+            <Settings />
+          </button>
+        </div>
+      </div>
+      {notice && (
+        <p className="coa2-notice" role="status">
+          {notice}
+        </p>
+      )}
+
+      {view === 'map' ? (
+        <section className="coa2-map">
+          <div className="coa2-map-main">
+            {roots
+              .filter((m) => childrenOf(m.code).length > 0)
+              .map((root) => {
+                const RootIcon = iconOf(root),
+                  tone = toneOf(root),
+                  subs = childrenOf(root.code)
+                return (
+                  <div key={root.code} className="coa2-map-branch">
+                    <div
+                      className={`coa2-map-root-card tone-${tone}`}
+                      role="region"
+                      aria-label={root.name}
+                    >
+                      <span className={`coa2-map-root-icon tone-${tone}`} aria-hidden="true">
+                        <RootIcon />
+                      </span>
+                      <div className="coa2-map-root-body">
+                        <div className="coa2-map-root-top">
+                          <div className="coa2-map-root-name">
+                            <b>{root.name}</b>
+                            <code>{root.code}</code>
+                          </div>
+                          <span className="coa2-kind header sm">Header</span>
+                        </div>
+                        <div className="coa2-map-root-foot">
+                          <span className="coa2-map-subcount">
+                            {subs.length} sub-type{subs.length !== 1 ? 's' : ''}
+                          </span>
+                          <span className="coa2-map-bal">{formatBalance(rollup(root.code))}</span>
+                        </div>
+                      </div>
+                    </div>
+                    {subs.length > 0 && (
+                      <div className="coa2-map-l2-list" role="list">
+                        {subs.map((sub, si, sarr) => {
+                          const SubIcon = iconOf(sub),
+                            grps = childrenOf(sub.code)
+                          return (
+                            <div
+                              key={sub.code}
+                              className={`coa2-map-l2-item${si === sarr.length - 1 ? ' last' : ''}`}
+                              role="listitem"
+                            >
+                              <div className="coa2-map-l2-card">
+                                <span
+                                  className={`coa2-map-l2-icon tone-${tone}`}
+                                  aria-hidden="true"
+                                >
+                                  <SubIcon />
+                                </span>
+                                <div className="coa2-map-l2-body">
+                                  <b>{sub.name}</b>
+                                  <div className="coa2-map-l2-foot">
+                                    <code className="coa2-map-code">{sub.code}</code>
+                                    <span className="coa2-kind group sm">{sub.kind}</span>
+                                    <span className="coa2-map-bal">
+                                      {formatBalance(rollup(sub.code))}
+                                    </span>
+                                  </div>
+                                  {grps.length > 0 && (
+                                    <div className="coa2-map-l3-list" role="list">
+                                      {grps.map((grp, gi, garr) => {
+                                        const GrpIcon = iconOf(grp),
+                                          kids = childrenOf(grp.code).length
+                                        return (
+                                          <div
+                                            key={grp.code}
+                                            className={`coa2-map-l3-item${gi === garr.length - 1 ? ' last' : ''}`}
+                                            role="listitem"
+                                          >
+                                            <div className="coa2-map-l3-card">
+                                              <span className="coa2-map-l3-icon" aria-hidden="true">
+                                                <GrpIcon />
+                                              </span>
+                                              <div className="coa2-map-l3-body">
+                                                <span className="coa2-map-l3-name">{grp.name}</span>
+                                                <div className="coa2-map-l3-foot">
+                                                  <code className="coa2-map-code">{grp.code}</code>
+                                                  <span
+                                                    className={`coa2-kind ${grp.kind.toLowerCase()} sm`}
+                                                  >
+                                                    {grp.kind}
+                                                  </span>
+                                                  <span className="coa2-map-count">
+                                                    {kids
+                                                      ? `${kids} acct${kids !== 1 ? 's' : ''}`
+                                                      : '—'}
+                                                  </span>
+                                                  <span className="coa2-map-bal">
+                                                    {formatBalance(rollup(grp.code))}
+                                                  </span>
+                                                </div>
+                                              </div>
+                                            </div>
+                                          </div>
+                                        )
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+          </div>
+          {(() => {
+            const orphans = roots.filter((m) => childrenOf(m.code).length === 0)
+            if (!orphans.length) return null
+            return (
+              <div className="coa2-map-ungrouped" role="region" aria-label="Ungrouped accounts">
+                <span className="coa2-map-ungrouped-label">Ungrouped</span>
+                <div className="coa2-map-ungrouped-cards">
+                  {orphans.map((a) => {
+                    const AIcon = iconOf(a)
+                    return (
+                      <div key={a.code} className="coa2-map-orphan-card">
+                        <span className="coa2-map-orphan-icon" aria-hidden="true">
+                          <AIcon />
+                        </span>
+                        <div className="coa2-map-orphan-body">
+                          <b>{a.name}</b>
+                          <div className="coa2-map-orphan-foot">
+                            <code className="coa2-map-code">{a.code}</code>
+                            <span className="coa2-kind header sm">Header</span>
+                            <span className="coa2-map-bal">{formatBalance(rollup(a.code))}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          })()}
+        </section>
+      ) : (
+        <section
+          className={`coa2-table density-${density}`}
+          style={{ '--name-w': `${nameWidth}px` } as React.CSSProperties}
+        >
+          {/*
+           * coa2-tr2 — a SEPARATE, fully explicit grid, not a reuse of kit.css's own `.coa2-tr`
+           * (11 fixed tracks, three overlapping `@media(max-width:1600px)` blocks, and a prior
+           * attempt at this same fix that matched `gridTemplateColumns` between head and body
+           * without proving every cell actually lands in its OWN track). Every header cell and
+           * every body cell below carries the SAME ten per-column classes, in the SAME order:
+           * check / name / code / type / subaccounts / balance / change / status / mod /
+           * actions — Parent Account is dropped (coordinator review: not in the required
+           * column list). `.coa2-tr2`'s own CSS (packages/ui/src/styles/kit.css) is the only
+           * thing that sets its grid-template-columns, at both 1440 and the <=1366px step that
+           * hides Change/Last Modified — on the head row exactly as the body, via the same
+           * class, so there is nothing left that can hide one row's cell and not the other's.
+           */}
+          <div className="coa2-tr coa2-tr2 head">
+            <span className="c-check">
+              <label className="coa2-check">
+                <input
+                  type="checkbox"
+                  aria-label="Select page"
+                  checked={allChecked}
+                  onChange={toggleAll}
+                />
+                <i>
+                  <Check />
+                </i>
+              </label>
+            </span>
+            <span className="c-name">
+              Account Name <ChevronsUpDown />
+              <span
+                className="coa2-resizer"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize account name column"
+                onPointerDown={startResize}
+              />
+            </span>
+            <span className="c-code-h">
+              <Tag /> Code <ChevronsUpDown />
+            </span>
+            <span className="c-type-h">
+              <Filter /> Type <Filter className="f" />
+            </span>
+            <span className="c-subaccounts">
+              <Network /> Sub-accounts
+            </span>
+            <span className="num c-balance">
+              <Coins /> Balance (PKR) <ChevronsUpDown />
+            </span>
+            <span className="c-change">
+              <TrendingUp /> Change
+            </span>
+            <span className="c-status">
+              <Activity /> Status
+            </span>
+            <span className="c-mod">
+              <CalendarDays /> Last Modified
+            </span>
+            <span className="c-actions">Actions</span>
+          </div>
+          {rows.map(({ m, depth, last, trail }) => {
+            const Icon = iconOf(m),
+              kids = childrenOf(m.code).length,
+              isOpen = open.has(m.code)
+            return (
+              <div
+                key={m.code}
+                className={`coa2-tr coa2-tr2 depth-${depth} ${selected.has(m.code) ? 'sel' : ''} ${m.level === 1 ? 'root' : ''}`}
+              >
+                <span className="c-check">
+                  <label className="coa2-check">
+                    <input
+                      type="checkbox"
+                      aria-label={`Select ${m.name}`}
+                      checked={selected.has(m.code)}
+                      onChange={() => toggleSel(m.code)}
+                    />
+                    <i>
+                      <Check />
+                    </i>
+                  </label>
+                </span>
+                <span className="c-name" style={{ paddingLeft: 10 + (depth - 1) * 30 }}>
+                  {trail.map((cont, k) => {
+                    const own = k === depth - 2
+                    if (!own && !cont) return null
+                    return (
+                      <i
+                        key={k}
+                        className={`coa2-guide ${own ? (last ? 'end' : '') : ''} ${own && !kids ? 'elbow' : ''}`}
+                        style={{ left: 10 + k * 30 + 12 }}
+                      />
+                    )
+                  })}
+                  {kids ? (
+                    <button
+                      type="button"
+                      aria-label={`${isOpen ? 'Collapse' : 'Expand'} ${m.name}`}
+                      onClick={() => toggle(m.code)}
+                    >
+                      {isOpen ? <ChevronDown /> : <ChevronRight />}
+                    </button>
+                  ) : (
+                    <i className="coa2-nochev" />
+                  )}
+                  <span className={`coa2-icon ${toneOf(m)}`}>
+                    <Icon />
+                  </span>
+                  <span className="coa2-name">
+                    <b>{m.name}</b>
+                    {descriptions[m.name] && <small>{descriptions[m.name]}</small>}
+                  </span>
+                </span>
+                <span className="c-code">{m.code}</span>
+                <span className="c-type-h">
+                  <span className={`coa2-kind ${m.kind.toLowerCase()}`}>{m.kind}</span>
+                </span>
+                <span className="c-subaccounts">
+                  <span className={`coa2-count ${kids ? 'on' : ''}`}>{kids}</span>
+                </span>
+                {/* Two lines (amount, then Dr/Cr), not one long inline string — a fixed-width
+                 * cell fitting "Rs 12,184,251" (the mock's undecimalled number) does not
+                 * reliably fit "Rs 12,184,251.00 Dr" (a real, decimal-string amount plus its
+                 * required side) on one line; wrapping an inline string here overflowed into
+                 * the row below it. */}
+                {(() => {
+                  const net = rollup(m.code)
+                  return (
+                    <span className="num c-balance">
+                      <b>{net ? moneyFromString(net.amount) : '—'}</b>
+                      {net && <small>{net.side}</small>}
+                    </span>
+                  )
+                })()}
+                {/* Not fabricated — the mock's per-row "Change" was a hash-derived fake
+                 * percentage with no period-comparison API behind it. An em dash, not
+                 * invented data (CLAUDE.md, "never fake data"); the column stays so the
+                 * table's own explicit grid (.coa2-tr2, kit.css) does not shift. */}
+                <span className="c-change flat">
+                  <em>● —</em>
+                </span>
+                <span className="c-status">
+                  <span className={`coa2-status ${m.status === 'Active' ? 'on' : 'off'}`}>
+                    ● {m.status}
+                  </span>
+                </span>
+                <span className="c-mod">
+                  <b>—</b>
+                  <small>not tracked yet</small>
+                </span>
+                <span className="c-actions">
+                  <button
+                    type="button"
+                    aria-label={`Actions for ${m.name}`}
+                    onClick={() =>
+                      m.kind === 'Postable'
+                        ? navigate(`/ledgers?account=${encodeURIComponent(m.code)}`)
+                        : comingSoon()
+                    }
+                  >
+                    <EllipsisVertical />
+                  </button>
+                </span>
+              </div>
+            )
+          })}
+          {!rows.length && <div className="empty-state">No accounts match your filters.</div>}
+          <div className="coa2-foot">
+            <span>
+              Showing {flat.length ? (cur - 1) * rowsPer + 1 : 0}–
+              {Math.min(cur * rowsPer, flat.length)} of {flat.length} accounts
+            </span>
+            <div className="coa2-foot-right">
+              <span>Rows per page</span>
+              <label className="coa2-select plain sm">
+                <select
+                  aria-label="Rows per page"
+                  value={rowsPer}
+                  onChange={(e) => {
+                    setRowsPer(+e.target.value)
+                    setPage(1)
+                  }}
+                >
+                  {[10, 25, 50, 100].map((n) => (
+                    <option key={n}>{n}</option>
+                  ))}
+                </select>
+                <ChevronDown />
+              </label>
+              <div className="coa2-pager">
+                <button aria-label="First page" disabled={cur === 1} onClick={() => setPage(1)}>
+                  <ChevronsLeft />
+                </button>
+                <button
+                  aria-label="Previous page"
+                  disabled={cur === 1}
+                  onClick={() => setPage(cur - 1)}
+                >
+                  <ChevronLeft />
+                </button>
+                {Array.from({ length: Math.min(5, pages) }, (_, i) => i + 1).map((n) => (
+                  <button key={n} className={n === cur ? 'active' : ''} onClick={() => setPage(n)}>
+                    {n}
+                  </button>
+                ))}
+                <button
+                  aria-label="Next page"
+                  disabled={cur === pages}
+                  onClick={() => setPage(cur + 1)}
+                >
+                  <ChevronRight />
+                </button>
+                <button
+                  aria-label="Last page"
+                  disabled={cur === pages}
+                  onClick={() => setPage(pages)}
+                >
+                  <ChevronsRight />
+                </button>
+              </div>
+              <span>Go to page</span>
+              <input
+                className="coa2-goto"
+                aria-label="Go to page"
+                value={cur}
+                onChange={(e) => setPage(Math.max(1, Math.min(pages, +e.target.value || 1)))}
+              />
+            </div>
+          </div>
+        </section>
+      )}
+
+      {ACCOUNT_CREATE_ENABLED && modal && (
+        <MasterModal
+          open={!!modal}
+          list={[] as Master[]}
+          presetType={modal.type === 'Asset' ? 'Asset' : 'Account'}
+          presetLevel={modal.level}
+          presetParent={modal.parent}
+          onClose={() => setModal(null)}
+          onSave={() => setNotice('Account creation is not wired to the API yet.')}
+        />
+      )}
     </>
   )
 }
 
-/**
- * The trial balance's own column-follows-sign-of-balance rule
- * (ledger-and-trial-balance.md §3) collapsed into one "Balance" column with an explicit Dr/Cr
- * side — an abnormal balance (a credit on an asset, say) must read as abnormal, never silently
- * as if it were on the account's normal side. Decimal-string equality via `Money.isZero`, never
- * `=== '0.0000'` (ADR-0011: a server-sent scale/representation change must not silently break
- * this check).
- */
-function netBalance(
-  line: TrialBalanceLine | undefined,
-): { amount: string; side: 'Dr' | 'Cr' } | null {
-  if (!line) return null
-  if (!Money.isZero(Money.from(line.debit))) return { amount: line.debit, side: 'Dr' }
-  if (!Money.isZero(Money.from(line.credit))) return { amount: line.credit, side: 'Cr' }
-  return null // exact zero — no side to show; rendered as an em dash, same as any nil money cell
-}
-
-function accountRow(
-  account: AccountDto,
-  depth: number,
-  balance: TrialBalanceLine | undefined,
-  navigate: (path: string) => void,
-) {
-  const net = netBalance(balance)
-  return [
-    <span style={{ paddingLeft: (depth - 1) * 20 }}>
-      <b>{account.name}</b>
-    </span>,
-    account.code,
-    <Badge tone={account.kind === 'HEADER' ? 'neutral' : 'info'}>
-      {account.kind === 'HEADER' ? 'Header' : 'Postable'}
-    </Badge>,
-    account.normalBalance === 'DEBIT' ? 'Dr' : 'Cr',
-    net === null ? '—' : `${moneyFromString(net.amount)} ${net.side}`,
-    <Badge tone={account.isActive ? 'good' : 'neutral'}>
-      {account.isActive ? 'Active' : 'Inactive'}
-    </Badge>,
-    account.kind === 'POSTABLE' ? (
-      <button
-        type="button"
-        className="linkable"
-        onClick={() => navigate(`/ledgers?account=${encodeURIComponent(account.code)}`)}
-      >
-        View ledger
-      </button>
-    ) : (
-      ''
-    ),
-  ]
+function ChevronsUpDown() {
+  return (
+    <svg
+      className="coa2-sort"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="m7 15 5 5 5-5" />
+      <path d="m7 9 5-5 5 5" />
+    </svg>
+  )
 }

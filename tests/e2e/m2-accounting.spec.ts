@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { expect, test } from '@playwright/test'
+import { apiBaseUrl, apiCall, apiLogin, newIdempotencyKey } from './helpers/api-client.ts'
 import { closeDatabase, openDatabase } from '@finsoft/database'
 import {
   createAccountingE2eTenant,
@@ -68,13 +69,17 @@ test.describe('M2 accounting journey (real API, real tenant)', () => {
   }) => {
     await login(page, fixture.accountantEmail, fixture.password)
 
-    // 1. Chart of Accounts — real tree, read-only.
+    // 1. Chart of Accounts — the PO's original screen design, restored (M2-UI). Add/Edit/Move
+    // are back in the DOM (the PO now wants account creation in the MVP) but disabled behind
+    // ACCOUNT_CREATE_ENABLED until a real POST /api/accounts exists — the chart itself is
+    // still read-only server-side (coa-standard.md §5). There is no Delete button at all:
+    // accounts are never hard-deleted.
     await page.goto('/accounts')
     await expect(
       page.getByRole('heading', { name: 'Chart of Accounts', exact: true }),
     ).toBeVisible()
     await expect(page.getByText('Cash in Hand')).toBeVisible()
-    await expect(page.getByRole('button', { name: /add account/i })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: /add account/i })).toBeDisabled()
 
     // 2. Post a balanced journal voucher: Dr Cash in Hand / Cr Owner's Capital.
     await page.goto('/vouchers/new')
@@ -146,17 +151,22 @@ test.describe('M2 accounting journey (real API, real tenant)', () => {
     await viewerPage.getByLabel('Debit line 1').fill('1')
     await viewerPage.getByLabel('Account line 2').selectOption({ label: "Owner's Capital (3100)" })
     await viewerPage.getByLabel('Credit line 2').fill('1')
-    await viewerPage.getByRole('button', { name: /post voucher/i }).click()
-    await viewerPage
-      .getByRole('dialog', { name: /post voucher/i })
-      .getByRole('button', { name: /post voucher/i })
-      .click()
-    // No real per-user permission list reaches the client yet (M2-S page docs' shared note) —
-    // the server's 403 is the real gate, and apps/web/src/lib/api/client.ts's FIXED, product-
-    // wide contract for a 403 from any apiFetch call is a redirect to /unauthorized (not an
-    // inline form error) — the voucher was never posted.
-    await expect(viewerPage).toHaveURL(/\/unauthorized/, { timeout: 15_000 })
-    await expect(viewerPage.getByText('Access restricted')).toBeVisible()
+    // The UI gate (M4-W): a Viewer lacks `voucher.post`, so Post is disabled outright.
+    await expect(viewerPage.getByRole('button', { name: /post voucher/i })).toBeDisabled()
+    // The server stays the real gate: the same Viewer posting directly is refused with 403.
+    // Guards run before validation, so a minimal body is enough to prove the refusal.
+    const viewerSession = await apiLogin(
+      viewerPage.request,
+      apiBaseUrl(),
+      fixture.code,
+      fixture.viewerEmail,
+      fixture.password,
+    )
+    const direct = await apiCall(viewerPage.request, viewerSession, 'POST', '/api/journals', {
+      data: {},
+      idempotencyKey: newIdempotencyKey(),
+    })
+    expect(direct.status).toBe(403)
     await viewerContext.close()
   })
 })

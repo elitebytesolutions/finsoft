@@ -10,6 +10,21 @@
 | **Posts to the ledger** | no — but it is where the one mutating action on a posted voucher lives: **Reverse** |
 | **Backed by (M2)** | `docs/posting-rules/journal-voucher.md`, `docs/posting-rules/reversal.md`. No `docs/design/M2/api-contract.md` published yet |
 
+## API note — M2-UI (restoration)
+
+Restored to the prototype's original panel/table layout (`vd-head`, `vd-grid` two-column with a
+`vd-rail` sidebar of Panels) via `apps/web/src/lib/adapters/vouchers.ts`, on top of M2-S's real,
+tested `GET /api/journals/:id` + Reverse flow, which is kept byte-identical (same aria-labels,
+same idempotency-key + confirm-before-post-equivalent reverse dialog) since
+`tests/voucher-detail.test.tsx` pins its exact behaviour. One structural change the real data
+model forces: the prototype's "Accounting entries" table paired one dr-account with one
+cr-account per row (`VoucherLine{debit,credit,amount}`); a real entry is N debit lines and M
+credit lines (`JournalLineDto[]`) with no guaranteed 1:1 pairing, so the restored table renders
+one row per real line inside the original Panel/table chrome, not a synthesised pairing. Branch,
+Department, Approver, Attachments, Comments and "Created by" have no backing field on
+`JournalEntryDto` — every one renders "—" or a "not available yet" panel, never deleted, never
+faked.
+
 ## API note — M2-S (2026-09-29)
 
 Rewritten in full for M2, for the same reason noted on
