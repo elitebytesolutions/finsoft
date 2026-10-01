@@ -306,6 +306,40 @@ describe('PaymentsCentre', () => {
     })
   })
 
+  it('keeps Post receipt disabled while the R2 preview is pending', async () => {
+    // Accounting review (034b005): Post stayed enabled while a fresh preview was still in
+    // flight, so the confirm dialog could quote a stale allocated/unallocated total — same
+    // class of bug as sales-voucher.tsx's calc-pending fix, same fix shape.
+    const fetchMock = fetch as ReturnType<typeof vi.fn>
+    let resolvePreview: ((v: unknown) => void) | null = null
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (url.startsWith('/api/receipts/preview') && init?.method === 'POST') {
+        return new Promise((resolve) => {
+          resolvePreview = resolve
+        })
+      }
+      return baseRouter()(url, init)
+    })
+
+    renderScreen()
+    fireEvent.click(await screen.findByRole('button', { name: /new receipt/i }))
+    const dialog = screen.getByRole('dialog', { name: /new receipt/i })
+    fireEvent.change(within(dialog).getByLabelText('Customer'), {
+      target: { value: 'Shifa Medical Centre (CUST-000001)' },
+    })
+    fireEvent.change(within(dialog).getByLabelText('Amount'), { target: { value: '6000' } })
+
+    // The debounced R2 preview is now in flight and never resolved — Post must stay disabled
+    // for as long as that's true.
+    await waitFor(() => expect(resolvePreview).not.toBeNull())
+    expect(within(dialog).getByRole('button', { name: /post receipt/i })).toBeDisabled()
+
+    resolvePreview!(jsonResponse(200, preview()))
+    await waitFor(() =>
+      expect(within(dialog).getByRole('button', { name: /post receipt/i })).toBeEnabled(),
+    )
+  })
+
   it('Post receipt confirms, warning when unallocated would be nonzero', async () => {
     const fetchMock = fetch as ReturnType<typeof vi.fn>
     fetchMock.mockImplementation(
@@ -331,6 +365,9 @@ describe('PaymentsCentre', () => {
     })
     fireEvent.change(within(dialog).getByLabelText('Amount'), { target: { value: '6000' } })
     await waitFor(() => expect(within(dialog).getByText('INV-000001')).toBeInTheDocument())
+    await waitFor(() =>
+      expect(within(dialog).getByRole('button', { name: /post receipt/i })).toBeEnabled(),
+    )
 
     fireEvent.click(within(dialog).getByRole('button', { name: /post receipt/i }))
     const confirm = await screen.findByRole('dialog', { name: 'Post receipt' })

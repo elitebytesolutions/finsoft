@@ -370,7 +370,7 @@ function NewReceiptDialog({ onClose, onDone }: { onClose: () => void; onDone: ()
    * key at all so the first preview can suggest one; once they have (an edit, or accepting the
    * suggestion), send their own rows from then on, even if they clear everything back to zero.
    */
-  const touchedRef = useRef(false)
+  const [touched, setTouched] = useState(false)
 
   // Debounced customer search (C1).
   useEffect(() => {
@@ -410,20 +410,26 @@ function NewReceiptDialog({ onClose, onDone }: { onClose: () => void; onDone: ()
     setCustomerId(match ? match.id : null)
     setRows([])
     setPreview(null)
-    touchedRef.current = false
+    setTouched(false)
   }
 
-  // The request body's `allocations` — every row with a nonzero amount, invoiceId+amount only.
-  // Used both as the effect's dependency (a primitive string, so it only changes when an
-  // amount actually changes) and, via rowsRef below, as the value the effect sends — `rows`
-  // itself is NOT a dependency: the effect's own response handler calls setRows, which would
-  // otherwise make the effect re-trigger itself on every response, forever (Accounting review,
-  // 66019c0).
-  const activeAllocationsKey = JSON.stringify(
-    rows
-      .filter((r) => r.amount.trim() !== '' && r.amount.trim() !== '0')
-      .map((r) => ({ invoiceId: r.invoiceId, amount: r.amount })),
-  )
+  // The request body's `allocations` — every row with a nonzero amount, invoiceId+amount only —
+  // but ONLY once the user has touched a row; while untouched it is the constant `''`
+  // regardless of how `rows` changes, so the effect's own response (which syncs `rows` to the
+  // server's suggested amounts) can never retrigger it. Without that gate, the very first
+  // suggestion sync would change this key once more (empty -> suggested), firing a second,
+  // redundant request that converges back to the same key — not an infinite loop, but a visible
+  // double round-trip that flickers the Post button's disabled state right as a user reaches
+  // for it (Accounting review, 034b005). Used both as the effect's dependency (a primitive
+  // string) and, via rowsRef below, as the value the effect sends — `rows` itself is NOT a
+  // dependency (Accounting review, 66019c0).
+  const activeAllocationsKey = touched
+    ? JSON.stringify(
+        rows
+          .filter((r) => r.amount.trim() !== '' && r.amount.trim() !== '0')
+          .map((r) => ({ invoiceId: r.invoiceId, amount: r.amount })),
+      )
+    : ''
   const rowsRef = useRef(rows)
   rowsRef.current = rows
 
@@ -444,7 +450,7 @@ function NewReceiptDialog({ onClose, onDone }: { onClose: () => void; onDone: ()
         receiptId: receiptId ?? undefined,
         receiptDate,
         amount: amount || undefined,
-        allocations: touchedRef.current
+        allocations: touched
           ? rowsRef.current
               .filter((r) => r.amount.trim() !== '' && r.amount.trim() !== '0')
               .map((r) => ({ invoiceId: r.invoiceId, amount: r.amount }))
@@ -474,16 +480,16 @@ function NewReceiptDialog({ onClose, onDone }: { onClose: () => void; onDone: ()
       active = false
       clearTimeout(t)
     }
-  }, [customerId, receiptDate, amount, activeAllocationsKey, receiptId])
+  }, [customerId, receiptDate, amount, activeAllocationsKey, receiptId, touched])
 
   const setRowAmount = (invoiceId: string, value: string) => {
-    touchedRef.current = true
+    setTouched(true)
     setRows((rs) => rs.map((r) => (r.invoiceId === invoiceId ? { ...r, amount: value } : r)))
   }
 
   const applySuggested = () => {
     if (!preview) return
-    touchedRef.current = true
+    setTouched(true)
     setRows((rs) =>
       rs.map((r) => {
         const s = preview.allocations.find((a) => a.invoiceId === r.invoiceId)
@@ -707,7 +713,7 @@ function NewReceiptDialog({ onClose, onDone }: { onClose: () => void; onDone: ()
         <Button kind="secondary" onClick={saveDraft} busy={submitting} type="button">
           <FileText /> Save draft
         </Button>
-        <Button onClick={openConfirm} busy={submitting} type="button">
+        <Button onClick={openConfirm} busy={submitting} disabled={previewPending} type="button">
           <Check /> Post receipt
         </Button>
       </div>
