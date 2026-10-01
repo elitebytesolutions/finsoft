@@ -55,15 +55,15 @@ export function PaymentsCentre() {
   const canReceive = can('payment.receive')
   const [open, setOpen] = useState(false)
   const [cashTab, setCashTab] = useState<'Reports' | 'Transaction History'>('Reports')
-  const [cashTypeFilter, setCashTypeFilter] = useState<'Payments' | 'Receipts' | 'All Transactions'>(
-    'Receipts',
-  )
+  const [cashTypeFilter, setCashTypeFilter] = useState<
+    'Payments' | 'Receipts' | 'All Transactions'
+  >('Receipts')
   const [cashDateFilter, setCashDateFilter] = useState<'One (Date Wise)' | 'All (Date Wise)'>(
     'One (Date Wise)',
   )
-  const [cashNumberFilter, setCashNumberFilter] = useState<'One (Number Wise)' | 'All (Number Wise)'>(
-    'One (Number Wise)',
-  )
+  const [cashNumberFilter, setCashNumberFilter] = useState<
+    'One (Number Wise)' | 'All (Number Wise)'
+  >('One (Number Wise)')
 
   // ---- recent receipts (R1) ---------------------------------------------
   const [receipts, setReceipts] = useState<ReceiptListItem[]>([])
@@ -287,9 +287,7 @@ export function PaymentsCentre() {
         {!receiptsError && !receiptsLoading && receipts.length === 0 && (
           <div className="empty-state">No receipts yet. Record one with New Receipt above.</div>
         )}
-        {receipts.length > 0 && (
-          <ReceiptsTable receipts={receipts} />
-        )}
+        {receipts.length > 0 && <ReceiptsTable receipts={receipts} />}
         {receiptsCursor && (
           <div className="cash-pagination">
             <button onClick={() => loadReceipts(receiptsCursor)} disabled={receiptsLoading}>
@@ -639,7 +637,9 @@ function NewReceiptDialog({ onClose, onDone }: { onClose: () => void; onDone: ()
           <div className="summary-strip">
             <span>
               Allocated
-              <b>{preview ? moneyFromString(preview.allocatedTotal) : previewPending ? '…' : '—'}</b>
+              <b>
+                {preview ? moneyFromString(preview.allocatedTotal) : previewPending ? '…' : '—'}
+              </b>
             </span>
             <span>
               Unallocated
@@ -647,9 +647,7 @@ function NewReceiptDialog({ onClose, onDone }: { onClose: () => void; onDone: ()
             </span>
           </div>
           {preview && preview.problems.length > 0 && (
-            <Banner tone="warn">
-              {preview.problems.map((p) => p.code).join(', ')}
-            </Banner>
+            <Banner tone="warn">{preview.problems.map((p) => p.code).join(', ')}</Banner>
           )}
         </>
       )}

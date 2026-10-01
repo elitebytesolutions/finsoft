@@ -91,7 +91,9 @@ describe('SaleDetail', () => {
 
     renderScreen()
 
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'INV-000001' })).toBeInTheDocument())
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: 'INV-000001' })).toBeInTheDocument(),
+    )
     expect(screen.getByText('Shifa Medical Centre (CUST-000001)')).toBeInTheDocument()
     expect(screen.getByText('Consulting')).toBeInTheDocument()
     expect(screen.getAllByText('Rs 10,000.00').length).toBeGreaterThan(0)
@@ -103,16 +105,15 @@ describe('SaleDetail', () => {
     const fetchMock = fetch as ReturnType<typeof vi.fn>
     fetchMock.mockImplementation(() =>
       Promise.resolve(
-        jsonResponse(
-          200,
-          invoice({ reversalBlockedBy: [{ id: 'r1', number: 'RCT-000001' }] }),
-        ),
+        jsonResponse(200, invoice({ reversalBlockedBy: [{ id: 'r1', number: 'RCT-000001' }] })),
       ),
     )
 
     renderScreen()
 
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'INV-000001' })).toBeInTheDocument())
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: 'INV-000001' })).toBeInTheDocument(),
+    )
     expect(screen.getByText(/Reverse RCT-000001 first/)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Reverse' })).not.toBeInTheDocument()
   })
@@ -120,9 +121,7 @@ describe('SaleDetail', () => {
   it('offers "Edit draft" instead of Reverse for a draft invoice', async () => {
     const fetchMock = fetch as ReturnType<typeof vi.fn>
     fetchMock.mockImplementation(() =>
-      Promise.resolve(
-        jsonResponse(200, invoice({ status: 'DRAFT', number: null, posted: null })),
-      ),
+      Promise.resolve(jsonResponse(200, invoice({ status: 'DRAFT', number: null, posted: null }))),
     )
 
     renderScreen()
@@ -138,7 +137,9 @@ describe('SaleDetail', () => {
 
     renderScreen('/sales/inv-1', (code) => code !== 'voucher.reverse')
 
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'INV-000001' })).toBeInTheDocument())
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: 'INV-000001' })).toBeInTheDocument(),
+    )
     expect(screen.queryByRole('button', { name: 'Reverse' })).not.toBeInTheDocument()
   })
 
@@ -190,9 +191,7 @@ describe('SaleDetail', () => {
     fireEvent.click(screen.getByLabelText(/I understand this cannot be undone/i))
     fireEvent.click(screen.getByRole('button', { name: 'Reverse invoice' }))
 
-    await waitFor(() =>
-      expect(screen.getByText(/reverse the receipt first/i)).toBeInTheDocument(),
-    )
+    await waitFor(() => expect(screen.getByText(/reverse the receipt first/i)).toBeInTheDocument())
   })
 
   it('shows Record not found for a missing invoice', async () => {

@@ -119,8 +119,9 @@ describe('ReceiptDetail', () => {
     renderScreen()
 
     await waitFor(() =>
-      expect(screen.getByText('This receipt is a draft. It has not been posted to the ledger.'))
-        .toBeInTheDocument(),
+      expect(
+        screen.getByText('This receipt is a draft. It has not been posted to the ledger.'),
+      ).toBeInTheDocument(),
     )
     expect(screen.queryByRole('button', { name: 'Reverse' })).not.toBeInTheDocument()
   })

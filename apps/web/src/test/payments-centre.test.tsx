@@ -99,10 +99,12 @@ function renderScreen(can: (code: string) => boolean = () => true) {
   )
 }
 
-function baseRouter(overrides: {
-  create?: (body: Record<string, unknown>) => unknown
-  post?: (id: string) => unknown
-} = {}) {
+function baseRouter(
+  overrides: {
+    create?: (body: Record<string, unknown>) => unknown
+    post?: (id: string) => unknown
+  } = {},
+) {
   return (url: string, init?: RequestInit) => {
     if (url.startsWith('/api/receipts/preview') && init?.method === 'POST') {
       return Promise.resolve(jsonResponse(200, preview()))
@@ -152,7 +154,9 @@ describe('PaymentsCentre', () => {
 
     renderScreen((code) => code !== 'payment.receive')
 
-    await waitFor(() => expect(screen.getByRole('button', { name: /RCT-000001/ })).toBeInTheDocument())
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /RCT-000001/ })).toBeInTheDocument(),
+    )
     expect(screen.getByRole('button', { name: /new receipt/i })).toBeDisabled()
   })
 
@@ -168,9 +172,7 @@ describe('PaymentsCentre', () => {
       target: { value: 'Shifa Medical Centre (CUST-000001)' },
     })
 
-    await waitFor(() =>
-      expect(within(dialog).getByText('INV-000001')).toBeInTheDocument(),
-    )
+    await waitFor(() => expect(within(dialog).getByText('INV-000001')).toBeInTheDocument())
     expect(within(dialog).getByDisplayValue('6000.0000')).toBeInTheDocument()
     expect(within(dialog).getByText('Rs 6,000.00')).toBeInTheDocument() // Allocated
   })

@@ -71,10 +71,12 @@ function renderScreen(path = '/sales/voucher', can: (code: string) => boolean = 
   )
 }
 
-function fetchRouter(overrides: {
-  create?: (body: Record<string, unknown>) => unknown
-  post?: (id: string) => unknown
-} = {}) {
+function fetchRouter(
+  overrides: {
+    create?: (body: Record<string, unknown>) => unknown
+    post?: (id: string) => unknown
+  } = {},
+) {
   return (url: string, init?: RequestInit) => {
     if (url.startsWith('/api/customers')) return Promise.resolve(jsonResponse(200, CUSTOMERS_PAGE))
     if (url === '/api/invoices/calculate' && init?.method === 'POST') {
@@ -147,9 +149,7 @@ describe('SalesVoucher', () => {
       expect(call).toBeTruthy()
       const body = JSON.parse((call![1] as RequestInit).body as string)
       expect(body.customerId).toBe('cus-1')
-      expect(body.lines).toEqual([
-        { description: 'Consulting', quantity: '2', unitPrice: '5000' },
-      ])
+      expect(body.lines).toEqual([{ description: 'Consulting', quantity: '2', unitPrice: '5000' }])
     })
     await waitFor(() => expect(screen.getByText('Saved as draft.')).toBeInTheDocument())
   })
@@ -225,7 +225,8 @@ describe('SalesVoucher', () => {
           }),
         )
       }
-      if (url.startsWith('/api/customers')) return Promise.resolve(jsonResponse(200, CUSTOMERS_PAGE))
+      if (url.startsWith('/api/customers'))
+        return Promise.resolve(jsonResponse(200, CUSTOMERS_PAGE))
       throw new Error(`unexpected fetch: ${url}`)
     })
 

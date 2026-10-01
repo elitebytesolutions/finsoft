@@ -274,7 +274,8 @@ export function SalesVoucher() {
 
   const validate = (): string | null => {
     if (!customerId) return 'Select a customer.'
-    if (validLines.length === 0) return 'Add at least one line with a description, quantity and rate.'
+    if (validLines.length === 0)
+      return 'Add at least one line with a description, quantity and rate.'
     return null
   }
 
@@ -489,7 +490,10 @@ export function SalesVoucher() {
       <section className="sav-card sav-items">
         <div className="sav-card-head">
           <h2>Item Entry</h2>
-          <p>Service lines — description, quantity and rate. The net amount is calculated by the server.</p>
+          <p>
+            Service lines — description, quantity and rate. The net amount is calculated by the
+            server.
+          </p>
         </div>
         <div className="sav-table-wrap">
           <table className="sav-table">
@@ -521,7 +525,11 @@ export function SalesVoucher() {
                           onChange={(e) => patchLine(l.key, { description: e.target.value })}
                         />
                       </span>
-                      {problem && <small className="sav-line-error">Quantity and rate must be greater than zero.</small>}
+                      {problem && (
+                        <small className="sav-line-error">
+                          Quantity and rate must be greater than zero.
+                        </small>
+                      )}
                     </td>
                     <td>
                       <input
@@ -566,7 +574,12 @@ export function SalesVoucher() {
           </table>
         </div>
         <div className="sav-table-foot">
-          <button type="button" className="sav-btn green" disabled={!isDraftEditable} onClick={addRow}>
+          <button
+            type="button"
+            className="sav-btn green"
+            disabled={!isDraftEditable}
+            onClick={addRow}
+          >
             <Plus /> Add Row
           </button>
           <span className="sav-hint plain">
@@ -656,8 +669,8 @@ function PostConfirmDialog({
     <Modal title="Post invoice" onClose={onClose}>
       <p>
         This posts a {lineCount}-line invoice for <b>{customerLabel}</b>, net amount{' '}
-        <b>{moneyFromString(netAmount)}</b>, to the ledger. Posted invoices are immutable — they
-        can only be corrected by reversal.
+        <b>{moneyFromString(netAmount)}</b>, to the ledger. Posted invoices are immutable — they can
+        only be corrected by reversal.
       </p>
       <div className="modal-foot">
         <Button kind="secondary" onClick={onClose} type="button">

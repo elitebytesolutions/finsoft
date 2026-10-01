@@ -21,7 +21,18 @@ import {
 } from 'lucide-react'
 import { users } from '@/mocks/api'
 import type { AppData } from '@/mocks/api'
-import { Badge, Banner, Button, Field, Kpi, Modal, PageHead, Panel, Table, TextInput } from '@finsoft/ui'
+import {
+  Badge,
+  Banner,
+  Button,
+  Field,
+  Kpi,
+  Modal,
+  PageHead,
+  Panel,
+  Table,
+  TextInput,
+} from '@finsoft/ui'
 import { AccountSelect, LedgerBook, LedgerKpis } from './ledger'
 import { exportLedgerCsv, netOf } from './ledger-data'
 import { money, moneyFromString, movementTone } from '@finsoft/ui'
@@ -517,7 +528,10 @@ function SaleDetail(_props: { data: AppData }) {
         />
       </div>
       <div className="detail-grid">
-        <DetailField label="Customer" value={`${invoice.customer.name} (${invoice.customer.code})`} />
+        <DetailField
+          label="Customer"
+          value={`${invoice.customer.name} (${invoice.customer.code})`}
+        />
         <DetailField label="Status" value={<Badge tone={statusTone}>{invoice.status}</Badge>} />
         <DetailField label="Invoice date" value={invoice.invoiceDate} />
         <DetailField label="Due date" value={invoice.dueDate ?? '—'} />
@@ -672,7 +686,6 @@ function InvoiceReverseDialog({
     </Modal>
   )
 }
-
 
 function MasterDetail({ data }: { data: AppData }) {
   const { code } = useParams()
@@ -1202,8 +1215,7 @@ function ReceiptDetail() {
         : receipt.status === 'REVERSED'
           ? 'danger'
           : 'neutral'
-  const canReverse =
-    receipt.status === 'POSTED' && can('payment.receive') && can('voucher.reverse')
+  const canReverse = receipt.status === 'POSTED' && can('payment.receive') && can('voucher.reverse')
 
   return (
     <>
@@ -1244,10 +1256,19 @@ function ReceiptDetail() {
           icon={ReceiptText}
           tone="teal"
         />
-        <Kpi label="Status" value={receipt.status} change={receipt.method ?? '—'} icon={TrendingUp} tone="yellow" />
+        <Kpi
+          label="Status"
+          value={receipt.status}
+          change={receipt.method ?? '—'}
+          icon={TrendingUp}
+          tone="yellow"
+        />
       </div>
       <div className="detail-grid">
-        <DetailField label="Customer" value={`${receipt.customer.name} (${receipt.customer.code})`} />
+        <DetailField
+          label="Customer"
+          value={`${receipt.customer.name} (${receipt.customer.code})`}
+        />
         <DetailField label="Status" value={<Badge tone={statusTone}>{receipt.status}</Badge>} />
         <DetailField label="Receipt date" value={receipt.receiptDate} />
         <DetailField label="Method" value={receipt.method ?? '—'} />
@@ -1348,8 +1369,8 @@ function ReceiptReverseDialog({
       <form onSubmit={submit} noValidate>
         <p>
           This posts a new reversing journal entry that exactly neutralises this receipt and
-          restores the outstanding balance on every invoice it was allocated to. Both entries
-          remain in the ledger permanently. This cannot be undone.
+          restores the outstanding balance on every invoice it was allocated to. Both entries remain
+          in the ledger permanently. This cannot be undone.
         </p>
         <Field label="Reason" htmlFor="receipt-reverse-reason" required error={error ?? undefined}>
           <TextInput id="receipt-reverse-reason" value={reason} onChange={setReason} required />
