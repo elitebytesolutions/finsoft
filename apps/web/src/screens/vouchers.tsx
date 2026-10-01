@@ -601,7 +601,11 @@ function VoucherFormReady({ accounts }: { accounts: AccountDto[] }) {
                   key={card.type}
                   className={preset === card.type ? 'active' : ''}
                   disabled={!enabled}
-                  title={enabled ? undefined : 'Coming soon — every voucher posts as a Journal Voucher for now'}
+                  title={
+                    enabled
+                      ? undefined
+                      : 'Coming soon — every voucher posts as a Journal Voucher for now'
+                  }
                   onClick={() => enabled && setPreset(card.type)}
                 >
                   <Icon />

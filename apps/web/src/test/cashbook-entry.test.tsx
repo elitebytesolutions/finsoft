@@ -139,13 +139,15 @@ describe('Cash Book entry — control accounts excluded from the picker', () => 
     renderScreen()
 
     await waitFor(() => expect(screen.getByLabelText('Income account')).toBeInTheDocument())
-    const incomeOptions = [...screen.getByLabelText('Income account').querySelectorAll('option')]
-      .map((o) => o.textContent)
+    const incomeOptions = [
+      ...screen.getByLabelText('Income account').querySelectorAll('option'),
+    ].map((o) => o.textContent)
     expect(incomeOptions.some((l) => l?.includes('Accounts Receivable'))).toBe(false)
     expect(incomeOptions.some((l) => l?.includes('Sales Revenue'))).toBe(true)
 
-    const expenseOptions = [...screen.getByLabelText('Expense account').querySelectorAll('option')]
-      .map((o) => o.textContent)
+    const expenseOptions = [
+      ...screen.getByLabelText('Expense account').querySelectorAll('option'),
+    ].map((o) => o.textContent)
     expect(expenseOptions.some((l) => l?.includes('Accounts Receivable'))).toBe(false)
     expect(expenseOptions.some((l) => l?.includes('Office Expenses'))).toBe(true)
   })

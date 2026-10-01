@@ -273,8 +273,8 @@ function CashEntryPanels({
           <div>
             <h2>{out ? 'Cash Out' : 'Cash In'}</h2>
             <p>
-              {out ? `From ${cashAccount.name}` : `Into ${cashAccount.name}`} · posts as a
-              Journal Voucher
+              {out ? `From ${cashAccount.name}` : `Into ${cashAccount.name}`} · posts as a Journal
+              Voucher
             </p>
           </div>
         </div>
@@ -289,11 +289,7 @@ function CashEntryPanels({
             />
           </Field>
           <GroupLabel label="Who" />
-          <Field
-            label={out ? 'Paid To / Party' : 'Received From / Party'}
-            icon={<User />}
-            full
-          >
+          <Field label={out ? 'Paid To / Party' : 'Received From / Party'} icon={<User />} full>
             <input
               value={f.party}
               onChange={(e) => set({ party: e.target.value })}
@@ -611,14 +607,14 @@ function CashLedger({
                       <b>{line.narration}</b>
                     </td>
                     <td className="num dr">{moneyFromString(line.debit, { zeroAsDash: true })}</td>
-                    <td className="num cr">
-                      {moneyFromString(line.credit, { zeroAsDash: true })}
-                    </td>
+                    <td className="num cr">{moneyFromString(line.credit, { zeroAsDash: true })}</td>
                     <td className="num bal">
                       {running.amount} <small>{running.side}</small>
                     </td>
                     <td>
-                      <span className={`al-type ${line.entryStatus === 'REVERSED' ? 'payment' : 'sales'}`}>
+                      <span
+                        className={`al-type ${line.entryStatus === 'REVERSED' ? 'payment' : 'sales'}`}
+                      >
                         {line.entryStatus === 'REVERSED' ? 'Reversed' : 'Posted'}
                       </span>
                     </td>
