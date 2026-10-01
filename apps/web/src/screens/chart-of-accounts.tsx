@@ -295,9 +295,6 @@ function ChartReady({ data }: { data: Awaited<ReturnType<typeof loadChart>> }) {
           <div>
             <h1>Chart of Accounts</h1>
             <p>Organise accounts into a four-level chart.</p>
-            <small style={{ display: 'block', marginTop: 4, color: 'var(--c-mute)', fontSize: 12 }}>
-              Balances as of {asOf}
-            </small>
           </div>
         </div>
         <div className="coa2-tools">
@@ -373,6 +370,20 @@ function ChartReady({ data }: { data: Awaited<ReturnType<typeof loadChart>> }) {
           <Plus /> Add Account
         </button>
       </div>
+
+      {/* A standalone line below the whole head row, not a 3rd line inside .coa2-title — that
+       * div sits in a flex row alongside the search/tools column, and at narrower widths
+       * (<=1600px-ish, including 1280) .coa2-head switches to flex-wrap:nowrap, so a taller
+       * title block there pushed into the tools column instead of the row growing to fit it. */}
+      <p
+        style={{
+          margin: '2px 0 0',
+          color: 'var(--c-mute)',
+          fontSize: 12,
+        }}
+      >
+        Balances as of {asOf}
+      </p>
 
       {!ACCOUNT_CREATE_ENABLED && (
         <Banner tone="info">Adding and editing accounts is coming soon.</Banner>
