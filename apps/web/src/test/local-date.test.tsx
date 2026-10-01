@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { localIso, startOfMonthIso, todayIso } from '@/lib/date/local-date'
+import {
+  localIso,
+  nextLocalDayIso,
+  startOfLocalDayIso,
+  startOfMonthIso,
+  todayIso,
+} from '@/lib/date/local-date'
 
 /*
  * Accounting seat review, 09bbaad: `todayIso`/`startOfMonthIso` used `toISOString()`, which is
@@ -50,5 +56,21 @@ describe('local-date (02:00 PKT on the 1st of a month)', () => {
   it('localIso formats an explicit Date from its own local parts', () => {
     expect(localIso(new Date(2026, 8, 1))).toBe('2026-09-01') // month is 0-indexed (8 = September)
     expect(localIso(new Date(2026, 0, 5))).toBe('2026-01-05')
+  })
+
+  it('startOfLocalDayIso includes an event at 02:00 PKT on the selected day — the Audit Trail "From" bug', () => {
+    // The bug: `new Date('2026-09-29').toISOString()` is that date's own UTC midnight
+    // (2026-09-29T00:00:00.000Z), which a 02:00 PKT event on the 29th — occurring at
+    // 2026-09-28T21:00:00.000Z — falls BEFORE, so an `occurred_at >= from` filter dropped
+    // it even though it is squarely inside the local day the user selected.
+    const from = startOfLocalDayIso('2026-09-29')
+    expect(from).toBe('2026-09-28T19:00:00.000Z') // 2026-09-29 00:00 PKT
+    const eventAt2amPkt = new Date('2026-09-28T21:00:00.000Z')
+    expect(eventAt2amPkt.getTime()).toBeGreaterThanOrEqual(new Date(from).getTime())
+  })
+
+  it('nextLocalDayIso and startOfLocalDayIso bracket the same local day, one day apart', () => {
+    expect(startOfLocalDayIso('2026-09-29')).toBe('2026-09-28T19:00:00.000Z')
+    expect(nextLocalDayIso('2026-09-29')).toBe('2026-09-29T19:00:00.000Z')
   })
 })

@@ -27,6 +27,7 @@ import {
 import { money } from '@finsoft/ui'
 import { useApiQuery } from '@/lib/api/use-api-query'
 import { closePeriod, listPeriods, reopenPeriod } from '@/lib/api/accounting-client'
+import { useAuth } from '@/lib/api/auth-context'
 import { ApiError } from '@/lib/api/types'
 import type { FiscalPeriodDto } from '@/lib/api/accounting-types'
 
@@ -280,6 +281,15 @@ function PeriodTable({
   const [busyId, setBusyId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [reopenTarget, setReopenTarget] = useState<FiscalPeriodDto | null>(null)
+  const { can } = useAuth()
+  // M4-W: gate Close/Reopen on the caller's real permissions (GET /api/me/permissions),
+  // not only on the server's 403 — `period.reopen` is Owner-only, and offering the button
+  // to everyone else meant "Only the Owner can reopen a period." only ever flashed for an
+  // instant before apiFetch's global 403 -> /unauthorized redirect fired. Hiding the action
+  // up front is a UI affordance (CLAUDE.md rule 18); ReopenDialog's own 403 handling below
+  // stays as the second line of defence for a permission that changed mid-session.
+  const canClose = can('period.close')
+  const canReopen = can('period.reopen')
 
   // Order rule (periods.md §4.1): close only the earliest OPEN period; reopen only the
   // latest CLOSED one. Computed client-side as a UX convenience — the server is the real
@@ -314,7 +324,7 @@ function PeriodTable({
           p.periodStart,
           p.periodEnd,
           <span style={{ display: 'flex', gap: 8 }}>
-            {p.status === 'OPEN' && (
+            {p.status === 'OPEN' && canClose && (
               <Button
                 kind="secondary"
                 busy={busyId === p.id}
@@ -324,7 +334,7 @@ function PeriodTable({
                 Close
               </Button>
             )}
-            {p.status === 'CLOSED' && p.id === latestClosedId && (
+            {p.status === 'CLOSED' && p.id === latestClosedId && canReopen && (
               <Button kind="danger" onClick={() => setReopenTarget(p)}>
                 Reopen
               </Button>

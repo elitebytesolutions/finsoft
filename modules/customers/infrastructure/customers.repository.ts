@@ -278,6 +278,7 @@ export class CustomersRepository
           entryStatus: line.entryStatus,
           sourceType: line.sourceType,
           sourceId: line.sourceId,
+          sourceNumber: line.sourceNumber,
           narration: line.narration,
           debit: line.debit,
           credit: line.credit,

@@ -41,7 +41,26 @@ import {
 } from 'lucide-react'
 import type { Master } from '@/mocks/api'
 import type { AppData } from '@/mocks/api'
-import { money } from '@finsoft/ui'
+import { Loader2 } from 'lucide-react'
+import { money, moneyFromString } from '@finsoft/ui'
+import { useAuth } from '@/lib/api/auth-context'
+import { useApiQuery } from '@/lib/api/use-api-query'
+import { useIdempotencyKey } from '@/lib/api/idempotency-key'
+import { ApiError } from '@/lib/api/types'
+import {
+  createCustomer,
+  deactivateCustomer,
+  getCustomer,
+  getCustomerLedger,
+  reactivateCustomer,
+  updateCustomer,
+} from '@/lib/api/customers-client'
+import { listAuditEvents } from '@/lib/api/audit-client'
+import type { AuditEvent } from '@/lib/api/audit-types'
+import { activityTone, actorLabel, entityLabel, humanizeAction } from '@/lib/adapters/audit'
+import { customerIdOf, customerToMaster, customerVersionOf } from '@/lib/adapters/customers'
+import { useCustomersList } from '@/lib/adapters/use-customers-list'
+import { formatRunningBalance } from '@/lib/money/running-balance'
 import storefrontAtlasImage from './assets/pharmacy-storefronts.jpg'
 // Vite's static import is a URL string; Next's is a StaticImageData object.
 // The body interpolates this into a CSS url(), so unwrap .src here and leave
@@ -50,6 +69,14 @@ const storefrontAtlas = storefrontAtlasImage.src
 
 type Kind = 'Customer' | 'Vendor'
 const masterType = (k: Kind) => (k === 'Customer' ? 'Customer' : 'Supplier')
+/**
+ * M4-W: a real customer is routed by id (`/customers/:id`) — there is no "look up by code"
+ * endpoint, and codes are otherwise immutable display text, not a lookup key. `customerId`
+ * on `extra` (set by `customerToMaster`) is only ever present on a real customer row, so a
+ * mock vendor row (no `extra.customerId`) falls through to the old `code`-keyed path
+ * unchanged.
+ */
+const partyPath = (base: string, m: Master) => `${base}/${m.extra?.customerId || m.code}`
 const initials = (name: string) =>
   name
     .split(/\s+/)
@@ -72,6 +99,7 @@ export function PartyList({
   canCreate: boolean
 }) {
   const navigate = useNavigate()
+  const { can } = useAuth()
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState('All')
   const [city, setCity] = useState('All')
@@ -84,7 +112,15 @@ export function PartyList({
   const [size, setSize] = useState(kind === 'Customer' ? 12 : 10)
   const [open, setOpen] = useState(false)
   const isCustomer = kind === 'Customer'
-  const all = data.masters.filter((m) => m.type === masterType(kind))
+  // M4-W: Customer rows come from the real API (C1) via useCustomersList, which follows
+  // C1's cursor pagination into a bounded, real array — never the mock store — and hands
+  // it back in exactly the `Master[]` shape `all` always was, so every line below this one
+  // (filter, sort, page, render) is unchanged. Vendors are untouched: still the mock store.
+  const { state: customersState, reload: reloadCustomers } = useCustomersList(isCustomer)
+  const all =
+    isCustomer && customersState.status === 'ready'
+      ? customersState.items
+      : data.masters.filter((m) => m.type === masterType(kind))
   const cities = [...new Set(all.map((m) => m.city).filter((c) => c && c !== '—'))]
   const secondaryOptions = [
     ...new Set(
@@ -121,7 +157,10 @@ export function PartyList({
   const base = isCustomer ? '/customers' : '/vendors'
   const stats: [typeof Users, string, number, string, string][] = isCustomer
     ? [
-        [Users, 'Total Customers', all.length, '+12%', 'green'],
+        // No trend data exists server-side for a KPI like this (C1 has no total-count-over-
+        // time endpoint) — the tile shows the real count and no delta, rather than a
+        // fabricated "+12% vs last month" (M4-W course correction: never invent data).
+        [Users, 'Total Customers', all.length, '', 'green'],
         [
           CircleCheck,
           'Active Customers',
@@ -164,6 +203,37 @@ export function PartyList({
     setSecondary('All')
     setPage(1)
   }
+
+  if (isCustomer && customersState.status === 'loading') {
+    return (
+      <div className="state-page" role="status" aria-live="polite">
+        <span>
+          <Loader2 className="btn-spinner" />
+        </span>
+        <h1>Loading customers…</h1>
+      </div>
+    )
+  }
+  if (isCustomer && customersState.status === 'forbidden') {
+    return (
+      <div className="state-page" role="alert">
+        <h1>Access restricted</h1>
+        <p>Your role does not have permission to view customers.</p>
+      </div>
+    )
+  }
+  if (isCustomer && customersState.status === 'error') {
+    return (
+      <div className="state-page" role="alert">
+        <h1>We could not load customers</h1>
+        <p>{customersState.message}</p>
+        <button className="pt-primary" onClick={reloadCustomers}>
+          Try again
+        </button>
+      </div>
+    )
+  }
+
   return (
     <div className="pt">
       <div className="pt-head">
@@ -230,12 +300,15 @@ export function PartyList({
           </label>
           <label>
             {isCustomer ? 'Customer Type' : 'Vendor Type'}
+            {isCustomer && <small> (not tracked yet)</small>}
             <select
               value={ptype}
               onChange={(e) => {
                 setPtype(e.target.value)
                 setPage(1)
               }}
+              disabled={isCustomer}
+              title={isCustomer ? 'Not tracked yet.' : undefined}
             >
               <option>All</option>
               {isCustomer ? (
@@ -263,12 +336,15 @@ export function PartyList({
           </label>
           <label>
             {isCustomer ? 'Area' : 'Credit Days'}
+            {isCustomer && <small> (not tracked yet)</small>}
             <select
               value={secondary}
               onChange={(e) => {
                 setSecondary(e.target.value)
                 setPage(1)
               }}
+              disabled={isCustomer}
+              title={isCustomer ? 'Not tracked yet.' : undefined}
             >
               <option value="All">{isCustomer ? 'All Areas' : 'All'}</option>
               {secondaryOptions.map((value) => (
@@ -389,14 +465,20 @@ export function PartyList({
                         <div>
                           <Wallet />
                           <span>
-                            <b>{x.creditLimit || '0'}</b>
-                            <small>Discount Limit</small>
+                            <b>
+                              {x.balanceMoney ? formatRunningBalance(x.balanceMoney).amount : '—'}
+                            </b>
+                            <small>
+                              {x.balanceMoney
+                                ? `Balance (${formatRunningBalance(x.balanceMoney).side})`
+                                : 'Balance'}
+                            </small>
                           </span>
                         </div>
                         <button
                           type="button"
                           aria-label={`Open ${m.name}`}
-                          onClick={() => navigate(`${base}/${m.code}`)}
+                          onClick={() => navigate(partyPath(base, m))}
                         >
                           <ArrowRight />
                         </button>
@@ -410,7 +492,13 @@ export function PartyList({
               )}
             </div>
           ) : (
-            <CustomerTable rows={slice} base={base} navigate={navigate} />
+            <CustomerTable
+              rows={slice}
+              base={base}
+              navigate={navigate}
+              canManage={can('customer.create')}
+              onChanged={reloadCustomers}
+            />
           )}
           <div className="pt-customer-paging">
             <span>
@@ -529,7 +617,7 @@ export function PartyList({
           onSave={(m) => {
             onAdd(m)
             setOpen(false)
-            navigate(`${base}/${m.code}`)
+            navigate(partyPath(base, m))
           }}
         />
       )}
@@ -541,11 +629,17 @@ function CustomerTable({
   rows,
   base,
   navigate,
+  canManage,
+  onChanged,
 }: {
   rows: Master[]
   base: string
   navigate: (path: string) => void
+  canManage: boolean
+  onChanged: () => void
 }) {
+  const [statusTarget, setStatusTarget] = useState<Master | null>(null)
+  const [menuFor, setMenuFor] = useState<string | null>(null)
   return (
     <div className="pt-card pt-customer-list">
       <div className="table-wrap pt-table">
@@ -559,6 +653,7 @@ function CustomerTable({
               <th>Phone</th>
               <th>City</th>
               <th>NTN #</th>
+              <th className="num">Balance (Rs)</th>
               <th>Status</th>
               <th>Actions</th>
             </tr>
@@ -568,7 +663,7 @@ function CustomerTable({
               <tr key={m.code}>
                 <td>{m.code}</td>
                 <td>
-                  <button className="linkable" onClick={() => navigate(`${base}/${m.code}`)}>
+                  <button className="linkable" onClick={() => navigate(partyPath(base, m))}>
                     {m.name}
                   </button>
                 </td>
@@ -577,6 +672,20 @@ function CustomerTable({
                 <td>{m.contact}</td>
                 <td>{m.city}</td>
                 <td>{m.extra?.ntn ?? '—'}</td>
+                <td className="num">
+                  {m.extra?.balanceMoney ? (
+                    (() => {
+                      const bal = formatRunningBalance(m.extra.balanceMoney)
+                      return (
+                        <>
+                          {bal.amount} <small>{bal.side}</small>
+                        </>
+                      )
+                    })()
+                  ) : (
+                    <span aria-hidden="true">—</span>
+                  )}
+                </td>
                 <td>
                   <span className={`pt-status ${m.status === 'Active' ? 'on' : 'off'}`}>
                     {m.status}
@@ -586,32 +695,153 @@ function CustomerTable({
                   <div className="pt-row-actions">
                     <button
                       aria-label={`View ${m.name}`}
-                      onClick={() => navigate(`${base}/${m.code}`)}
+                      onClick={() => navigate(partyPath(base, m))}
                     >
                       <Eye />
                     </button>
                     <button
                       aria-label={`Edit ${m.name}`}
-                      onClick={() => navigate(`${base}/${m.code}`)}
+                      onClick={() => navigate(partyPath(base, m))}
                     >
                       <Pencil />
                     </button>
-                    <button aria-label={`More for ${m.name}`}>
-                      <Ellipsis />
-                    </button>
+                    <span className="pt-more-wrap">
+                      <button
+                        aria-label={`More for ${m.name}`}
+                        aria-haspopup={canManage || undefined}
+                        aria-expanded={canManage ? menuFor === m.code : undefined}
+                        onClick={
+                          canManage
+                            ? () => setMenuFor(menuFor === m.code ? null : m.code)
+                            : undefined
+                        }
+                      >
+                        <Ellipsis />
+                      </button>
+                      {canManage && menuFor === m.code && (
+                        <div role="menu" className="pt-more-menu">
+                          <button
+                            role="menuitem"
+                            onClick={() => {
+                              setMenuFor(null)
+                              setStatusTarget(m)
+                            }}
+                          >
+                            {m.status === 'Active' ? 'Deactivate' : 'Reactivate'}
+                          </button>
+                        </div>
+                      )}
+                    </span>
                   </div>
                 </td>
               </tr>
             ))}
             {!rows.length && (
               <tr>
-                <td colSpan={9}>
+                <td colSpan={10}>
                   <div className="empty-state">No customers match these filters.</div>
                 </td>
               </tr>
             )}
           </tbody>
         </table>
+      </div>
+      {statusTarget && (
+        <CustomerStatusDialog
+          customer={statusTarget}
+          onClose={() => setStatusTarget(null)}
+          onDone={() => {
+            setStatusTarget(null)
+            onChanged()
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+/**
+ * Deactivate/reactivate confirm dialog — C5/C6. Built with the same `overlay`/`role="dialog"`
+ * markup `PartyWizard` already uses in this file, rather than importing the kit's `Modal`,
+ * to stay in this screen's own established idiom.
+ */
+function CustomerStatusDialog({
+  customer,
+  onClose,
+  onDone,
+}: {
+  customer: Master
+  onClose: () => void
+  onDone: () => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const deactivating = customer.status === 'Active'
+  const id = customerIdOf(customer)
+  const version = customerVersionOf(customer) ?? 0
+
+  const submit = async () => {
+    if (!id) return
+    setBusy(true)
+    setError(null)
+    try {
+      if (deactivating) await deactivateCustomer(id, { version })
+      else await reactivateCustomer(id, { version })
+      onDone()
+    } catch (err) {
+      if (err instanceof ApiError && err.serverCode === 'CUSTOMER_HAS_BALANCE') {
+        const bal = err.serverDetails?.balance
+        setError(
+          typeof bal === 'string'
+            ? `This customer still has a balance of ${moneyFromString(bal)}. It must be zero before you can deactivate.`
+            : 'This customer still has a balance. It must be zero before you can deactivate.',
+        )
+      } else {
+        setError(err instanceof ApiError ? err.message : 'Something went wrong. Try again.')
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div
+      className="overlay"
+      role="presentation"
+      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div
+        className="pt-card"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${deactivating ? 'Deactivate' : 'Reactivate'} ${customer.name}`}
+        style={{ maxWidth: 440, margin: '10vh auto', padding: 24 }}
+      >
+        <h2 style={{ marginTop: 0 }}>
+          {deactivating ? 'Deactivate' : 'Reactivate'} {customer.name}?
+        </h2>
+        <p>
+          {deactivating
+            ? `${customer.name} will no longer be offered in customer pickers. This is refused if the customer still carries a balance.`
+            : `${customer.name} will be offered in customer pickers again.`}
+        </p>
+        {error && (
+          <div
+            className="empty-state"
+            role="alert"
+            style={{ color: 'var(--money-negative, #b42318)' }}
+          >
+            {error}
+          </div>
+        )}
+        <div className="pt-wiz-foot" style={{ marginTop: 16 }}>
+          <button className="pt-ghost" type="button" onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
+          <button className="pt-primary" type="button" onClick={submit} disabled={busy || !id}>
+            {busy ? 'Working…' : deactivating ? 'Deactivate' : 'Reactivate'}
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -706,7 +936,50 @@ function PartyWizard({
     ],
   ]
   const canNext = step === 1 ? !!f.name.trim() : true
-  const finish = () =>
+  const { key: idempotencyKey } = useIdempotencyKey()
+  const [submitting, setSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+  /*
+   * M4-W: for a customer, this now calls the real C2 (`POST /api/customers`) instead of
+   * building the `Master` client-side — `code`, `type`, `balanceType` and `status` are all
+   * server-decided for a real customer (the code is system-generated, PO 2026-09-28; a new
+   * customer is always ACTIVE), so this branch sends only the fields the create schema
+   * actually accepts (name, phone, email, address, city, ntn, creditDays) and maps the
+   * server's response back through `customerToMaster` before calling `onSave`. The step 1
+   * "Customer Type" choice, Booker and Sales Tax No are collected but not sent — the MVP
+   * catalogue has no field for them yet (recorded as debt, same pattern as README §10).
+   * The vendor branch is completely unchanged: still a client-built mock `Master`.
+   */
+  const finishCustomer = async () => {
+    setSubmitting(true)
+    setSubmitError(null)
+    try {
+      const created = await createCustomer(
+        {
+          name: f.name.trim(),
+          phone: f.phone || f.cell || null,
+          email: f.email || null,
+          address: f.address || null,
+          city: f.city || null,
+          ntn: f.ntn || null,
+          creditDays: Number(f.creditDays) || 0,
+        },
+        idempotencyKey,
+      )
+      onSave(customerToMaster(created))
+    } catch (err) {
+      setSubmitError(
+        err instanceof ApiError ? err.message : 'Could not create this customer. Try again.',
+      )
+    } finally {
+      setSubmitting(false)
+    }
+  }
+  const finish = () => {
+    if (isCustomer) {
+      void finishCustomer()
+      return
+    }
     onSave({
       code: f.code,
       name: f.name.trim(),
@@ -731,6 +1004,7 @@ function PartyWizard({
         since: '12 Sep 2026',
       },
     })
+  }
   return (
     <div
       className="overlay"
@@ -808,10 +1082,16 @@ function PartyWizard({
             {step === 1 && (
               <div className="pt-form">
                 <label>
-                  {isCustomer ? 'Code' : 'Vendor Code'} <i>*</i>
-                  <input value={f.code} onChange={set('code')} />
+                  {isCustomer ? 'Code' : 'Vendor Code'} {!isCustomer && <i>*</i>}
+                  <input
+                    value={isCustomer ? 'Assigned automatically on save' : f.code}
+                    onChange={set('code')}
+                    disabled={isCustomer}
+                  />
                   <small>
-                    Unique {kind.toLowerCase()} code (e.g. {nextCode})
+                    {isCustomer
+                      ? 'The server assigns the code (CUST-000001…) once this customer is created.'
+                      : `Unique ${kind.toLowerCase()} code (e.g. ${nextCode})`}
                   </small>
                 </label>
                 {isCustomer ? (
@@ -1015,12 +1295,14 @@ function PartyWizard({
             {step === 3 && (
               <div className="pt-form">
                 <label>
-                  Credit Limit (Rs)
+                  Credit Limit (Rs){isCustomer && <small> (not tracked yet)</small>}
                   <input
                     inputMode="numeric"
                     value={f.creditLimit}
                     onChange={set('creditLimit')}
                     placeholder="2,000,000"
+                    disabled={isCustomer}
+                    title={isCustomer ? 'Not tracked yet.' : undefined}
                   />
                 </label>
                 <label>
@@ -1037,12 +1319,23 @@ function PartyWizard({
                   NTN #<input value={f.ntn} onChange={set('ntn')} placeholder="1234567-8" />
                 </label>
                 <label>
-                  Sales Tax No
-                  <input value={f.stn} onChange={set('stn')} placeholder="3277876-5" />
+                  Sales Tax No{isCustomer && <small> (not tracked yet)</small>}
+                  <input
+                    value={f.stn}
+                    onChange={set('stn')}
+                    placeholder="3277876-5"
+                    disabled={isCustomer}
+                    title={isCustomer ? 'Not tracked yet.' : undefined}
+                  />
                 </label>
                 <label>
                   Status
-                  <select value={f.status} onChange={set('status')}>
+                  <select
+                    value={isCustomer ? 'Active' : f.status}
+                    onChange={set('status')}
+                    disabled={isCustomer}
+                    title={isCustomer ? 'A new customer is always created Active.' : undefined}
+                  >
                     <option>Active</option>
                     <option>Inactive</option>
                   </select>
@@ -1051,7 +1344,7 @@ function PartyWizard({
                   <b>Ready to create</b>
                   <dl>
                     <dt>Code</dt>
-                    <dd>{f.code}</dd>
+                    <dd>{isCustomer ? 'Assigned automatically' : f.code}</dd>
                     <dt>Name</dt>
                     <dd>{f.name || '—'}</dd>
                     <dt>Type</dt>
@@ -1064,15 +1357,24 @@ function PartyWizard({
                     <dd>{f.creditDays === '0' ? 'Cash' : `${f.creditDays} Days`}</dd>
                   </dl>
                 </div>
+                {submitError && (
+                  <div className="empty-state span-2" role="alert">
+                    {submitError}
+                  </div>
+                )}
               </div>
             )}
           </div>
           <div className="pt-wiz-foot">
-            <button className="pt-ghost" onClick={onClose}>
+            <button className="pt-ghost" onClick={onClose} disabled={submitting}>
               Cancel
             </button>
             <div>
-              <button className="pt-ghost" disabled={step === 1} onClick={() => setStep(step - 1)}>
+              <button
+                className="pt-ghost"
+                disabled={step === 1 || submitting}
+                onClick={() => setStep(step - 1)}
+              >
                 <ArrowLeft /> Previous
               </button>
               {step < 3 ? (
@@ -1084,8 +1386,12 @@ function PartyWizard({
                   Next <ArrowRight />
                 </button>
               ) : (
-                <button className="pt-primary" disabled={!f.name.trim()} onClick={finish}>
-                  <Check /> Create {kind}
+                <button
+                  className="pt-primary"
+                  disabled={!f.name.trim() || submitting}
+                  onClick={finish}
+                >
+                  <Check /> {submitting ? 'Creating…' : `Create ${kind}`}
                 </button>
               )}
             </div>
@@ -1136,49 +1442,74 @@ const Row = ({ label, children }: { label: string; children: ReactNode }) => (
     <b>{children}</b>
   </div>
 )
-const Bars = ({ tone }: { tone: string }) => (
-  <span className={`pt-bars ${tone}`}>
-    {[3, 5, 4, 7, 6, 9, 8].map((h, i) => (
-      <i key={i} style={{ height: h * 3 }} />
-    ))}
-  </span>
-)
-
 function useParty(data: AppData, kind: Kind) {
   const { code } = useParams()
   return data.masters.find((m) => m.code === code && m.type === masterType(kind))
 }
 
-/* ───────────────── Customer detail ───────────────── */
-export function CustomerDetail({
-  data,
-  onPatch,
-}: {
-  data: AppData
-  onPatch: (code: string, patch: Partial<Master>) => void
-}) {
+/* ───────────────── Customer detail ─────────────────
+ * M4-W: this whole screen now reads a real customer by id (`/customers/:id` — a customer
+ * cannot be looked up by code, so a code-keyed route has nothing to look up), instead of
+ * scanning a mock `AppData.masters` array. Fetching is self-contained (same pattern as
+ * AccountLedger/PeriodClose in trade-pages.tsx), so `app/customers/[id]/page.tsx` passes
+ * no data props at all — see that file for the one call site. */
+export function CustomerDetail() {
   const navigate = useNavigate()
-  const m = useParty(data, 'Customer')
+  const { id } = useParams()
+  const { can, user } = useAuth()
   const [tab, setTab] = useState('All Transactions')
   const [openRow, setOpenRow] = useState<string | null>(null)
+  const [statusOpen, setStatusOpen] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
+  const reload = () => setReloadKey((k) => k + 1)
   const [form, setForm] = useState<{
     name: string
     phone: string
     email: string
     address: string
+    city: string
+    ntn: string
     terms: string
-    limit: string
   } | null>(null)
   const [saved, setSaved] = useState(false)
-  const invoices = useMemo(
-    () => (m ? data.sales.filter((s) => s.customer === m.name) : []),
-    [data, m],
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  const { state: customerState, reload: reloadCustomer } = useApiQuery(
+    () => (id ? getCustomer(id) : Promise.reject(new Error('missing id'))),
+    [id, reloadKey],
   )
-  const receipts = useMemo(
-    () => (m ? data.payments.filter((p) => p.party === m.name && p.kind === 'Receipt') : []),
-    [data, m],
+  const { state: ledgerState } = useApiQuery(
+    () => (id ? getCustomerLedger(id) : Promise.reject(new Error('missing id'))),
+    [id, reloadKey],
   )
-  if (!m)
+  const { state: activityState } = useApiQuery(
+    () =>
+      id
+        ? listAuditEvents({ entityType: 'customer', entityId: id, limit: 10 })
+        : Promise.reject(new Error('missing id')),
+    [id, reloadKey],
+  )
+
+  if (customerState.status === 'loading') {
+    return (
+      <div className="state-page" role="status" aria-live="polite">
+        <span>
+          <Loader2 className="btn-spinner" />
+        </span>
+        <h1>Loading customer…</h1>
+      </div>
+    )
+  }
+  if (customerState.status === 'forbidden') {
+    return (
+      <div className="state-page" role="alert">
+        <h1>Access restricted</h1>
+        <p>Your role does not have permission to view customers.</p>
+      </div>
+    )
+  }
+  if (customerState.status === 'error') {
     return (
       <div className="pt">
         <div className="pt-card">
@@ -1186,107 +1517,134 @@ export function CustomerDetail({
             Customer not found.{' '}
             <button className="linkable" onClick={() => navigate('/customers')}>
               Back to customers
+            </button>{' '}
+            <button className="linkable" onClick={reloadCustomer}>
+              Try again
             </button>
           </div>
         </div>
       </div>
     )
-  const x = m.extra ?? {}
-  const f = form ?? {
-    name: m.name,
-    phone: m.contact,
-    email: x.email ?? '',
-    address: x.address ?? '',
-    terms: x.creditDays ? `${x.creditDays} Days` : '30 Days',
-    limit: x.creditLimit ?? '2,000,000',
   }
-  const totalSales = invoices.reduce((a, s) => a + s.amount, 0),
-    totalPaid =
-      receipts.reduce((a, p) => a + p.total, 0) +
-      invoices.filter((s) => s.status === 'Paid').reduce((a, s) => a + s.amount, 0)
-  const outstanding =
-    m.balance || invoices.filter((s) => s.status === 'Credit').reduce((a, s) => a + s.amount, 0)
-  const limit = parseInt(f.limit.replace(/\D/g, '')) || 2000000,
-    used = Math.min(100, Math.round((outstanding / limit) * 100))
+
+  const customer = customerState.data
+  const m = customerToMaster(customer)
+  const x = m.extra ?? {}
+  const canManage = can('customer.create')
+  const f = form ?? {
+    name: customer.name,
+    phone: customer.phone ?? '',
+    email: customer.email ?? '',
+    address: customer.address ?? '',
+    city: customer.city ?? '',
+    ntn: customer.ntn ?? '',
+    terms: String(customer.creditDays),
+  }
+
+  // Real ledger lines (C7) — replaces the mock's browser-computed running balance
+  // (`run += debit - credit`) with the server's own `runningBalance`, never re-derived
+  // here (CLAUDE.md: money is never arithmetic in the browser).
   type L = {
     id: string
     date: string
-    type: 'Sales Invoice' | 'Payment'
+    type: string
     ref: string
+    reference: string
     narration: string
-    debit: number
-    credit: number
+    debit: string
+    credit: string
+    balance: string
     status: string
+    sourceType: string | null
     detail?: ReactNode
   }
-  const ledger: L[] = [
-    ...invoices.map<L>((s) => ({
-      id: s.id,
-      date: s.date,
-      type: 'Sales Invoice',
-      ref: `SI-${s.id.slice(-6)}`,
-      narration: `Sale of ${s.product}`,
-      debit: s.amount,
-      credit: 0,
-      status: 'Posted',
-      detail: (
-        <>
+  const ledgerLines = ledgerState.status === 'ready' ? ledgerState.data.lines : []
+  const withBal: L[] = ledgerLines.map((line) => ({
+    id: line.entryId,
+    date: line.occurredAt,
+    type:
+      line.sourceType === 'customer_receipt'
+        ? 'Payment'
+        : line.sourceType === 'sales_invoice'
+          ? 'Sales Invoice'
+          : 'Journal',
+    ref: line.entryNumber,
+    reference: line.sourceNumber ?? '—',
+    narration: line.narration,
+    debit: line.debit,
+    credit: line.credit,
+    balance: line.runningBalance,
+    status: line.reversedBy ? 'Reversed' : 'Posted',
+    sourceType: line.sourceType,
+    detail: (
+      <>
+        <div>
+          <small>Entry</small>
+          <b>{line.entryNumber}</b>
+        </div>
+        {line.sourceNumber && (
           <div>
-            <small>Narration</small>
+            <small>Document</small>
+            <b>{line.sourceNumber}</b>
+          </div>
+        )}
+        {line.reversedBy && (
+          <div>
+            <small>Reversed by</small>
+            <b>{line.reversedBy.entryNumber}</b>
+          </div>
+        )}
+        {line.reverses && (
+          <div>
+            <small>Reverses</small>
             <b>
-              Sale of {s.product} to {m.name}.
+              {line.reverses.entryNumber}
+              {line.reverses.reason ? ` — ${line.reverses.reason}` : ''}
             </b>
           </div>
-          <div>
-            <small>Items (1)</small>
-            <b>
-              ● {s.product} <em>x {s.qty}</em>
-            </b>
-          </div>
-          <div>
-            <small>Created By</small>
-            <b>Sarah Lloyd</b>
-          </div>
-          <div>
-            <small>Created On</small>
-            <b>{s.date}, 10:24 AM</b>
-          </div>
-        </>
-      ),
-    })),
-    ...receipts.map<L>((p) => ({
-      id: p.id,
-      date: p.date,
-      type: 'Payment',
-      ref: p.account,
-      narration: 'Payment received',
-      debit: 0,
-      credit: p.total,
-      status: 'Cleared',
-    })),
-  ]
-  let run = 0
-  const withBal = ledger.map((l) => ({ ...l, balance: (run += l.debit - l.credit) }))
+        )}
+      </>
+    ),
+  }))
+  const invoices = withBal.filter((l) => l.sourceType === 'sales_invoice')
+  const receipts = withBal.filter((l) => l.sourceType === 'customer_receipt')
   const shown = withBal.filter(
     (l) =>
       tab === 'All Transactions' ||
       (tab === 'Invoices' && l.type === 'Sales Invoice') ||
       (tab === 'Payments' && l.type === 'Payment'),
   )
-  const save = () => {
-    onPatch(m.code, {
-      name: f.name,
-      contact: f.phone,
-      extra: {
-        ...x,
-        email: f.email,
-        address: f.address,
-        creditDays: f.terms.replace(/\D/g, ''),
-        creditLimit: f.limit,
-      },
-    })
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2500)
+  /*
+   * Real C4 (`PATCH /api/customers/:id`) with optimistic concurrency (`version`), replacing
+   * the mock's synchronous `onPatch` into the local store. `creditLimit` has no field on the
+   * real schema (README §10 debt — see the Quick Edit card's disabled input below) and is
+   * never sent.
+   */
+  const save = async () => {
+    setSaving(true)
+    setSaveError(null)
+    try {
+      await updateCustomer(customer.id, {
+        version: customer.version,
+        name: f.name,
+        phone: f.phone || null,
+        email: f.email || null,
+        address: f.address || null,
+        city: f.city || null,
+        ntn: f.ntn || null,
+        creditDays: Number(f.terms) || 0,
+      })
+      setSaved(true)
+      setForm(null)
+      reload()
+      setTimeout(() => setSaved(false), 2500)
+    } catch (err) {
+      setSaveError(
+        err instanceof ApiError ? err.message : 'Could not save these changes. Try again.',
+      )
+    } finally {
+      setSaving(false)
+    }
   }
   return (
     <div className="pt">
@@ -1305,28 +1663,10 @@ export function CustomerDetail({
           <div className="pt-profile-meta">
             <span>{m.code}</span>
             <i />
-            <span>{x.partyType === 'Shop' ? 'Retail shop' : 'Wholesaler'}</span>
-            <i />
-            <span>Since {x.since ?? '12 Jan 2023'}</span>
-          </div>
-          <div className="pt-tags">
-            <span>General Trade</span>
-            <span>Regular Customer</span>
-            <button>
-              <Plus /> Add Tag
-            </button>
+            <span>Since {x.createdAt ? x.createdAt.slice(0, 10) : '—'}</span>
           </div>
         </div>
         <div className="pt-contact-strip">
-          <div>
-            <span>
-              <User />
-            </span>
-            <div>
-              <b>{x.dealing || 'Muhammad Asim'}</b>
-              <small>Contact Person</small>
-            </div>
-          </div>
           <div>
             <span>
               <Phone />
@@ -1341,7 +1681,7 @@ export function CustomerDetail({
               <Mail />
             </span>
             <div>
-              <b>{x.email || `${m.name.split(' ')[0].toLowerCase()}@mail.com`}</b>
+              <b>{x.email || '—'}</b>
               <small>Email</small>
             </div>
           </div>
@@ -1350,85 +1690,79 @@ export function CustomerDetail({
               <MapPin />
             </span>
             <div>
-              <b>{x.area || m.city}</b>
-              <small>{m.city}, Pakistan</small>
+              <b>{m.city}</b>
+              <small>{m.city !== '—' ? `${m.city}, Pakistan` : 'No city on file'}</small>
             </div>
           </div>
         </div>
         <div className="pt-profile-actions">
-          <button className="pt-ghost sq" aria-label="More">
-            <Ellipsis />
-          </button>
+          {canManage && (
+            <button className="pt-ghost sq" aria-label="More" onClick={() => setStatusOpen(true)}>
+              <Ellipsis />
+            </button>
+          )}
+          {canManage && (
+            <button
+              className="pt-ghost"
+              onClick={() => document.getElementById('quick-edit-name')?.focus()}
+            >
+              <Pencil /> Edit
+            </button>
+          )}
           <button
-            className="pt-ghost"
-            onClick={() => document.getElementById('quick-edit-name')?.focus()}
+            className="pt-primary dark"
+            onClick={() => navigate(`/sales/voucher?customer=${customer.id}`)}
           >
-            <Pencil /> Edit
-          </button>
-          <button className="pt-primary dark" onClick={() => navigate('/sales')}>
             <Plus /> New Transaction <ChevronDown />
           </button>
         </div>
       </section>
+      {statusOpen && (
+        <CustomerStatusDialog
+          customer={m}
+          onClose={() => setStatusOpen(false)}
+          onDone={() => {
+            setStatusOpen(false)
+            reload()
+          }}
+        />
+      )}
 
       <div className="pt-grid-4">
         <Card title="Customer Snapshot" sub="Key information at a glance" icon={CircleUser}>
           <Row label="Customer Code">{m.code}</Row>
-          <Row label="NTN / CNIC">{x.ntn || '35202-1234567-1'}</Row>
-          <Row label="Customer Group">
-            {x.partyType === 'Shop' ? 'Retail Customer' : 'Wholesale Customer'}
-          </Row>
-          <Row label="Sales Tax No">{x.stn || '3277876-5'}</Row>
-          <Row label="Payment Terms">{f.terms}</Row>
-          <Row label="Credit Limit">Rs {f.limit}</Row>
+          <Row label="NTN / CNIC">{x.ntn || '—'}</Row>
+          <Row label="Payment Terms">{f.terms === '0' ? 'Cash' : `${f.terms} Days`}</Row>
           <Row label="Status">
             <span className={`pt-status ${m.status === 'Active' ? 'on' : 'off'}`}>
               ● {m.status}
             </span>
           </Row>
-          <Row label="Customer Since">{x.since ?? '12 Jan 2023'}</Row>
-          <blockquote className="pt-quote">
-            “Reliable customer with consistent orders and early payments.”
-            <footer>— Account Manager</footer>
-          </blockquote>
+          <Row label="Customer Since">{x.createdAt ? x.createdAt.slice(0, 10) : '—'}</Row>
         </Card>
-        <Card
-          title="Financial Health"
-          sub="A business snapshot"
-          icon={BarChart3}
-          action={
-            <select className="pt-mini-select" defaultValue="This Year">
-              <option>This Year</option>
-              <option>Last Year</option>
-            </select>
-          }
-        >
+        <Card title="Financial Health" sub="From the customer's ledger" icon={BarChart3}>
           <div className="pt-fin">
-            <div className="pt-fin-tile">
-              <b>{money(totalSales)}</b>
-              <small>Total Sales</small>
-              <span className="pt-delta green">▲ 18%</span>
-              <Bars tone="green" />
-            </div>
-            <div className="pt-fin-tile">
-              <b>{money(totalPaid)}</b>
-              <small>Total Payments</small>
-              <span className="pt-delta green">▲ 24%</span>
-              <Bars tone="green" />
-            </div>
             <div className="pt-fin-tile warm">
-              <b>{money(outstanding)}</b>
+              <b>
+                {formatRunningBalance(x.balanceMoney || '0.0000').amount}{' '}
+                <small>{formatRunningBalance(x.balanceMoney || '0.0000').side}</small>
+              </b>
               <small>Outstanding Balance</small>
-              <span className="pt-delta red">▲ 8%</span>
-              <Bars tone="orange" />
             </div>
             <div className="pt-fin-tile">
-              <b>Rs {f.limit}</b>
+              <b>—</b>
+              <small>Total Sales</small>
+              <small className="right">Available once invoicing is live</small>
+            </div>
+            <div className="pt-fin-tile">
+              <b>—</b>
+              <small>Total Payments</small>
+              <small className="right">Available once invoicing is live</small>
+            </div>
+            <div className="pt-fin-tile">
+              <b>—</b>
               <small>Credit Limit</small>
-              <i className="pt-meter">
-                <i style={{ width: `${used}%` }} />
-              </i>
-              <small className="right">{used}% used</small>
+              <small className="right">Not tracked yet</small>
             </div>
           </div>
           <div className="pt-good">
@@ -1436,10 +1770,8 @@ export function CustomerDetail({
               <Check />
             </span>
             <div>
-              <b>Account is in good standing</b>
-              <small>
-                Payment behavior is healthy with consistent activity and no overdue invoices.
-              </small>
+              <b>Balance as of {x.balanceAsOf || '—'}</b>
+              <small>Calculated from this customer's ledger below.</small>
             </div>
           </div>
         </Card>
@@ -1462,6 +1794,14 @@ export function CustomerDetail({
               <input value={f.email} onChange={(e) => setForm({ ...f, email: e.target.value })} />
             </label>
             <label>
+              City
+              <input value={f.city} onChange={(e) => setForm({ ...f, city: e.target.value })} />
+            </label>
+            <label>
+              NTN
+              <input value={f.ntn} onChange={(e) => setForm({ ...f, ntn: e.target.value })} />
+            </label>
+            <label>
               Address
               <textarea
                 rows={3}
@@ -1470,21 +1810,34 @@ export function CustomerDetail({
               />
             </label>
             <label>
-              Payment Terms
-              <select value={f.terms} onChange={(e) => setForm({ ...f, terms: e.target.value })}>
-                {['Cash', '7 Days', '15 Days', '30 Days', '45 Days', '60 Days'].map((t) => (
-                  <option key={t}>{t}</option>
+              Payment Terms (credit days)
+              <select
+                className="text-input"
+                value={f.terms}
+                onChange={(e) => setForm({ ...f, terms: e.target.value })}
+              >
+                {['0', '7', '15', '30', '45', '60'].map((t) => (
+                  <option key={t} value={t}>
+                    {t === '0' ? 'Cash' : `${t} Days`}
+                  </option>
                 ))}
               </select>
             </label>
             <label>
               Credit Limit
-              <input value={f.limit} onChange={(e) => setForm({ ...f, limit: e.target.value })} />
+              <input value="Not tracked yet" disabled readOnly />
             </label>
           </div>
+          {saveError && (
+            <div className="empty-state" role="alert">
+              {saveError}
+            </div>
+          )}
           <div className="pt-edit-foot">
-            <button className="pt-primary dark" onClick={save}>
-              {saved ? (
+            <button className="pt-primary dark" onClick={save} disabled={saving}>
+              {saving ? (
+                'Saving…'
+              ) : saved ? (
                 <>
                   <Check /> Saved
                 </>
@@ -1531,40 +1884,35 @@ export function CustomerDetail({
               })}
             </div>
           </Card>
-          <Card
-            title="Recent Interactions"
-            sub="View all activity and notes"
-            icon={MessageSquare}
-            action={
-              <button className="pt-ghost sm">
-                <Plus /> Add Note
-              </button>
-            }
-          >
-            <ul className="pt-timeline">
-              {[
-                ['08 Sep 2026', 'green', 'Payment received', 'Rs 200,000 via Bank Transfer', 'SA'],
-                ['05 Sep 2026', 'blue', 'Sales invoice created', 'INV-002145 - Rs 250,000', 'SA'],
-                [
-                  '28 Aug 2026',
-                  'orange',
-                  'Note added',
-                  'Discussed upcoming order for October.',
-                  'MK',
-                ],
-              ].map(([d, c, t, s, who]) => (
-                <li key={t}>
-                  <time>{d}</time>
-                  <i className={c} />
-                  <div>
-                    <b>{t}</b>
-                    <small>{s}</small>
-                  </div>
-                  <span>{who}</span>
-                </li>
-              ))}
-            </ul>
-            <button className="pt-link" onClick={() => navigate(`/finance/accounts/${m.code}`)}>
+          <Card title="Recent Interactions" sub="This record's audit trail" icon={MessageSquare}>
+            {activityState.status === 'ready' && activityState.data.items.length > 0 ? (
+              <ul className="pt-timeline">
+                {activityState.data.items.map((ev: AuditEvent) => (
+                  <li key={ev.id}>
+                    <time dateTime={ev.occurredAt}>{ev.occurredAt.slice(0, 10)}</time>
+                    <i className={activityTone(ev)} />
+                    <div>
+                      <b>{humanizeAction(ev.action)}</b>
+                      <small>
+                        {ev.entityType} · {entityLabel(ev.entityId)}
+                      </small>
+                    </div>
+                    <span title={ev.actorUserId ?? undefined} style={{ whiteSpace: 'nowrap' }}>
+                      {actorLabel(ev.actorUserId, user?.id)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : activityState.status === 'forbidden' ? (
+              <div className="empty-state">You do not have permission to view the audit trail.</div>
+            ) : activityState.status === 'error' ? (
+              <div className="empty-state">Could not load recent activity.</div>
+            ) : activityState.status === 'loading' ? (
+              <div className="empty-state">Loading…</div>
+            ) : (
+              <div className="empty-state">No activity recorded yet for this customer.</div>
+            )}
+            <button className="pt-link" onClick={() => navigate('/admin-audit')}>
               View All Activity <ArrowRight />
             </button>
           </Card>
@@ -1632,6 +1980,24 @@ export function CustomerDetail({
               </tr>
             </thead>
             <tbody>
+              {ledgerState.status === 'ready' && tab === 'All Transactions' && (
+                <tr className="pt-detail-row">
+                  <td />
+                  <td />
+                  <td>{ledgerState.data.from}</td>
+                  <td colSpan={3}>
+                    <b>Balance brought forward</b>
+                  </td>
+                  <td className="num">—</td>
+                  <td className="num">—</td>
+                  <td className="num">
+                    {formatRunningBalance(ledgerState.data.openingBalance).amount}{' '}
+                    <small>{formatRunningBalance(ledgerState.data.openingBalance).side}</small>
+                  </td>
+                  <td />
+                  <td />
+                </tr>
+              )}
               {shown.map((l) => (
                 <>
                   <tr key={l.id}>
@@ -1653,12 +2019,15 @@ export function CustomerDetail({
                         {l.type}
                       </span>
                     </td>
-                    <td>{l.id}</td>
                     <td>{l.ref}</td>
+                    <td>{l.reference}</td>
                     <td>{l.narration}</td>
-                    <td className="num">{l.debit ? l.debit.toLocaleString() : '-'}</td>
-                    <td className="num">{l.credit ? l.credit.toLocaleString() : '-'}</td>
-                    <td className="num">{l.balance.toLocaleString()}</td>
+                    <td className="num">{moneyFromString(l.debit, { zeroAsDash: true })}</td>
+                    <td className="num">{moneyFromString(l.credit, { zeroAsDash: true })}</td>
+                    <td className="num">
+                      {formatRunningBalance(l.balance).amount}{' '}
+                      <small>{formatRunningBalance(l.balance).side}</small>
+                    </td>
                     <td>
                       <span className="pt-status on">{l.status}</span>
                     </td>

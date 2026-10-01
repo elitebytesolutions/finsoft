@@ -28,6 +28,7 @@ export { PartyType, registerParty, type PartyTypeName } from './parties.ts'
 export {
   documentNumbers,
   type DocumentNumbers,
+  type FiscalYearScopeSeries,
   type TenantScopeSeries,
 } from './document-numbers.ts'
 export { periodEngine, type PeriodEngine } from './periods.ts'
@@ -42,6 +43,7 @@ export {
   reversalEngine,
   type ReversalEngine,
   type ReverseCommand,
+  type ReverseForSourceCommand,
   type ReverseResult,
 } from './reversal.ts'
 

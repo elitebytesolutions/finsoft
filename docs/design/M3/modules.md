@@ -263,7 +263,7 @@ withTenant(tx =>
      └ any → INVOICE_HAS_LIVE_ALLOCATIONS { receipts: [RCT-…] }  (PO-Q1 Option A)
   3  domain: assertReason(reason)                               non-empty after trim, ≤ 500
   4  repo.markReversed(tx, id, { reversedBy, reason, reverseIdempotencyKey, fingerprint })
-  5  rev ← postingEngine.reverseForSource({ referenceType: 'sales_invoice', referenceId: id,
+  5  rev ← reversalEngine.reverseForSource({ referenceType: 'sales_invoice', referenceId: id,
             reason, idempotencyKey: key, actor }, tx)            RV number, date rule, kernel audit
   6  recordAudit(tx, 'sales_invoice.reversed', …)
 )
@@ -290,7 +290,7 @@ withTenant(tx =>
   3  domain: assertReason(reason)
   4  repo.voidAllocations(tx, id)                               LIVE → VOIDED, never deleted
      repo.markReversed(tx, id, { reversedBy, reason, reverseIdempotencyKey, fingerprint })
-  5  rev ← postingEngine.reverseForSource({ referenceType: 'customer_receipt', referenceId: id, … }, tx)
+  5  rev ← reversalEngine.reverseForSource({ referenceType: 'customer_receipt', referenceId: id, … }, tx)
   6  recordAudit(tx, 'customer_receipt.reversed', …)
 )
 ```

@@ -328,6 +328,44 @@ describe('every boundary rule fires against a file that violates it', () => {
   })
 })
 
+describe('cross-module-via-published-only fires on the BARE package specifier, not just a relative path', () => {
+  /*
+   * R4 (Architecture seat, Council review of efb7e3f @ M3-P). Every case
+   * above spells the forbidden edge as a relative path
+   * ('../../customers/application/create-customer.ts'). A REAL module never
+   * writes an import that way — modules/receivables imports customers, if
+   * at all, as `@finsoft/customers` or `@finsoft/customers/published`
+   * (modules/customers/package.json's own `exports` map), which
+   * dependency-cruiser resolves through the workspace's node_modules
+   * SYMLINK before matching `to.path`. A rule proved only against a
+   * relative-path probe has never actually exercised that resolution step —
+   * exactly the kind of gap depcruise-negative-control.spec.ts exists to
+   * catch (see this file's own header on rules that "have never fired").
+   *
+   * `@finsoft/customers` (no subpath) resolves to modules/customers/index.ts
+   * — the module's own composition root, NOT application/published.ts — so
+   * it is exactly as forbidden as the relative-path probe, and through the
+   * path a real cross-module import would actually take.
+   */
+  it('fires when modules/probe/application imports the bare "@finsoft/customers" specifier', async () => {
+    const path = probe('modules/probe/application', "import '@finsoft/customers'\n")
+    const fired = await rulesFiredOn(path)
+    expect(
+      fired,
+      'cross-module-via-published-only did not fire on a bare "@finsoft/customers" import. ' +
+        'If this is failing while the relative-path probe above still passes, the workspace ' +
+        "symlink is resolving to a path the rule's pattern does not match — the exact way " +
+        'kysely-is-allowlisted and observability-importers-are-allowlisted were both inert.',
+    ).toContain('cross-module-via-published-only')
+  })
+
+  it('does NOT fire on "@finsoft/customers/published" — the one sanctioned subpath', async () => {
+    const path = probe('modules/probe/application', "import '@finsoft/customers/published'\n")
+    const fired = await rulesFiredOn(path)
+    expect(fired).not.toContain('cross-module-via-published-only')
+  })
+})
+
 describe('ports-import-is-type-only (ADR-0028 C3) — a value import of ports.ts', () => {
   /*
    * modules/customers/application/ports.ts exports interfaces only, so an

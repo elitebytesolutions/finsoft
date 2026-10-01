@@ -91,35 +91,17 @@ describe('Finsoft detail pages', () => {
   // §1: single-step post, JV only). Covered instead by voucher-register.test.tsx,
   // voucher-detail.test.tsx and voucher-new.test.tsx.
 
-  it('renders customers directory from master accounts', () => {
-    renderAt('/customers')
-    expect(screen.getByRole('heading', { name: 'Customers' })).toBeInTheDocument()
-    expect(screen.getAllByText('Shifa Medical Centre').length).toBeGreaterThan(0)
-    expect(screen.getByText('Ahmed Traders')).toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText('Area'), { target: { value: 'Gulberg' } })
-    expect(screen.getAllByText('Shifa Medical Centre').length).toBeGreaterThan(0)
-    expect(screen.queryByText('Ahmed Traders')).not.toBeInTheDocument()
-  })
+  // "renders customers directory from master accounts" and "creates a customer through the
+  // wizard and opens its detail page" were removed here — M4-W wired /customers to the real
+  // customers API (GET/POST /api/customers, per PartyList's own comments in parties.tsx), so
+  // it no longer renders synchronously from `data.masters` and this harness does not stub
+  // `fetch`. Covered instead by customers.test.tsx and customer-detail.test.tsx, which mock
+  // `fetch` directly (matching trial-balance.test.tsx's approach).
 
   it('renders vendors directory from supplier masters', () => {
     renderAt('/vendors')
     expect(screen.getByRole('heading', { name: 'Vendors' })).toBeInTheDocument()
     expect(screen.getAllByText('Getz Pharma').length).toBeGreaterThan(0)
-  })
-
-  it('creates a customer through the wizard and opens its detail page', () => {
-    renderAt('/customers')
-    fireEvent.click(screen.getByRole('button', { name: /New Customer/ }))
-    expect(screen.getByText('Basic Information')).toBeInTheDocument()
-    fireEvent.change(screen.getByPlaceholderText('Ahmed Traders'), {
-      target: { value: 'Zeta Traders' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
-    fireEvent.click(screen.getByRole('button', { name: /Create Customer/ }))
-    expect(screen.getByRole('heading', { name: 'Zeta Traders' })).toBeInTheDocument()
-    expect(screen.getByText('Customer Snapshot')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Account Ledger' })).toBeInTheDocument()
   })
 
   it('opens the vendor detail page from the vendor list', () => {

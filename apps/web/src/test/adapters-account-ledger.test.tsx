@@ -12,6 +12,7 @@ function line(overrides: Partial<LedgerLine>): LedgerLine {
     narration: 'Owner capital contribution',
     sourceType: 'journal_voucher',
     sourceId: 'e1',
+    sourceNumber: null,
     reversalOf: null,
     reversedBy: null,
     debit: '5000.0000',

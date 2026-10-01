@@ -20,8 +20,9 @@ import { RotateCw, ShieldAlert } from 'lucide-react'
 import { Button } from '@finsoft/ui'
 import { usePathname, useNavigate } from '@/lib/router'
 import { logout as apiLogout, me } from './client'
+import { getMyPermissions } from './permissions-client'
 import { rawSearchParam, safeNextPath } from './safe-next-path'
-import { onForbidden } from './session'
+import { onForbidden, onRefreshed } from './session'
 import { ApiError, type SessionTenant, type SessionUser } from './types'
 
 export type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated' | 'error'
@@ -32,6 +33,13 @@ interface AuthState {
   tenant: SessionTenant | null
   sessionId: string | null
   permissionVersion: number | null
+  /**
+   * The caller's effective permission codes (`GET /api/me/permissions`, S1) — `null` until
+   * the first load resolves, `[]` if the caller genuinely holds none OR the load itself
+   * failed (a UI affordance, so a transport hiccup here degrades to "show nothing" rather
+   * than blocking sign-in — see the comment on the fetch below).
+   */
+  permissions: string[] | null
   /** Set only when `status === 'error'` — a transport failure, not "no session". */
   errorMessage: string | null
 }
@@ -49,6 +57,13 @@ export interface AuthContextValue extends AuthState {
   syncAfterLogin: () => Promise<void>
   /** Calls `POST /auth/logout`, clears local state, and sends the user to /login. */
   signOut: () => Promise<void>
+  /**
+   * Whether the caller holds permission `code` (`packages/permissions/src/catalog.ts`).
+   * `false` while `permissions` is still `null` (nothing is offered before the real answer
+   * is known) — a UI affordance ONLY: hiding an action is a courtesy, the server's own
+   * `@RequirePermission` check on the route is the real gate (CLAUDE.md rule 18).
+   */
+  can: (code: string) => boolean
 }
 
 const initialState: AuthState = {
@@ -57,6 +72,7 @@ const initialState: AuthState = {
   tenant: null,
   sessionId: null,
   permissionVersion: null,
+  permissions: null,
   errorMessage: null,
 }
 
@@ -86,18 +102,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAttempt((n) => n + 1)
   }, [])
 
+  // Reloads S1 alone, never the rest of the session — called on first authentication, on
+  // every `permissionVersion` change, and after a token refresh (see the two effects
+  // below), so a permission revoked server-side (which bumps `permissionVersion` and
+  // rejects the old token at the guard, ADR-0009) disappears from the UI without a
+  // reload. Guarded to apply only while still authenticated: a response landing after a
+  // sign-out or session-expiry must not resurrect a permissions array for a state that no
+  // longer has one. A transport hiccup here is a UI-affordance failure only (S1,
+  // api-contract.md §2) — it degrades to "offer nothing" (permissions: []) rather than
+  // failing sign-in or leaving the previous (possibly stale/over-privileged) list in
+  // place.
+  const loadPermissions = useCallback(async () => {
+    try {
+      const granted = await getMyPermissions()
+      const permissions = Array.isArray(granted.permissions) ? granted.permissions : []
+      setState((prev) =>
+        prev.status === 'authenticated'
+          ? { ...prev, permissions, permissionVersion: granted.permissionVersion }
+          : prev,
+      )
+    } catch {
+      setState((prev) => (prev.status === 'authenticated' ? { ...prev, permissions: [] } : prev))
+    }
+  }, [])
+
   // The one place `GET /auth/me` is called. Shared by the on-load effect below and by
   // `syncAfterLogin`, so "what does it mean to have a session" is decided once.
   const checkSession = useCallback(async () => {
     setState((prev) => ({ ...prev, status: 'loading', errorMessage: null }))
     try {
       const session = await me()
+      // `permissions: null` here, not fetched inline — the effect below (keyed on
+      // `status`/`permissionVersion`) loads them the instant this resolves to
+      // 'authenticated', the same path a later permissionVersion change reuses.
       setState({
         status: 'authenticated',
         user: session.user,
         tenant: session.tenant,
         sessionId: session.sessionId,
         permissionVersion: session.permissionVersion,
+        permissions: null,
         errorMessage: null,
       })
     } catch (err) {
@@ -128,6 +172,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (state.status === 'authenticated') wasAuthenticated.current = true
   }, [state.status])
+
+  // Trigger 1: on first authentication, and whenever `permissionVersion` itself changes
+  // (the one thing that ever changes it is `loadPermissions`'s own response — a role
+  // change bumps it server-side and the next read reflects that; this keeps the two
+  // reasons-to-reload ("just signed in" and "the version moved") on one path instead of
+  // two copies of the same fetch).
+  useEffect(() => {
+    if (state.status === 'authenticated') void loadPermissions()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.status, state.permissionVersion])
+
+  // Trigger 2: after every successful token refresh (session.ts's onRefreshed) — a
+  // rotated token can reflect a permission change even when this tab's own
+  // `permissionVersion` hasn't been re-read yet, so this is a second, independent path
+  // to the same `loadPermissions`, not a replacement for the effect above.
+  useEffect(() => onRefreshed(() => void loadPermissions()), [loadPermissions])
 
   // Session-required guard: any route other than /login and /unauthorized needs an
   // authenticated session client-side. This is a UX affordance only — the server
@@ -172,13 +232,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     await apiLogout()
+    // app-context.tsx's mock role (the prototype screens' own can()/act(), not this
+    // provider's real permissions) must not survive a sign-out — a different person
+    // signing in on the same browser otherwise inherits whatever role the last person
+    // last switched to, silently. Cleared directly (not via FinsoftProvider, which this
+    // module does not and should not depend on) since this is the one place every sign-
+    // out, from any screen, actually passes through.
+    try {
+      localStorage.removeItem('finsoft-role')
+    } catch {
+      // storage can be unavailable (private browsing, disabled cookies) — sign-out must
+      // not fail because of it.
+    }
     setState({ ...initialState, status: 'unauthenticated' })
     navigate('/login', { replace: true })
   }, [navigate])
 
+  const can = useCallback(
+    (code: string) => state.permissions !== null && state.permissions.includes(code),
+    [state.permissions],
+  )
+
   const value = useMemo<AuthContextValue>(
-    () => ({ ...state, retry, syncAfterLogin: checkSession, signOut }),
-    [state, retry, checkSession, signOut],
+    () => ({ ...state, retry, syncAfterLogin: checkSession, signOut, can }),
+    [state, retry, checkSession, signOut, can],
   )
 
   // /login and /unauthorized render immediately regardless of session status — the login

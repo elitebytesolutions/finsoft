@@ -129,7 +129,12 @@ describe('SALE_POSTED and CUSTOMER_PAYMENT_RECEIVED are not enabled in M2', () =
           ),
         ),
       )
-      expect(error.code).toBe('RULE_NOT_ENABLED')
+      // M3-P: both events are IMPLEMENTED (events.ts IMPLEMENTED_EVENTS) as
+      // of this PR — the engine now runs the rule's own payload validation
+      // instead of gating at RULE_NOT_ENABLED. An empty payload still fails,
+      // but on the rule's first shape check (SALE_SETTLEMENT_NOT_ENABLED /
+      // PAYLOAD_INVALID), proving the rule is reachable, not disabled.
+      expect(error.code).not.toBe('RULE_NOT_ENABLED')
     },
   )
 })

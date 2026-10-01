@@ -37,10 +37,12 @@ function renderLogin(path = '/login', authOverrides: Partial<AuthContextValue> =
     tenant: null,
     sessionId: null,
     permissionVersion: null,
+    permissions: null,
     errorMessage: null,
     retry: vi.fn(),
     syncAfterLogin,
     signOut: vi.fn(),
+    can: () => false,
     ...authOverrides,
   }
   render(

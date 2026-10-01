@@ -89,6 +89,19 @@ export interface PostCommand {
   readonly occurredAt: string
   readonly idempotencyKey: string
   readonly payload: unknown
+  /**
+   * K4 (docs/design/M3/README.md §4, docs/design/M3/modules.md §4.1/§4.2):
+   * the source document's OWN number (`INV-2027-000001`, `RCT-2027-000001`),
+   * already assigned by the module via `documentNumbers.next` (K3) earlier
+   * in the SAME transaction. Stored on the entry's `reference` column and
+   * shown in every ledger's "source document number" column
+   * (ledger-and-trial-balance.md §2). Overrides whatever the rule itself
+   * would have built for `reference`. Omitted (or null) for
+   * JOURNAL_VOUCHER_POSTED, which has no separate source document — its
+   * rule's own `payload.reference` (a free-text field the user types) is
+   * used instead.
+   */
+  readonly referenceNumber?: string | null
 }
 
 export interface PostResult {
@@ -525,6 +538,19 @@ export function createPostingEngine(clock: Clock = systemClock): PostingEngine {
       })
     }
     assertIdempotencyKey(command.idempotencyKey)
+    // K4: the source document's own number, if the caller has one. Validated
+    // here (not merely trusted) because it becomes part of every ledger's
+    // "source document number" column.
+    if (
+      command.referenceNumber !== undefined &&
+      command.referenceNumber !== null &&
+      (typeof command.referenceNumber !== 'string' || command.referenceNumber.trim().length === 0)
+    ) {
+      throw new PostingError('PAYLOAD_INVALID', 'referenceNumber must be a non-empty string.', {
+        field: 'referenceNumber',
+      })
+    }
+    const referenceNumber = command.referenceNumber ?? null
     const build = rule.prepare(command.payload)
 
     return runPostingPipeline({
@@ -548,7 +574,15 @@ export function createPostingEngine(clock: Clock = systemClock): PostingEngine {
       }),
       reversalOf: null,
       reversalReason: null,
-      build: () => build(tx, tenantId),
+      build: async () => {
+        const entry = await build(tx, tenantId)
+        // K4 overrides whatever the rule itself built for `reference`. Only
+        // SALE_POSTED and CUSTOMER_PAYMENT_RECEIVED's modules pass one
+        // (service-sale.ts / customer-receipt.ts hardcode `reference: null`
+        // themselves, having no document number of their own to give); a JV
+        // keeps its own free-text `payload.reference`.
+        return referenceNumber !== null ? { ...entry, reference: referenceNumber } : entry
+      },
     })
   }
 
