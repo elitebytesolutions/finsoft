@@ -3234,7 +3234,7 @@ output.sav-num{display:inline-flex;align-items:center;justify-content:center;bac
 .coa2-head{flex-wrap:nowrap}
 .coa2-head .coa2-tools{margin-left:0;flex:1 1 auto;min-width:0;justify-content:flex-end}
 .coa2-add{margin-left:0;flex:none}
-@media(max-width:1100px){
+@media(max-width:1366px){
  .coa2-tools{flex-wrap:wrap}
  .coa2-io{flex-wrap:nowrap}
 }
