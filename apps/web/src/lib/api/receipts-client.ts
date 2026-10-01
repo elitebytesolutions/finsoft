@@ -1,8 +1,6 @@
 /*
  * The M3-P receipts API — docs/design/M3/api-contract.md §2 "Receipts", §4.3. Same status as
- * invoices-client.ts: built strictly to the published contract, against NO running endpoint
- * on this branch, NOT wired to any screen (`/payments` stays mock + prototype banner until
- * M3-P merges — see this lane's report).
+ * invoices-client.ts: `modules/receivables` is live on `develop` (M4-W2).
  */
 import { apiFetch } from './client'
 import type {
