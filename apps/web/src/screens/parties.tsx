@@ -1750,14 +1750,34 @@ export function CustomerDetail() {
               <small>Outstanding Balance</small>
             </div>
             <div className="pt-fin-tile">
-              <b>—</b>
-              <small>Total Sales</small>
-              <small className="right">Available once invoicing is live</small>
+              <b>
+                {ledgerState.status === 'ready'
+                  ? moneyFromString(ledgerState.data.totals.debit, { zeroAsDash: true })
+                  : '—'}
+              </b>
+              <small>Total debits</small>
+              <small className="right">
+                {ledgerState.status === 'ready'
+                  ? `${ledgerState.data.from} – ${ledgerState.data.to}`
+                  : ledgerState.status === 'error'
+                    ? 'Could not load'
+                    : 'Loading…'}
+              </small>
             </div>
             <div className="pt-fin-tile">
-              <b>—</b>
-              <small>Total Payments</small>
-              <small className="right">Available once invoicing is live</small>
+              <b>
+                {ledgerState.status === 'ready'
+                  ? moneyFromString(ledgerState.data.totals.credit, { zeroAsDash: true })
+                  : '—'}
+              </b>
+              <small>Total credits</small>
+              <small className="right">
+                {ledgerState.status === 'ready'
+                  ? `${ledgerState.data.from} – ${ledgerState.data.to}`
+                  : ledgerState.status === 'error'
+                    ? 'Could not load'
+                    : 'Loading…'}
+              </small>
             </div>
             <div className="pt-fin-tile">
               <b>—</b>

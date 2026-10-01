@@ -1,6 +1,31 @@
 'use client'
-import { useMemo, useState } from 'react'
-import { useNavigate } from '@/lib/router'
+/*
+ * /sales/voucher — PO decision 2026-10-01: two modes behind a Service/Product switch.
+ *
+ * Service mode (M4-W2, default) — real API (docs/design/M3/ui-plan.md "sales-voucher —
+ * service line mode", PO-approved). The mock's product/batch/GST sale has no counterpart in
+ * the real invoice contract (packages/shared-types/src/receivables.ts: a line is
+ * `{description, quantity, unitPrice}` only). This screen keeps the `.sav-*` page chrome and
+ * card layout but: the Item Entry grid becomes a service-line grid (#, Description, Qty, Rate,
+ * Net amount); the "Fulfillment & Sales Team" card is removed (no schema field); the doc-number
+ * strip keeps only Invoice No and Invoice Date. Due date and Narration are real fields the mock
+ * never had. Totals are never computed in the browser: every net amount and the invoice total
+ * come from I6 `POST /api/invoices/calculate` (debounced, re-run on every line edit) — never
+ * `qty * rate` in this file.
+ *
+ * Product mode — the PO's original product/batch/GST sale form, restored verbatim from
+ * before this change (`git show 65efbba:apps/web/src/screens/sales-voucher.tsx`, = the file at
+ * origin/develop 4e90864) as ProductSalesVoucher below: every field, panel, button and
+ * calculation display, unchanged. It stays a prototype — the "Prototype — not connected to the
+ * ledger" banner shows only while this mode is active (the route is API-backed now, so the
+ * shell's own automatic banner, which keys off API_BACKED_ROUTES, no longer fires for it) —
+ * and it never posts or calls the API: Save Draft and Save & Post are permanently disabled,
+ * labelled "Coming with inventory and tax (Waves 5–9)". `onAdd` (the mock mutator the original
+ * component took as a prop) is gone along with the create path that called it; everything else
+ * about this component's body is untouched.
+ */
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useNavigate, useSearchParams } from '@/lib/router'
 import {
   BookOpen,
   Calculator,
@@ -25,10 +50,723 @@ import {
   Wallet,
   X,
 } from 'lucide-react'
-import type { Master, Product, Sale } from '@/mocks/api'
+import { Banner, Button, Field, Modal, TextInput, moneyFromString } from '@finsoft/ui'
+import { useAuth } from '@/lib/api/auth-context'
+import { useIdempotencyKey } from '@/lib/api/idempotency-key'
+import { ApiError } from '@/lib/api/types'
+import { todayIso } from '@/lib/date/local-date'
+import { getCustomer, listCustomers } from '@/lib/api/customers-client'
+import type { CustomerListItem } from '@/lib/api/customers-client'
+import {
+  calculateInvoice,
+  cancelInvoice,
+  createInvoice,
+  getInvoice,
+  postInvoice,
+  updateInvoice,
+} from '@/lib/api/invoices-client'
+import type { InvoiceCalculation, InvoiceStatus } from '@/lib/api/invoices-types'
+import { receivablesErrorMessage } from '@/lib/adapters/receivables-errors'
+import { searchTermFor } from '@/lib/adapters/party-search'
+import { useFinsoft } from '@/app-context'
+import type { Master, Product } from '@/mocks/api'
 import type { AppData } from '@/mocks/api'
 
-type Line = {
+type Line = { key: number; description: string; quantity: string; unitPrice: string }
+
+let lineKeySeq = 1
+const newLine = (): Line => ({ key: lineKeySeq++, description: '', quantity: '', unitPrice: '' })
+
+function isLineComplete(l: Line): boolean {
+  return l.description.trim() !== '' && l.quantity.trim() !== '' && l.unitPrice.trim() !== ''
+}
+
+/*
+ * The mode switch itself — the one genuinely new piece of markup this file adds. `.mode-picker`
+ * is the existing kit class the mock's own Payment/Receipt switch used (transactions-pages.tsx,
+ * before M4-W2) — reused rather than invented; `.lg` is a new size modifier on that SAME base
+ * class (packages/ui/src/styles/kit.css), added for this page-header-level control without
+ * touching the base class every other `.mode-picker` still uses (design-system review,
+ * 66019c0). Rendered inside each mode's own page header (passed down as `modeSwitch`) rather
+ * than floating above it, so it reads as part of the page, not a stray control above the title.
+ */
+export function SalesVoucher() {
+  const [mode, setMode] = useState<'Service' | 'Product'>('Service')
+  const { data } = useFinsoft()
+  const modeSwitch = (
+    <div className="mode-picker lg" role="group" aria-label="Sales voucher mode">
+      <button
+        type="button"
+        className={mode === 'Service' ? 'active' : ''}
+        onClick={() => setMode('Service')}
+      >
+        Service
+      </button>
+      <button
+        type="button"
+        className={mode === 'Product' ? 'active' : ''}
+        onClick={() => setMode('Product')}
+      >
+        Product
+      </button>
+    </div>
+  )
+  return mode === 'Service' ? (
+    <ServiceSalesVoucher modeSwitch={modeSwitch} />
+  ) : (
+    <ProductSalesVoucher data={data} modeSwitch={modeSwitch} />
+  )
+}
+
+function ServiceSalesVoucher({ modeSwitch }: { modeSwitch: ReactNode }) {
+  const navigate = useNavigate()
+  const { can } = useAuth()
+  const [params] = useSearchParams()
+  const editInvoiceId = params.get('invoice')
+  const presetCustomerId = params.get('customer')
+
+  const canCreate = can('invoice.create')
+  const canPost = can('invoice.post')
+
+  // ---- draft identity -------------------------------------------------
+  const [invoiceId, setInvoiceId] = useState<string | null>(null)
+  const [version, setVersion] = useState<number | null>(null)
+  const [invoiceNumber, setInvoiceNumber] = useState<string | null>(null)
+  const [status, setStatus] = useState<InvoiceStatus | null>(null)
+
+  // ---- form fields ------------------------------------------------------
+  const [customerId, setCustomerId] = useState<string | null>(null)
+  const [customerQuery, setCustomerQuery] = useState('')
+  const [customerOptions, setCustomerOptions] = useState<CustomerListItem[]>([])
+  const [invoiceDate, setInvoiceDate] = useState(todayIso())
+  const [dueDate, setDueDate] = useState('')
+  const [narration, setNarration] = useState('')
+  const [lines, setLines] = useState<Line[]>(() => [newLine()])
+
+  // ---- loading / hydration ----------------------------------------------
+  const [hydrating, setHydrating] = useState(Boolean(editInvoiceId))
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const hydratedRef = useRef(false)
+
+  // ---- calculation (I6) ---------------------------------------------------
+  const [calc, setCalc] = useState<InvoiceCalculation | null>(null)
+  // The line keys `calc` was computed from — lets a row look up its OWN calc result even
+  // while a newer calculation is still in flight, instead of matching by array index (which
+  // breaks the moment an incomplete line sits between two complete ones).
+  const [calcKeys, setCalcKeys] = useState<number[]>([])
+  const [calcPending, setCalcPending] = useState(false)
+
+  // ---- submission state ----------------------------------------------------
+  const [formError, setFormError] = useState<string | null>(null)
+  const [toast, setToast] = useState('')
+  const [savingDraft, setSavingDraft] = useState(false)
+  const [postOpen, setPostOpen] = useState(false)
+  // The draft exactly as the server has it once `openPost` ensures it — the post confirm
+  // dialog quotes THIS netAmount, never a parallel /calculate figure, so it can never disagree
+  // with what actually gets posted (Accounting review, 66019c0).
+  const [postDraft, setPostDraft] = useState<{
+    id: string
+    version: number
+    netAmount: string
+  } | null>(null)
+  const [cancelOpen, setCancelOpen] = useState(false)
+  const { key: createKey, reset: resetCreateKey } = useIdempotencyKey()
+  const { key: postKey, reset: resetPostKey } = useIdempotencyKey()
+
+  // Load an existing draft (?invoice=) or pre-select a customer (?customer=) — once.
+  useEffect(() => {
+    let active = true
+    if (editInvoiceId) {
+      getInvoice(editInvoiceId)
+        .then((inv) => {
+          if (!active || hydratedRef.current) return
+          hydratedRef.current = true
+          setInvoiceId(inv.id)
+          setVersion(inv.version)
+          setInvoiceNumber(inv.number)
+          setStatus(inv.status)
+          setCustomerId(inv.customer.id)
+          setCustomerQuery(`${inv.customer.name} (${inv.customer.code})`)
+          setInvoiceDate(inv.invoiceDate)
+          setDueDate(inv.dueDate ?? '')
+          setNarration(inv.narration ?? '')
+          setLines(
+            inv.lines.length
+              ? inv.lines.map((l) => ({
+                  key: lineKeySeq++,
+                  description: l.description,
+                  quantity: l.quantity,
+                  unitPrice: l.unitPrice,
+                }))
+              : [newLine()],
+          )
+          setHydrating(false)
+        })
+        .catch((err: unknown) => {
+          if (!active) return
+          setLoadError(
+            err instanceof ApiError && err.status === 403
+              ? 'You do not have permission to view this invoice.'
+              : receivablesErrorMessage(err),
+          )
+          setHydrating(false)
+        })
+    }
+    return () => {
+      active = false
+    }
+  }, [editInvoiceId])
+
+  // Resolve a preset customer id (from a customer's "New Transaction" link) to a label — C3,
+  // a direct lookup by id, not a search that might miss it past the first page.
+  useEffect(() => {
+    if (!presetCustomerId || editInvoiceId || customerId) return
+    let active = true
+    getCustomer(presetCustomerId)
+      .then((found) => {
+        if (!active) return
+        setCustomerId(found.id)
+        setCustomerQuery(`${found.name} (${found.code})`)
+      })
+      .catch(() => undefined)
+    return () => {
+      active = false
+    }
+  }, [presetCustomerId, editInvoiceId, customerId])
+
+  // Debounced customer search (C1) — never an unbounded local list.
+  useEffect(() => {
+    const q = customerQuery.trim()
+    if (!q) {
+      setCustomerOptions([])
+      return
+    }
+    // Already resolved to a selection matching this exact text — no need to re-search.
+    if (customerId && q === customerQuery) {
+      const current = customerOptions.find((c) => c.id === customerId)
+      if (current && `${current.name} (${current.code})` === q) return
+    }
+    let active = true
+    const t = setTimeout(() => {
+      listCustomers({ q: searchTermFor(q), status: 'ACTIVE', limit: 8 })
+        .then((page) => {
+          if (!active) return
+          setCustomerOptions([...page.items])
+          // The text may already be a complete, exact match (typed fast, pasted, or filled by
+          // a test/automation tool) that arrived before this search resolved — resolve it now
+          // rather than silently leaving customerId unset.
+          const exact = page.items.find((c) => `${c.name} (${c.code})` === q)
+          if (exact) setCustomerId(exact.id)
+        })
+        .catch(() => {
+          if (active) setCustomerOptions([])
+        })
+    }, 300)
+    return () => {
+      active = false
+      clearTimeout(t)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customerQuery])
+
+  const onCustomerQueryChange = (v: string) => {
+    setCustomerQuery(v)
+    const match = customerOptions.find((c) => `${c.name} (${c.code})` === v)
+    setCustomerId(match ? match.id : null)
+  }
+
+  // Debounced I6 recalculation — the one sanctioned source for a line's net amount and the
+  // invoice total while the user types (rule 19: no money arithmetic in the browser).
+  //
+  // Sent over COMPLETE lines only (Accounting review, 66019c0): an incomplete line used to be
+  // padded with '0' defaults and included anyway, so this calculation covered a different set
+  // of lines than what Post actually sends (validLines) — the two totals could disagree.
+  useEffect(() => {
+    const complete = lines.filter(isLineComplete)
+    if (complete.length === 0) {
+      setCalc(null)
+      setCalcKeys([])
+      return
+    }
+    let active = true
+    setCalcPending(true)
+    const keys = complete.map((l) => l.key)
+    const t = setTimeout(() => {
+      calculateInvoice(
+        complete.map((l) => ({
+          description: l.description,
+          quantity: l.quantity,
+          unitPrice: l.unitPrice,
+        })),
+      )
+        .then((result) => {
+          if (!active) return
+          setCalc(result)
+          setCalcKeys(keys)
+        })
+        .catch(() => {
+          if (active) setCalc(null)
+        })
+        .finally(() => {
+          if (active) setCalcPending(false)
+        })
+    }, 400)
+    return () => {
+      active = false
+      clearTimeout(t)
+    }
+  }, [lines])
+
+  const patchLine = (key: number, patch: Partial<Line>) =>
+    setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)))
+  const addRow = () => setLines((ls) => [...ls, newLine()])
+  const removeRow = (key: number) => setLines((ls) => ls.filter((l) => l.key !== key))
+
+  const isDraftEditable = status === null || status === 'DRAFT'
+  const validLines = lines.filter(isLineComplete)
+
+  async function ensureDraft(): Promise<{ id: string; version: number; netAmount: string }> {
+    const body = {
+      customerId: customerId!,
+      invoiceDate,
+      dueDate: dueDate || null,
+      narration: narration || null,
+      lines: validLines.map((l) => ({
+        description: l.description,
+        quantity: l.quantity,
+        unitPrice: l.unitPrice,
+      })),
+    }
+    if (!invoiceId) {
+      const inv = await createInvoice(body, createKey)
+      setInvoiceId(inv.id)
+      setVersion(inv.version)
+      setInvoiceNumber(inv.number)
+      setStatus(inv.status)
+      resetCreateKey()
+      return { id: inv.id, version: inv.version, netAmount: inv.netAmount }
+    }
+    const inv = await updateInvoice(invoiceId, { ...body, version: version! })
+    setVersion(inv.version)
+    return { id: invoiceId, version: inv.version, netAmount: inv.netAmount }
+  }
+
+  const validate = (): string | null => {
+    if (!customerId) return 'Select a customer.'
+    if (validLines.length === 0)
+      return 'Add at least one line with a description, quantity and rate.'
+    return null
+  }
+
+  const saveDraft = async (e: FormEvent) => {
+    e.preventDefault()
+    if (savingDraft) return
+    const problem = validate()
+    if (problem) {
+      setFormError(problem)
+      return
+    }
+    setFormError(null)
+    setSavingDraft(true)
+    try {
+      await ensureDraft()
+      setToast(invoiceId ? 'Draft updated.' : 'Saved as draft.')
+    } catch (err) {
+      setFormError(receivablesErrorMessage(err))
+    } finally {
+      setSavingDraft(false)
+    }
+  }
+
+  // Saves (or updates) the draft FIRST, then opens the confirm dialog quoting that draft's own
+  // server-computed netAmount — never a parallel /calculate figure, which can cover a
+  // different set of lines than what actually gets saved (Accounting review, 66019c0).
+  const openPost = async () => {
+    const problem = validate()
+    if (problem) {
+      setFormError(problem)
+      return
+    }
+    setFormError(null)
+    setSavingDraft(true)
+    try {
+      const draft = await ensureDraft()
+      setPostDraft(draft)
+      setPostOpen(true)
+    } catch (err) {
+      setFormError(receivablesErrorMessage(err))
+    } finally {
+      setSavingDraft(false)
+    }
+  }
+
+  if (!canCreate) {
+    return (
+      <div className="state-page" role="alert">
+        <h1>Access restricted</h1>
+        <p>Your role does not have permission to create invoices.</p>
+      </div>
+    )
+  }
+
+  if (hydrating) {
+    return (
+      <div className="state-page" role="status" aria-live="polite">
+        <h1>Loading draft invoice…</h1>
+      </div>
+    )
+  }
+
+  if (loadError) {
+    return (
+      <div className="state-page" role="alert">
+        <h1>We could not load this draft</h1>
+        <p>{loadError}</p>
+        <Button kind="secondary" onClick={() => navigate('/sales')}>
+          Back to sales
+        </Button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="sav-page">
+      {modeSwitch}
+      <header className="sav-head">
+        <span className="sav-head-icon">
+          <FileText />
+        </span>
+        <div>
+          <h1>Sales Voucher</h1>
+          <p>Create and record a service invoice with customer and line details.</p>
+        </div>
+        <div className="sav-head-btns">
+          <button
+            type="button"
+            className="sav-btn"
+            disabled={savingDraft || !isDraftEditable}
+            onClick={saveDraft}
+          >
+            <Save /> Save Draft
+          </button>
+          <button
+            type="button"
+            className="sav-btn solid"
+            disabled={!canPost || !isDraftEditable || savingDraft || calcPending}
+            onClick={openPost}
+          >
+            <Check /> Save &amp; Post
+          </button>
+          {invoiceId && isDraftEditable && (
+            <button type="button" className="sav-btn danger" onClick={() => setCancelOpen(true)}>
+              <X /> Cancel Draft
+            </button>
+          )}
+        </div>
+      </header>
+      {toast && (
+        <div className="sav-toast" role="status">
+          <Check />
+          {toast}
+          <button aria-label="Dismiss" onClick={() => setToast('')}>
+            <X />
+          </button>
+        </div>
+      )}
+      {formError && <Banner tone="danger">{formError}</Banner>}
+      {!isDraftEditable && invoiceId && (
+        <Banner tone="info">
+          This invoice is {status?.toLowerCase()}. It can no longer be edited here.{' '}
+          <button className="linkable" onClick={() => navigate(`/sales/${invoiceId}`)}>
+            Open it
+          </button>
+        </Banner>
+      )}
+
+      <div className="sav-refs">
+        <div className="sav-ref">
+          <span>
+            <FileText />
+          </span>
+          <div>
+            <small>Invoice No</small>
+            <b>{invoiceNumber ?? 'Not yet assigned'}</b>
+          </div>
+        </div>
+        <div className="sav-ref">
+          <span>
+            <CalendarDays />
+          </span>
+          <div>
+            <small>Invoice Date</small>
+            <label className="sav-date">
+              <input
+                type="date"
+                aria-label="Invoice date"
+                value={invoiceDate}
+                disabled={!isDraftEditable}
+                onChange={(e) => setInvoiceDate(e.target.value)}
+              />
+            </label>
+          </div>
+        </div>
+        <div className="sav-ref">
+          <span>
+            <CalendarDays />
+          </span>
+          <div>
+            <small>Due Date</small>
+            <label className="sav-date">
+              <input
+                type="date"
+                aria-label="Due date"
+                value={dueDate}
+                disabled={!isDraftEditable}
+                onChange={(e) => setDueDate(e.target.value)}
+              />
+            </label>
+          </div>
+        </div>
+        <div className="sav-ref">
+          <span>
+            <BookOpen />
+          </span>
+          <div>
+            <small>Status</small>
+            <b>{status ?? 'DRAFT (unsaved)'}</b>
+          </div>
+        </div>
+      </div>
+
+      <section className="sav-card">
+        <div className="sav-card-head">
+          <UserRound />
+          <h2>Order &amp; Customer Information</h2>
+          <span className="sav-hint">
+            <Info /> Search by name or code.
+          </span>
+        </div>
+        <div className="sav-form two">
+          <label className="sav-field">
+            <span>
+              Customer / Party<i>*</i>
+            </span>
+            <span className="sav-input">
+              <input
+                aria-label="Customer"
+                placeholder="Search customer by name or code…"
+                value={customerQuery}
+                disabled={!isDraftEditable}
+                onChange={(e) => onCustomerQueryChange(e.target.value)}
+                list="sav-customers"
+              />
+            </span>
+            <datalist id="sav-customers">
+              {customerOptions.map((c) => (
+                <option key={c.id} value={`${c.name} (${c.code})`} />
+              ))}
+            </datalist>
+          </label>
+          <Field label="Narration" htmlFor="sav-narration">
+            <TextInput
+              id="sav-narration"
+              value={narration}
+              onChange={setNarration}
+              disabled={!isDraftEditable}
+              placeholder="Add narration (optional)"
+            />
+          </Field>
+        </div>
+      </section>
+
+      <section className="sav-card sav-items">
+        <div className="sav-card-head">
+          <h2>Item Entry</h2>
+          <p>
+            Service lines — description, quantity and rate. The net amount is calculated by the
+            server.
+          </p>
+        </div>
+        <div className="sav-table-wrap">
+          <table className="sav-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>
+                  Description <i>*</i>
+                </th>
+                <th>Qty</th>
+                <th>Rate</th>
+                <th>Net Amount</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map((l, i) => {
+                // calc (and its problems) cover calcKeys, in that order — never the raw array
+                // index, which would drift the moment an incomplete line sits between two
+                // complete ones, or while a fresher calculation is still in flight.
+                const calcIdx = calcKeys.indexOf(l.key)
+                const calcLine = calcIdx === -1 ? undefined : calc?.lines[calcIdx]
+                const problem =
+                  calcIdx === -1 ? undefined : calc?.problems.find((p) => p.lineNo === calcIdx + 1)
+                return (
+                  <tr key={l.key}>
+                    <td className="sav-idx">{i + 1}</td>
+                    <td>
+                      <span className="sav-input">
+                        <input
+                          aria-label={`Description ${i + 1}`}
+                          value={l.description}
+                          disabled={!isDraftEditable}
+                          onChange={(e) => patchLine(l.key, { description: e.target.value })}
+                        />
+                      </span>
+                      {problem && (
+                        <small className="sav-line-error">
+                          Quantity and rate must be greater than zero.
+                        </small>
+                      )}
+                    </td>
+                    <td>
+                      <input
+                        aria-label={`Qty ${i + 1}`}
+                        className="sav-num"
+                        inputMode="decimal"
+                        value={l.quantity}
+                        disabled={!isDraftEditable}
+                        onChange={(e) => patchLine(l.key, { quantity: e.target.value })}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        aria-label={`Rate ${i + 1}`}
+                        className="sav-num money"
+                        inputMode="decimal"
+                        value={l.unitPrice}
+                        disabled={!isDraftEditable}
+                        onChange={(e) => patchLine(l.key, { unitPrice: e.target.value })}
+                      />
+                    </td>
+                    <td>
+                      <output className="sav-num ro money">
+                        {calcLine ? moneyFromString(calcLine.lineNet) : '—'}
+                      </output>
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        className="sav-del"
+                        aria-label={`Remove row ${i + 1}`}
+                        disabled={!isDraftEditable}
+                        onClick={() => removeRow(l.key)}
+                      >
+                        <Trash2 />
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div className="sav-table-foot">
+          <button
+            type="button"
+            className="sav-btn green"
+            disabled={!isDraftEditable}
+            onClick={addRow}
+          >
+            <Plus /> Add Row
+          </button>
+          <span className="sav-hint plain">
+            <Info /> Net amount is calculated by the server as you type.
+          </span>
+        </div>
+      </section>
+
+      <footer className="sav-foot">
+        <div>
+          <span>
+            <FileText />
+          </span>
+          <div>
+            <small>Total Items</small>
+            <b>{validLines.length}</b>
+          </div>
+        </div>
+        <div className="net">
+          <span>
+            <Calculator />
+          </span>
+          <div>
+            <small>Net Amount</small>
+            <b>{calcPending ? 'Calculating…' : calc ? moneyFromString(calc.netAmount) : '—'}</b>
+          </div>
+        </div>
+      </footer>
+
+      {postOpen && postDraft && (
+        <PostConfirmDialog
+          customerLabel={customerQuery}
+          netAmount={postDraft.netAmount}
+          lineCount={validLines.length}
+          onClose={() => {
+            setPostOpen(false)
+            setPostDraft(null)
+          }}
+          onConfirm={async () => {
+            setSavingDraft(true)
+            try {
+              // postDraft is the draft openPost just saved (or re-saved) — its id/version are
+              // the ones the netAmount in this dialog was quoted from.
+              const posted = await postInvoice(
+                postDraft.id,
+                { version: postDraft.version },
+                postKey,
+              )
+              resetPostKey()
+              setInvoiceNumber(posted.number)
+              setStatus(posted.status)
+              setPostOpen(false)
+              setPostDraft(null)
+              navigate(`/sales/${posted.id}`)
+            } catch (err) {
+              setPostOpen(false)
+              setPostDraft(null)
+              setFormError(receivablesErrorMessage(err))
+            } finally {
+              setSavingDraft(false)
+            }
+          }}
+          busy={savingDraft}
+        />
+      )}
+      {cancelOpen && invoiceId && version !== null && (
+        <CancelDraftDialog
+          invoiceId={invoiceId}
+          version={version}
+          onClose={() => setCancelOpen(false)}
+          onDone={() => {
+            setCancelOpen(false)
+            navigate('/sales')
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ *
+ * Product mode — restored verbatim from before M4-W2 (git show
+ * 65efbba:apps/web/src/screens/sales-voucher.tsx, identical to origin/develop 4e90864).
+ * A prototype: never posts, never calls the API. Renamed only where the original name would
+ * collide with Service mode above (Line -> ProductLine, Field -> ProductField, Pick ->
+ * ProductPick) — everything else, including every class name, field, column and calculation,
+ * is unchanged.
+ * ------------------------------------------------------------------ */
+
+type ProductLine = {
   key: number
   product?: Product
   name: string
@@ -40,14 +778,13 @@ type Line = {
   disc: number
   gst: number
 }
-type Props = { data: AppData; onAdd: (s: Sale) => void }
-const fmt = (v: number) =>
+const productFmt = (v: number) =>
   v.toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-const packs = ["10's", "20's", "30's", "100's", 'Bottle', 'Box']
-const gross = (l: Line) => l.qty * l.rate
-const net = (l: Line) => gross(l) * (1 - l.disc / 100) * (1 + l.gst / 100)
-const netRate = (l: Line) => (l.qty ? net(l) / l.qty : 0)
-const seed = (products: Product[]): Line[] =>
+const productPacks = ["10's", "20's", "30's", "100's", 'Bottle', 'Box']
+const productGross = (l: ProductLine) => l.qty * l.rate
+const productNet = (l: ProductLine) => productGross(l) * (1 - l.disc / 100) * (1 + l.gst / 100)
+const productNetRate = (l: ProductLine) => (l.qty ? productNet(l) / l.qty : 0)
+const productSeed = (products: Product[]): ProductLine[] =>
   [
     [10, 2, 12, 5],
     [5, 1, 28, 0],
@@ -70,13 +807,13 @@ const seed = (products: Product[]): Line[] =>
     }
   })
 
-function Field({
+function ProductField({
   label,
   children,
   required,
 }: {
   label: string
-  children: React.ReactNode
+  children: ReactNode
   required?: boolean
 }) {
   return (
@@ -89,7 +826,7 @@ function Field({
     </label>
   )
 }
-function Pick({
+function ProductPick({
   value,
   onChange,
   options,
@@ -112,7 +849,7 @@ function Pick({
   )
 }
 
-export function SalesVoucher({ data, onAdd }: Props) {
+function ProductSalesVoucher({ data, modeSwitch }: { data: AppData; modeSwitch: ReactNode }) {
   const navigate = useNavigate()
   const customers = data.masters.filter((m: Master) => m.type === 'Customer')
   const [customer, setCustomer] = useState(customers[0]?.name ?? '')
@@ -138,16 +875,14 @@ export function SalesVoucher({ data, onAdd }: Props) {
     [saleType, setSaleType] = useState('Regular'),
     [place, setPlace] = useState('Main Warehouse'),
     [remarks, setRemarks] = useState('Urgent delivery requested.')
-  const [lines, setLines] = useState<Line[]>(() => seed(data.products)),
+  const [lines, setLines] = useState<ProductLine[]>(() => productSeed(data.products)),
     [query, setQuery] = useState(''),
-    [toast, setToast] = useState(''),
-    [status, setStatus] = useState<'Draft' | 'Posted'>('Draft')
-  const saleNo = `SV-2026-${String(123 + data.sales.length).padStart(6, '0')}`,
-    invNo = `INV-${String(8912 + data.sales.length).padStart(6, '0')}`
+    [toast, setToast] = useState('')
+  const saleNo = `SV-2026-${String(123 + data.sales.length).padStart(6, '0')}`
   const totals = useMemo(() => {
-    const g = lines.reduce((a, l) => a + gross(l), 0)
-    const d = lines.reduce((a, l) => a + (gross(l) * l.disc) / 100, 0)
-    const t = lines.reduce((a, l) => a + (gross(l) * (1 - l.disc / 100) * l.gst) / 100, 0)
+    const g = lines.reduce((a, l) => a + productGross(l), 0)
+    const d = lines.reduce((a, l) => a + (productGross(l) * l.disc) / 100, 0)
+    const t = lines.reduce((a, l) => a + (productGross(l) * (1 - l.disc / 100) * l.gst) / 100, 0)
     return {
       items: lines.length,
       qty: lines.reduce((a, l) => a + l.qty + l.bonus, 0),
@@ -157,7 +892,7 @@ export function SalesVoucher({ data, onAdd }: Props) {
       net: g - d + t,
     }
   }, [lines])
-  const patch = (k: number, p: Partial<Line>) =>
+  const patch = (k: number, p: Partial<ProductLine>) =>
     setLines((ls) => ls.map((l) => (l.key === k ? { ...l, ...p } : l)))
   const setProduct = (k: number, name: string) => {
     const p = data.products.find((x) => x.name === name)
@@ -194,28 +929,7 @@ export function SalesVoucher({ data, onAdd }: Props) {
     if (p) addRow(p.name)
     else setToast(`No product matches "${query}"`)
   }
-  const post = () => {
-    if (status === 'Posted' || !lines.length) return
-    lines
-      .filter((l) => l.name && l.qty > 0)
-      .forEach((l, i) =>
-        onAdd({
-          id: `${invNo}${i ? `-${i + 1}` : ''}`,
-          date: '13 Sep 2026',
-          customer,
-          product: l.name,
-          qty: l.qty,
-          amount: Math.round(net(l)),
-          mode: saleType,
-          status: 'Credit',
-          batch: l.batch,
-          unitCost: l.product?.cost ?? 0,
-        }),
-      )
-    setStatus('Posted')
-    setToast(`${saleNo} posted — ${totals.items} items, net ₨ ${fmt(totals.net)}`)
-  }
-  const num = (l: Line, k: 'qty' | 'bonus' | 'rate' | 'disc', cls = '') => (
+  const num = (l: ProductLine, k: 'qty' | 'bonus' | 'rate' | 'disc', cls = '') => (
     <input
       aria-label={`${k} ${l.name || l.key}`}
       className={`sav-num ${cls}`}
@@ -223,12 +937,14 @@ export function SalesVoucher({ data, onAdd }: Props) {
       min={0}
       step={k === 'rate' ? '0.01' : '1'}
       value={l[k]}
-      onChange={(e) => patch(l.key, { [k]: Number(e.target.value) } as Partial<Line>)}
+      onChange={(e) => patch(l.key, { [k]: Number(e.target.value) } as Partial<ProductLine>)}
     />
   )
 
   return (
     <div className="sav-page">
+      {modeSwitch}
+      <Banner tone="warn">Prototype — not connected to the ledger</Banner>
       <header className="sav-head">
         <span className="sav-head-icon">
           <FileText />
@@ -241,18 +957,16 @@ export function SalesVoucher({ data, onAdd }: Props) {
           <button
             type="button"
             className="sav-btn"
-            onClick={() => {
-              setStatus('Draft')
-              setToast(`${saleNo} saved as draft`)
-            }}
+            disabled
+            title="Coming with inventory and tax (Waves 5–9)"
           >
             <Save /> Save Draft
           </button>
           <button
             type="button"
             className="sav-btn solid"
-            disabled={status === 'Posted' || !lines.length}
-            onClick={post}
+            disabled
+            title="Coming with inventory and tax (Waves 5–9)"
           >
             <Check /> Save &amp; Post
           </button>
@@ -267,6 +981,9 @@ export function SalesVoucher({ data, onAdd }: Props) {
           </button>
         </div>
       </header>
+      <p className="sav-hint plain">
+        <Info /> Save Draft and Save &amp; Post are coming with inventory and tax (Waves 5–9).
+      </p>
       {toast && (
         <div className="sav-toast" role="status">
           <Check />
@@ -339,7 +1056,7 @@ export function SalesVoucher({ data, onAdd }: Props) {
           </span>
           <div>
             <small>Invoice No</small>
-            <b>{invNo}</b>
+            <b>Assigned on posting</b>
           </div>
         </div>
         <div className="sav-ref">
@@ -363,19 +1080,19 @@ export function SalesVoucher({ data, onAdd }: Props) {
             </span>
           </div>
           <div className="sav-form two">
-            <Field label="Customer / Party" required>
-              <Pick
+            <ProductField label="Customer / Party" required>
+              <ProductPick
                 aria="Customer"
                 value={customer}
                 onChange={pickCustomer}
                 options={customers.map((c) => c.name)}
               />
-            </Field>
-            <Field label="Customer Name">
+            </ProductField>
+            <ProductField label="Customer Name">
               <span className="sav-input ro">
                 <input readOnly value={customer} />
               </span>
-            </Field>
+            </ProductField>
             <div className="sav-address span-2">
               <MapPin />
               <b>Address:</b>
@@ -387,22 +1104,22 @@ export function SalesVoucher({ data, onAdd }: Props) {
                 {cust?.contact}
               </span>
             </div>
-            <Field label="Area">
-              <Pick
+            <ProductField label="Area">
+              <ProductPick
                 aria="Area"
                 value={area}
                 onChange={setArea}
                 options={[...new Set([area, 'Gulberg', 'Johar Town', 'Shadman', 'Clifton', 'DHA'])]}
               />
-            </Field>
-            <Field label="City">
-              <Pick
+            </ProductField>
+            <ProductField label="City">
+              <ProductPick
                 aria="City"
                 value={city}
                 onChange={setCity}
                 options={[...new Set([city, 'Lahore', 'Karachi', 'Islamabad', 'Rawalpindi'])]}
               />
-            </Field>
+            </ProductField>
           </div>
         </section>
         <section className="sav-card">
@@ -411,62 +1128,62 @@ export function SalesVoucher({ data, onAdd }: Props) {
             <h2>Fulfillment &amp; Sales Team</h2>
           </div>
           <div className="sav-form three">
-            <Field label="Booker Name">
-              <Pick
+            <ProductField label="Booker Name">
+              <ProductPick
                 aria="Booker"
                 value={booker}
                 onChange={setBooker}
                 options={['Ahmed Khan', 'Bilal Saeed', 'Kashif Ali']}
               />
-            </Field>
-            <Field label="Deliveryman">
-              <Pick
+            </ProductField>
+            <ProductField label="Deliveryman">
+              <ProductPick
                 aria="Deliveryman"
                 value={delivery}
                 onChange={setDelivery}
                 options={['Rafiq Shah', 'Naeem Butt', 'Arif Khan']}
               />
-            </Field>
-            <Field label="Salesman">
-              <Pick
+            </ProductField>
+            <ProductField label="Salesman">
+              <ProductPick
                 aria="Salesman"
                 value={salesman}
                 onChange={setSalesman}
                 options={['Tanvir Hasan', 'Usman Ali', 'Hamza Tariq']}
               />
-            </Field>
-            <Field label="Doctor">
-              <Pick
+            </ProductField>
+            <ProductField label="Doctor">
+              <ProductPick
                 aria="Doctor"
                 value={doctor}
                 onChange={setDoctor}
                 options={['Dr. Rashid Ahmed', 'Dr. Sana Iqbal', 'None']}
               />
-            </Field>
-            <Field label="Supervisor">
-              <Pick
+            </ProductField>
+            <ProductField label="Supervisor">
+              <ProductPick
                 aria="Supervisor"
                 value={supervisor}
                 onChange={setSupervisor}
                 options={['Salma Akter', 'Fahad Mir']}
               />
-            </Field>
-            <Field label="Sale Type">
-              <Pick
+            </ProductField>
+            <ProductField label="Sale Type">
+              <ProductPick
                 aria="Sale type"
                 value={saleType}
                 onChange={setSaleType}
                 options={['Regular', 'Retail', 'Wholesale', 'Hospital', 'Clinic']}
               />
-            </Field>
-            <Field label="Place / Warehouse">
-              <Pick
+            </ProductField>
+            <ProductField label="Place / Warehouse">
+              <ProductPick
                 aria="Warehouse"
                 value={place}
                 onChange={setPlace}
                 options={['Main Warehouse', 'Shop DHA', 'Shop Johar Town']}
               />
-            </Field>
+            </ProductField>
             <label className="sav-field span-2">
               <span>Remarks</span>
               <span className="sav-input">
@@ -560,11 +1277,11 @@ export function SalesVoucher({ data, onAdd }: Props) {
                     </span>
                   </td>
                   <td>
-                    <Pick
+                    <ProductPick
                       aria={`Pack ${i + 1}`}
                       value={l.pack}
                       onChange={(v) => patch(l.key, { pack: v })}
-                      options={packs}
+                      options={productPacks}
                     />
                   </td>
                   <td>
@@ -588,7 +1305,7 @@ export function SalesVoucher({ data, onAdd }: Props) {
                   <td>{num(l, 'bonus')}</td>
                   <td>{num(l, 'rate', 'money')}</td>
                   <td>
-                    <output className="sav-num ro">{fmt(gross(l))}</output>
+                    <output className="sav-num ro">{productFmt(productGross(l))}</output>
                   </td>
                   <td>{num(l, 'disc')}</td>
                   <td>
@@ -607,9 +1324,9 @@ export function SalesVoucher({ data, onAdd }: Props) {
                       <ChevronDown />
                     </span>
                   </td>
-                  <td className="sav-money">{fmt(netRate(l))}</td>
+                  <td className="sav-money">{productFmt(productNetRate(l))}</td>
                   <td>
-                    <output className="sav-num ro money">{fmt(net(l))}</output>
+                    <output className="sav-num ro money">{productFmt(productNet(l))}</output>
                   </td>
                   <td>
                     <button
@@ -664,7 +1381,7 @@ export function SalesVoucher({ data, onAdd }: Props) {
           </span>
           <div>
             <small>Gross Amount</small>
-            <b>{fmt(totals.gross)}</b>
+            <b>{productFmt(totals.gross)}</b>
           </div>
         </div>
         <div>
@@ -673,7 +1390,7 @@ export function SalesVoucher({ data, onAdd }: Props) {
           </span>
           <div>
             <small>Discount</small>
-            <b>{fmt(totals.disc)}</b>
+            <b>{productFmt(totals.disc)}</b>
           </div>
         </div>
         <div>
@@ -682,7 +1399,7 @@ export function SalesVoucher({ data, onAdd }: Props) {
           </span>
           <div>
             <small>GST Amount</small>
-            <b>{fmt(totals.gst)}</b>
+            <b>{productFmt(totals.gst)}</b>
           </div>
         </div>
         <div className="net">
@@ -691,10 +1408,84 @@ export function SalesVoucher({ data, onAdd }: Props) {
           </span>
           <div>
             <small>Net Amount</small>
-            <b>{fmt(totals.net)}</b>
+            <b>{productFmt(totals.net)}</b>
           </div>
         </div>
       </footer>
     </div>
+  )
+}
+
+function PostConfirmDialog({
+  customerLabel,
+  netAmount,
+  lineCount,
+  onClose,
+  onConfirm,
+  busy,
+}: {
+  customerLabel: string
+  netAmount: string
+  lineCount: number
+  onClose: () => void
+  onConfirm: () => void
+  busy: boolean
+}) {
+  return (
+    <Modal title="Post invoice" onClose={onClose}>
+      <p>
+        This posts a {lineCount}-line invoice for <b>{customerLabel}</b>, net amount{' '}
+        <b>{moneyFromString(netAmount)}</b>, to the ledger. Posted invoices are immutable — they can
+        only be corrected by reversal.
+      </p>
+      <div className="modal-foot">
+        <Button kind="secondary" onClick={onClose} type="button">
+          Cancel
+        </Button>
+        <Button onClick={onConfirm} busy={busy}>
+          Post invoice
+        </Button>
+      </div>
+    </Modal>
+  )
+}
+
+function CancelDraftDialog({
+  invoiceId,
+  version,
+  onClose,
+  onDone,
+}: {
+  invoiceId: string
+  version: number
+  onClose: () => void
+  onDone: () => void
+}) {
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const submit = async () => {
+    setSubmitting(true)
+    setError(null)
+    try {
+      await cancelInvoice(invoiceId, { version })
+      onDone()
+    } catch (err) {
+      setError(receivablesErrorMessage(err))
+      setSubmitting(false)
+    }
+  }
+  return (
+    <Modal title="Cancel draft" onClose={onClose}>
+      <p>This cancels the draft. It will not appear on any ledger and cannot be recovered.</p>
+      {error && <Banner tone="danger">{error}</Banner>}
+      <div className="modal-foot">
+        <Button kind="secondary" onClick={onClose} type="button">
+          Keep draft
+        </Button>
+        <Button kind="danger" onClick={submit} busy={submitting}>
+          Cancel draft
+        </Button>
+      </div>
+    </Modal>
   )
 }

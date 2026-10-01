@@ -1,112 +1,91 @@
 'use client'
-import { useState } from 'react'
+/*
+ * /payments — M4-W2: real customer receipts (R1–R8), replacing the mock's combined
+ * Payment/Receipt voucher centre. docs/design/M3/ui-plan.md "payments-centre — receipt mode"
+ * (PO-approved): the mode switch is removed (no payables/vendor-payment API exists yet — out
+ * of this task's scope), there is no paid-to-account field (a receipt's `method` is CASH/BANK
+ * only, no specific GL account id on the schema) and no withholding tax field (no counterpart
+ * on CreateReceiptRequest). Allocation must leave exactly 0.0000 unallocated to post (R6's own
+ * validation; this screen mirrors it for a fast rejection, never decides it).
+ *
+ * The "Reports & Filters" card's controls were already decorative in the mock (none of
+ * cashTab/cashTypeFilter/cashDateFilter/cashNumberFilter ever filtered the table) — kept as
+ * inert UI for visual parity rather than wired to a reporting endpoint that does not exist.
+ * The KPI tiles' hardcoded cash-balance figures are replaced with "Not tracked yet" (same
+ * pattern as parties.tsx's Credit Limit tile) since no cash/bank ledger-balance endpoint is in
+ * this task's scope — CLAUDE.md forbids showing an invented number instead.
+ *
+ * Allocated/unallocated totals, suggested allocation and openInvoices come ONLY from R2
+ * (POST /api/receipts/preview) — never summed from the rows in this file.
+ */
+import { useEffect, useRef, useState } from 'react'
 import {
   ArrowDown,
-  ArrowUpRight,
   BarChart3,
-  CalendarDays,
   Check,
   ChevronDown,
   FileText,
   Filter,
   Landmark,
-  MoreHorizontal,
-  Plus,
-  Printer,
-  ReceiptText,
   Search,
-  Settings2,
   Upload,
-  UserRound,
   WalletCards,
 } from 'lucide-react'
-import type { Payment } from '@/mocks/api'
-import type { AppData } from '@/mocks/api'
-import { Badge, Button, Modal, Panel, Table } from '@finsoft/ui'
-import { money } from '@finsoft/ui'
+import { Badge, Banner, Button, Modal, Table, moneyFromString } from '@finsoft/ui'
+import { Money } from '@finsoft/validation'
+import { useNavigate } from '@/lib/router'
+import { useAuth } from '@/lib/api/auth-context'
+import { useIdempotencyKey } from '@/lib/api/idempotency-key'
+import { todayIso } from '@/lib/date/local-date'
+import { listCustomers } from '@/lib/api/customers-client'
+import type { CustomerListItem } from '@/lib/api/customers-client'
+import {
+  cancelReceipt,
+  createReceipt,
+  listReceipts,
+  postReceipt,
+  previewReceipt,
+  updateReceipt,
+} from '@/lib/api/receipts-client'
+import type { ReceiptListItem, ReceiptMethod, ReceiptPreview } from '@/lib/api/receipts-types'
+import { receivablesErrorMessage } from '@/lib/adapters/receivables-errors'
+import { searchTermFor } from '@/lib/adapters/party-search'
 
-export function PaymentsCentre({
-  data,
-  onAddPayment,
-  canCreate,
-}: {
-  data: AppData
-  onAddPayment: (p: Payment) => void
-  canCreate: boolean
-}) {
-  const [kind, setKind] = useState<'Receipt' | 'Payment'>('Receipt'),
-    [open, setOpen] = useState(false)
-  const [cashTab, setCashTab] = useState<'Reports' | 'Transaction History'>('Reports'),
-    [cashTypeFilter, setCashTypeFilter] = useState<'Payments' | 'Receipts' | 'All Transactions'>(
-      'Payments',
-    ),
-    [cashDateFilter, setCashDateFilter] = useState<'One (Date Wise)' | 'All (Date Wise)'>(
-      'One (Date Wise)',
-    ),
-    [cashNumberFilter, setCashNumberFilter] = useState<'One (Number Wise)' | 'All (Number Wise)'>(
-      'One (Number Wise)',
-    )
-  const [party, setParty] = useState(''),
-    [account, setAccount] = useState('Cash in Hand'),
-    [alloc, setAlloc] = useState<Record<string, number>>({}),
-    [wtax, setWtax] = useState(0)
-  const customers = [
-    ...new Set(
-      data.sales
-        .filter((s) => s.status === 'Credit' && s.customer !== 'Walk-in Customer')
-        .map((s) => s.customer),
-    ),
-  ]
-  const suppliers = [
-    ...new Set(data.purchases.filter((p) => p.status === 'Posted').map((p) => p.supplier)),
-  ]
-  const openDocs = party
-    ? kind === 'Receipt'
-      ? data.sales.filter((s) => s.customer === party && s.status === 'Credit')
-      : data.purchases.filter((p) => p.supplier === party && p.status === 'Posted')
-    : []
-  const allocated = Object.values(alloc).reduce((a, b) => a + (Number(b) || 0), 0)
-  const docTotal = openDocs.reduce((a, d) => a + d.amount, 0)
-  const start = (k: 'Receipt' | 'Payment') => {
-    setKind(k)
-    setParty(k === 'Receipt' ? (customers[0] ?? '') : (suppliers[0] ?? ''))
-    setAccount('Cash in Hand')
-    setWtax(0)
-    setAlloc({})
-    setOpen(true)
+export function PaymentsCentre() {
+  const { can } = useAuth()
+  const canReceive = can('payment.receive')
+  const [open, setOpen] = useState(false)
+  const [cashTab, setCashTab] = useState<'Reports' | 'Transaction History'>('Reports')
+  const [cashTypeFilter, setCashTypeFilter] = useState<
+    'Payments' | 'Receipts' | 'All Transactions'
+  >('Receipts')
+  const [cashDateFilter, setCashDateFilter] = useState<'One (Date Wise)' | 'All (Date Wise)'>(
+    'One (Date Wise)',
+  )
+  const [cashNumberFilter, setCashNumberFilter] = useState<
+    'One (Number Wise)' | 'All (Number Wise)'
+  >('One (Number Wise)')
+
+  // ---- recent receipts (R1) ---------------------------------------------
+  const [receipts, setReceipts] = useState<ReceiptListItem[]>([])
+  const [receiptsCursor, setReceiptsCursor] = useState<string | null>(null)
+  const [receiptsLoading, setReceiptsLoading] = useState(true)
+  const [receiptsError, setReceiptsError] = useState<string | null>(null)
+  const loadReceipts = (cursor?: string) => {
+    setReceiptsLoading(true)
+    setReceiptsError(null)
+    listReceipts({ limit: 10, cursor })
+      .then((page) => {
+        setReceipts((prev) => (cursor ? [...prev, ...page.items] : [...page.items]))
+        setReceiptsCursor(page.nextCursor)
+      })
+      .catch((err) => setReceiptsError(receivablesErrorMessage(err)))
+      .finally(() => setReceiptsLoading(false))
   }
-  const effectiveDoc = openDocs
-  const pickParty = (p: string) => {
-    setParty(p)
-    const docs =
-      kind === 'Receipt'
-        ? data.sales.filter((s) => s.customer === p && s.status === 'Credit')
-        : data.purchases.filter((x) => x.supplier === p && x.status === 'Posted')
-    const a: Record<string, number> = {}
-    docs.forEach((d) => (a[d.id] = d.amount))
-    setAlloc(a)
-  }
-  const save = () => {
-    if (!allocated) return alert('Allocate at least one invoice.')
-    const net = Math.max(0, allocated - (Number(wtax) || 0))
-    onAddPayment({
-      id: `${kind === 'Receipt' ? 'RCV' : 'PAY'}-${String(1000 + data.payments.length).slice(-4)}`,
-      date: '30 Aug 2026',
-      kind,
-      party,
-      account,
-      total: allocated,
-      wtax: Number(wtax) || 0,
-      net,
-      allocations: Object.entries(alloc)
-        .filter(([, v]) => Number(v) > 0)
-        .map(([ref, amount]) => ({ ref, amount: Number(amount) })),
-      status: 'Posted',
-      createdBy: 'Ahmed Raza',
-    })
-    setOpen(false)
-  }
-  const partyName = (n: string) => data.masters.find((m) => m.name === n)?.name ?? n
+  useEffect(() => {
+    loadReceipts()
+  }, [])
+
   return (
     <>
       <span className="sr-only">Payments &amp; receipts</span>
@@ -116,22 +95,14 @@ export function PaymentsCentre({
             <WalletCards />
           </span>
           <div>
-            <h1>Cash Transactions</h1>
-            <p>
-              Create cash receipts and payments, monitor activity, and access transaction records.
-            </p>
+            <h1>Receipts</h1>
+            <p>Record a customer receipt and allocate it against open invoices.</p>
           </div>
         </div>
         <div className="cash-head-actions">
-          <Button disabled={!canCreate} onClick={() => start('Payment')}>
-            <ArrowUpRight /> New Payment
+          <Button disabled={!canReceive} onClick={() => setOpen(true)}>
+            <ArrowDown /> New Receipt
           </Button>
-          <Button kind="secondary" disabled={!canCreate} onClick={() => start('Receipt')}>
-            <Plus /> New Receipt
-          </Button>
-          <button>
-            <Printer /> Print <ChevronDown />
-          </button>
         </div>
       </div>
       <div className="cash-kpis">
@@ -141,8 +112,8 @@ export function PaymentsCentre({
           </span>
           <div>
             <small>Opening Balance</small>
-            <b>Rs 125,000.00</b>
-            <em>As on 01 Apr 2024</em>
+            <b>—</b>
+            <em>Not tracked yet</em>
           </div>
         </article>
         <article>
@@ -150,22 +121,20 @@ export function PaymentsCentre({
             <ArrowDown />
           </span>
           <div>
-            <small>Total Receipts Today</small>
-            <b>Rs 12,500.00</b>
-            <em>3 transactions</em>
+            <small>Receipts Loaded</small>
+            <b>{receipts.length}</b>
+            <em>This page</em>
           </div>
-          <i className="cash-bars green" />
         </article>
         <article>
           <span>
-            <ArrowUpRight />
+            <WalletCards />
           </span>
           <div>
-            <small>Total Payments Today</small>
-            <b>Rs 8,750.00</b>
-            <em>2 transactions</em>
+            <small>Draft Receipts</small>
+            <b>{receipts.filter((r) => r.status === 'DRAFT').length}</b>
+            <em>This page</em>
           </div>
-          <i className="cash-bars red" />
         </article>
         <article>
           <span>
@@ -173,8 +142,8 @@ export function PaymentsCentre({
           </span>
           <div>
             <small>Closing Balance</small>
-            <b>Rs 128,750.00</b>
-            <em>As on 26 Apr 2024</em>
+            <b>—</b>
+            <em>Not tracked yet</em>
           </div>
         </article>
       </div>
@@ -184,101 +153,14 @@ export function PaymentsCentre({
             <h2>
               <FileText /> Create Transaction
             </h2>
-            <div className="cash-kind">
-              <button
-                type="button"
-                className={kind === 'Payment' ? 'active' : ''}
-                onClick={() => setKind('Payment')}
-              >
-                <ArrowUpRight /> Payment Voucher
-              </button>
-              <button
-                type="button"
-                className={kind === 'Receipt' ? 'active' : ''}
-                onClick={() => setKind('Receipt')}
-              >
-                <ArrowDown /> Receipt Voucher
-              </button>
-            </div>
-            <span className={kind === 'Payment' ? 'cash-outflow' : 'cash-inflow'}>
-              {kind === 'Payment' ? <ArrowUpRight /> : <ArrowDown />} Cash{' '}
-              {kind === 'Payment' ? 'Outflow' : 'Inflow'}
+            <span className="cash-inflow">
+              <ArrowDown /> Cash Inflow
             </span>
           </div>
-          <div className="cash-form-grid">
-            <label>
-              Voucher No. <b>*</b>
-              <div>
-                <input value="PV-2024-00026" readOnly />
-                <Settings2 />
-              </div>
-            </label>
-            <label>
-              Date <b>*</b>
-              <div>
-                <input value="26 Apr 2024" readOnly />
-                <CalendarDays />
-              </div>
-            </label>
-            <label>
-              Account (Cash Account) <b>*</b>
-              <div>
-                <Landmark />
-                <select value={account} onChange={(e) => setAccount(e.target.value)}>
-                  <option>Cash in Hand</option>
-                  <option>Meezan Bank — 8721</option>
-                </select>
-                <ChevronDown />
-              </div>
-            </label>
-            <label>
-              Amount <b>*</b>
-              <div>
-                <span>Rs</span>
-                <input placeholder="0.00" />
-              </div>
-            </label>
-            <label>
-              Paid To <b>*</b>
-              <div>
-                <UserRound />
-                <input placeholder="Select or enter payee" />
-                <ChevronDown />
-              </div>
-            </label>
-            <label>
-              Reference No.
-              <div>
-                <ReceiptText />
-                <input placeholder="Enter reference no." />
-              </div>
-            </label>
-            <label>
-              Category / Head <b>*</b>
-              <div>
-                <Settings2 />
-                <input placeholder="Select account head" />
-                <ChevronDown />
-              </div>
-            </label>
-            <label>
-              Remarks / Notes
-              <div>
-                <FileText />
-                <input placeholder="Enter remarks (optional)" />
-              </div>
-            </label>
-          </div>
-          <div className="cash-create-foot">
-            <button>
-              <Upload /> Attach File
-            </button>
-            <small>Max file size 5 MB (PDF, JPG, PNG)</small>
-            <Button kind="secondary">Clear</Button>
-            <Button onClick={() => start(kind)}>
-              <WalletCards /> Save {kind}
-            </Button>
-          </div>
+          <p>
+            Use <b>New Receipt</b> above to record and allocate a customer receipt against open
+            invoices.
+          </p>
         </section>
         <section className="cash-reports">
           <div className="cash-section-head">
@@ -344,14 +226,6 @@ export function PaymentsCentre({
                 All (Date Wise)
               </button>
             </div>
-            <label>
-              Date Range
-              <div>
-                <CalendarDays />
-                <input value="26 Apr 2024   –   26 Apr 2024" readOnly />
-                <ChevronDown />
-              </div>
-            </label>
           </div>
           <div className="cash-filter-card">
             <h3>
@@ -371,26 +245,12 @@ export function PaymentsCentre({
                 All (Number Wise)
               </button>
             </div>
-            <h4>
-              Voucher Number Range{' '}
-              <small>ⓘ Filter by voucher number range (can be combined with date range)</small>
-            </h4>
-            <div className="cash-range">
-              <label>
-                From No.
-                <input value="PV-2024-00001" readOnly />
-              </label>
-              <label>
-                To No.
-                <input value="PV-2024-00050" readOnly />
-              </label>
-            </div>
           </div>
           <div className="cash-report-actions">
-            <Button>
+            <Button disabled>
               <BarChart3 /> Generate Report
             </Button>
-            <button>
+            <button disabled>
               <Upload /> Export <ChevronDown />
             </button>
           </div>
@@ -400,233 +260,488 @@ export function PaymentsCentre({
         <div className="cash-recent-head">
           <div>
             <h2>
-              <ReceiptText /> Recent Cash Transactions
+              <FileText /> Recent Receipts
             </h2>
-            <p>Latest payment and receipt vouchers</p>
+            <p>Latest customer receipts</p>
           </div>
           <div>
             <label>
               <Search />
-              <input placeholder="Search transactions..." />
+              <input placeholder="Search transactions..." disabled />
             </label>
-            <button>
+            <button disabled>
               <Filter /> Filter
             </button>
-            <button>
-              <ArrowDown /> Sort: Date (Newest)
-              <ChevronDown />
+          </div>
+        </div>
+        {receiptsError && (
+          <Banner tone="danger">
+            {receiptsError}{' '}
+            <button className="linkable" onClick={() => loadReceipts()}>
+              Try again
+            </button>
+          </Banner>
+        )}
+        {!receiptsError && receiptsLoading && receipts.length === 0 && (
+          <div className="empty-state">Loading receipts…</div>
+        )}
+        {!receiptsError && !receiptsLoading && receipts.length === 0 && (
+          <div className="empty-state">No receipts yet. Record one with New Receipt above.</div>
+        )}
+        {receipts.length > 0 && <ReceiptsTable receipts={receipts} />}
+        {receiptsCursor && (
+          <div className="cash-pagination">
+            <button onClick={() => loadReceipts(receiptsCursor)} disabled={receiptsLoading}>
+              {receiptsLoading ? 'Loading…' : 'Load more'}
             </button>
           </div>
-        </div>
-        <Table
-          headers={[
-            '#',
-            'Voucher No.',
-            'Type',
-            'Date',
-            'Account Name',
-            'Counterparty',
-            'Amount',
-            'Status',
-            'Remarks',
-            '',
-          ]}
-          rows={[
-            [
-              '1',
-              'RV-2024-00018',
-              <Badge tone="good">↓ Receipt</Badge>,
-              '26 Apr 2024',
-              'Cash in Hand',
-              'Acme Corporation',
-              <b className="cash-green">Rs 5,000.00</b>,
-              <Badge tone="good">● Posted</Badge>,
-              'Sales collection',
-              <MoreHorizontal />,
-            ],
-            [
-              '2',
-              'PV-2024-00026',
-              <Badge tone="danger">↑ Payment</Badge>,
-              '26 Apr 2024',
-              'Cash in Hand',
-              'Office Supplies Mart',
-              <b className="cash-red">Rs 2,500.00</b>,
-              <Badge tone="good">● Posted</Badge>,
-              'Stationery purchase',
-              <MoreHorizontal />,
-            ],
-            [
-              '3',
-              'RV-2024-00017',
-              <Badge tone="good">↓ Receipt</Badge>,
-              '25 Apr 2024',
-              'Cash in Hand',
-              'Rakesh Traders',
-              <b className="cash-green">Rs 7,500.00</b>,
-              <Badge tone="good">● Posted</Badge>,
-              'Payment against invoice #RT-100',
-              <MoreHorizontal />,
-            ],
-            [
-              '4',
-              'PV-2024-00025',
-              <Badge tone="danger">↑ Payment</Badge>,
-              '25 Apr 2024',
-              'Cash in Hand',
-              'Electricity Board',
-              <b className="cash-red">Rs 6,250.00</b>,
-              <Badge tone="good">● Posted</Badge>,
-              'Electricity bill payment',
-              <MoreHorizontal />,
-            ],
-            [
-              '5',
-              'RV-2024-00016',
-              <Badge tone="good">↓ Receipt</Badge>,
-              '24 Apr 2024',
-              'Cash in Hand',
-              'Walk-in Customer',
-              <b className="cash-green">Rs 3,000.00</b>,
-              <Badge tone="good">● Posted</Badge>,
-              'Misc. income',
-              <MoreHorizontal />,
-            ],
-            ...data.payments.map((p) => [
-              p.id,
-              p.id,
-              <Badge tone={p.kind === 'Receipt' ? 'good' : 'danger'}>{p.kind}</Badge>,
-              p.date,
-              p.account,
-              partyName(p.party),
-              <b>{money(p.total)}</b>,
-              <Badge tone="good">● Posted</Badge>,
-              '',
-              <MoreHorizontal />,
-            ]),
-          ]}
-        />
-        <div className="cash-pagination">
-          <span>Showing 1 to 5 of 5 transactions</span>
-          <div>
-            <button>‹</button>
-            <button className="active">1</button>
-            <button>›</button>
-          </div>
-        </div>
+        )}
       </section>
       {open && (
-        <Modal
-          title={`New ${kind.toLowerCase()} — allocate against open invoices`}
+        <NewReceiptDialog
           onClose={() => setOpen(false)}
-          wide
+          onDone={() => {
+            setOpen(false)
+            loadReceipts()
+          }}
+        />
+      )}
+    </>
+  )
+}
+
+function ReceiptsTable({ receipts }: { receipts: ReceiptListItem[] }) {
+  const navigate = useNavigate()
+  return (
+    <Table
+      headers={['#', 'Receipt No.', 'Date', 'Customer', 'Method', 'Amount', 'Status']}
+      rows={receipts.map((r, i) => [
+        String(i + 1),
+        <button key="n" className="linkable" onClick={() => navigate(`/receipts/${r.id}`)}>
+          {r.number ?? 'Draft'}
+        </button>,
+        r.receiptDate,
+        `${r.customer.name} (${r.customer.code})`,
+        r.method ?? '—',
+        r.amount ? <b>{moneyFromString(r.amount)}</b> : '—',
+        <Badge
+          key="s"
+          tone={r.status === 'POSTED' ? 'good' : r.status === 'REVERSED' ? 'danger' : 'neutral'}
         >
-          <div className="mode-picker">
-            <button
-              className={kind === 'Receipt' ? 'active' : ''}
-              onClick={() => start('Receipt')}
-              type="button"
-            >
-              Receipt
-            </button>
-            <button
-              className={kind === 'Payment' ? 'active' : ''}
-              onClick={() => start('Payment')}
-              type="button"
-            >
-              Payment
-            </button>
-          </div>
-          <div className="form-grid">
-            <label>
-              Party{kind === 'Receipt' ? ' (customer)' : ' (supplier)'}
-              <select value={party} onChange={(e) => pickParty(e.target.value)}>
-                {(kind === 'Receipt' ? customers : suppliers).map((c) => (
-                  <option key={c}>{c}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Paid from / into
-              <select value={account} onChange={(e) => setAccount(e.target.value)}>
-                <option>Cash in Hand</option>
-                <option>Meezan Bank — 8721</option>
-                <option>HBL — 2294</option>
-              </select>
-            </label>
-          </div>
-          <Panel
-            title="Allocate against open documents"
-            sub={`${openDocs.length} open · ${docTotal ? money(docTotal) : '—'} total`}
+          {r.status}
+        </Badge>,
+      ])}
+    />
+  )
+}
+
+type AllocRow = { invoiceId: string; number: string; outstanding: string; amount: string }
+
+/** "Name (CODE)", with "— Inactive" appended for an inactive customer — the receipt picker's
+ * one sanctioned label, used both to render the datalist option and to resolve a typed/pasted
+ * selection back to a customer id, so the two can never drift apart. */
+function receiptCustomerLabel(c: CustomerListItem): string {
+  return `${c.name} (${c.code})${c.status === 'INACTIVE' ? ' — Inactive' : ''}`
+}
+
+function NewReceiptDialog({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+  const [customerId, setCustomerId] = useState<string | null>(null)
+  const [customerQuery, setCustomerQuery] = useState('')
+  const [customerOptions, setCustomerOptions] = useState<CustomerListItem[]>([])
+  const [receiptDate, setReceiptDate] = useState(todayIso())
+  const [method, setMethod] = useState<ReceiptMethod>('CASH')
+  const [amount, setAmount] = useState('')
+  const [reference, setReference] = useState('')
+  const [narration, setNarration] = useState('')
+  const [rows, setRows] = useState<AllocRow[]>([])
+  const [preview, setPreview] = useState<ReceiptPreview | null>(null)
+  const [previewPending, setPreviewPending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [receiptId, setReceiptId] = useState<string | null>(null)
+  const [version, setVersion] = useState<number | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const { key: createKey, reset: resetCreateKey } = useIdempotencyKey()
+  const { key: postKey, reset: resetPostKey } = useIdempotencyKey()
+  /*
+   * R2's own rule (modules/receivables/application/preview-receipt.ts): it only computes the
+   * oldest-first suggestion when `allocations` is OMITTED from the request entirely (null or
+   * undefined) — an explicit `[]` (meaning "the caller has an allocation plan, and it is
+   * empty") turns the suggestion off. Before the user has touched a row, send no `allocations`
+   * key at all so the first preview can suggest one; once they have (an edit, or accepting the
+   * suggestion), send their own rows from then on, even if they clear everything back to zero.
+   */
+  const [touched, setTouched] = useState(false)
+
+  // Debounced customer search (C1).
+  useEffect(() => {
+    const q = customerQuery.trim()
+    if (!q) {
+      setCustomerOptions([])
+      return
+    }
+    let active = true
+    const t = setTimeout(() => {
+      // Not filtered to ACTIVE (unlike the invoice picker on /sales/voucher, which creates new
+      // billing against a customer and stays ACTIVE-only): a receipt SETTLES a debt, and an
+      // inactive customer can still owe one. Ruling R-2 — excluding INACTIVE here would make an
+      // inactive customer's balance uncollectable through this screen.
+      listCustomers({ q: searchTermFor(q), limit: 8 })
+        .then((page) => {
+          if (!active) return
+          setCustomerOptions([...page.items])
+          // Same reasoning as sales-voucher.tsx: resolve an exact match that arrived after it
+          // was typed, instead of silently leaving customerId unset. The label it matches
+          // against is the plain "Name (CODE)" the datalist option's VALUE carries — the
+          // "(Inactive)" suffix is display-only (label below), not part of that value.
+          const exact = page.items.find((c) => receiptCustomerLabel(c) === q)
+          if (exact) setCustomerId(exact.id)
+        })
+        .catch(() => active && setCustomerOptions([]))
+    }, 300)
+    return () => {
+      active = false
+      clearTimeout(t)
+    }
+  }, [customerQuery])
+
+  const onCustomerQueryChange = (v: string) => {
+    setCustomerQuery(v)
+    const match = customerOptions.find((c) => receiptCustomerLabel(c) === v)
+    setCustomerId(match ? match.id : null)
+    setRows([])
+    setPreview(null)
+    setTouched(false)
+  }
+
+  // The request body's `allocations` — every row with a nonzero amount, invoiceId+amount only —
+  // but ONLY once the user has touched a row; while untouched it is the constant `''`
+  // regardless of how `rows` changes, so the effect's own response (which syncs `rows` to the
+  // server's suggested amounts) can never retrigger it. Without that gate, the very first
+  // suggestion sync would change this key once more (empty -> suggested), firing a second,
+  // redundant request that converges back to the same key — not an infinite loop, but a visible
+  // double round-trip that flickers the Post button's disabled state right as a user reaches
+  // for it (Accounting review, 034b005). Used both as the effect's dependency (a primitive
+  // string) and, via rowsRef below, as the value the effect sends — `rows` itself is NOT a
+  // dependency (Accounting review, 66019c0).
+  const activeAllocationsKey = touched
+    ? JSON.stringify(
+        rows
+          .filter((r) => r.amount.trim() !== '' && r.amount.trim() !== '0')
+          .map((r) => ({ invoiceId: r.invoiceId, amount: r.amount })),
+      )
+    : ''
+  const rowsRef = useRef(rows)
+  rowsRef.current = rows
+
+  // R2 — debounced preview: the only sanctioned source of openInvoices, allocatedTotal,
+  // unallocated and the oldest-first suggestion. Re-run on every customer/date/amount/row edit
+  // (activeAllocationsKey changes whenever an edited row's amount does — fixes the totals and
+  // the post-confirm figures going stale after an edit, Accounting review 66019c0).
+  useEffect(() => {
+    if (!customerId) {
+      setPreview(null)
+      return
+    }
+    let active = true
+    setPreviewPending(true)
+    const t = setTimeout(() => {
+      previewReceipt({
+        customerId,
+        receiptId: receiptId ?? undefined,
+        receiptDate,
+        amount: amount || undefined,
+        allocations: touched
+          ? rowsRef.current
+              .filter((r) => r.amount.trim() !== '' && r.amount.trim() !== '0')
+              .map((r) => ({ invoiceId: r.invoiceId, amount: r.amount }))
+          : undefined,
+      })
+        .then((p) => {
+          if (!active) return
+          setPreview(p)
+          setRows((prev) => {
+            const byId = new Map(prev.map((r) => [r.invoiceId, r]))
+            return p.openInvoices.map((inv) => {
+              const existing = byId.get(inv.invoiceId)
+              const suggested = p.allocations.find((a) => a.invoiceId === inv.invoiceId)
+              return {
+                invoiceId: inv.invoiceId,
+                number: inv.number,
+                outstanding: inv.outstanding,
+                amount: existing ? existing.amount : suggested ? suggested.amount : '',
+              }
+            })
+          })
+        })
+        .catch(() => active && setPreview(null))
+        .finally(() => active && setPreviewPending(false))
+    }, 350)
+    return () => {
+      active = false
+      clearTimeout(t)
+    }
+  }, [customerId, receiptDate, amount, activeAllocationsKey, receiptId, touched])
+
+  const setRowAmount = (invoiceId: string, value: string) => {
+    setTouched(true)
+    setRows((rs) => rs.map((r) => (r.invoiceId === invoiceId ? { ...r, amount: value } : r)))
+  }
+
+  const applySuggested = () => {
+    if (!preview) return
+    setTouched(true)
+    setRows((rs) =>
+      rs.map((r) => {
+        const s = preview.allocations.find((a) => a.invoiceId === r.invoiceId)
+        return s ? { ...r, amount: s.amount } : r
+      }),
+    )
+  }
+
+  const activeAllocations = () =>
+    rows
+      .filter((r) => r.amount.trim() !== '' && r.amount.trim() !== '0')
+      .map((r) => ({ invoiceId: r.invoiceId, amount: r.amount }))
+
+  async function ensureDraft(): Promise<{ id: string; version: number }> {
+    const body = {
+      customerId: customerId!,
+      receiptDate,
+      method,
+      amount: amount || null,
+      reference: reference || null,
+      narration: narration || null,
+      allocations: activeAllocations(),
+    }
+    if (!receiptId) {
+      const r = await createReceipt(body, createKey)
+      setReceiptId(r.id)
+      setVersion(r.version)
+      resetCreateKey()
+      return { id: r.id, version: r.version }
+    }
+    const r = await updateReceipt(receiptId, { ...body, version: version! })
+    setVersion(r.version)
+    return { id: receiptId, version: r.version }
+  }
+
+  const validate = (): string | null => {
+    if (!customerId) return 'Select a customer.'
+    if (!amount.trim()) return 'Enter the amount received.'
+    if (activeAllocations().length === 0) return 'Allocate at least one invoice.'
+    return null
+  }
+
+  const saveDraft = async () => {
+    const problem = validate()
+    if (problem) {
+      setError(problem)
+      return
+    }
+    setError(null)
+    setSubmitting(true)
+    try {
+      await ensureDraft()
+    } catch (err) {
+      setError(receivablesErrorMessage(err))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const openConfirm = () => {
+    const problem = validate()
+    if (problem) {
+      setError(problem)
+      return
+    }
+    setError(null)
+    setConfirmOpen(true)
+  }
+
+  const post = async () => {
+    setSubmitting(true)
+    try {
+      const draft = await ensureDraft()
+      await postReceipt(draft.id, { version: draft.version }, postKey)
+      resetPostKey()
+      setConfirmOpen(false)
+      onDone()
+    } catch (err) {
+      setConfirmOpen(false)
+      setError(receivablesErrorMessage(err))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const cancelDraft = async () => {
+    if (!receiptId || version === null) return
+    setSubmitting(true)
+    try {
+      await cancelReceipt(receiptId, { version })
+      onClose()
+    } catch (err) {
+      setError(receivablesErrorMessage(err))
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <Modal title="New receipt — allocate against open invoices" onClose={onClose} wide>
+      {error && <Banner tone="danger">{error}</Banner>}
+      <div className="form-grid">
+        <label>
+          Customer
+          <input
+            aria-label="Customer"
+            placeholder="Search customer by name or code…"
+            value={customerQuery}
+            onChange={(e) => onCustomerQueryChange(e.target.value)}
+            list="receipt-customers"
+          />
+          <datalist id="receipt-customers">
+            {customerOptions.map((c) => (
+              <option key={c.id} value={receiptCustomerLabel(c)} />
+            ))}
+          </datalist>
+        </label>
+        <label>
+          Receipt date
+          <input
+            type="date"
+            aria-label="Receipt date"
+            value={receiptDate}
+            onChange={(e) => setReceiptDate(e.target.value)}
+          />
+        </label>
+        <label>
+          Method
+          <select
+            aria-label="Method"
+            value={method}
+            onChange={(e) => setMethod(e.target.value as ReceiptMethod)}
           >
+            <option value="CASH">Cash</option>
+            <option value="BANK">Bank</option>
+          </select>
+        </label>
+        <label>
+          Amount received
+          <input
+            aria-label="Amount"
+            inputMode="decimal"
+            placeholder="0.0000"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+          />
+        </label>
+        <label>
+          Reference
+          <input
+            aria-label="Reference"
+            placeholder="Cheque / transfer reference (optional)"
+            value={reference}
+            onChange={(e) => setReference(e.target.value)}
+          />
+        </label>
+        <label>
+          Narration
+          <input
+            aria-label="Narration"
+            placeholder="Add narration (optional)"
+            value={narration}
+            onChange={(e) => setNarration(e.target.value)}
+          />
+        </label>
+      </div>
+      {customerId && (
+        <>
+          <div className="cash-section-head">
+            <h2>Allocate against open invoices</h2>
+            <button type="button" className="linkable" onClick={applySuggested} disabled={!preview}>
+              Use suggested allocation (oldest first)
+            </button>
+          </div>
+          {preview && preview.openInvoices.length === 0 && (
+            <div className="empty-state">This customer has no open invoices.</div>
+          )}
+          {rows.length > 0 && (
             <Table
-              headers={['Ref', 'Date', 'Party doc', 'Total', 'Allocate']}
-              rows={effectiveDoc.map((d) => {
-                const isSale = 'customer' in d
-                return [
-                  <b>{d.id}</b>,
-                  d.date,
-                  d.product ?? (isSale ? (d as { customer: string }).customer : ''),
-                  money(d.amount),
-                  <input
-                    aria-label={`Allocate ${d.id}`}
-                    style={{ width: 110 }}
-                    type="number"
-                    value={alloc[d.id] ?? 0}
-                    min="0"
-                    max={d.amount}
-                    onChange={(e) =>
-                      setAlloc((a) => ({
-                        ...a,
-                        [d.id]: Math.min(Number(e.target.value) || 0, d.amount),
-                      }))
-                    }
-                  />,
-                ]
-              })}
+              headers={['Invoice', 'Outstanding', 'Allocate']}
+              rows={rows.map((r) => [
+                <b key="n">{r.number}</b>,
+                moneyFromString(r.outstanding),
+                <input
+                  key="a"
+                  aria-label={`Allocate ${r.number}`}
+                  style={{ width: 110 }}
+                  inputMode="decimal"
+                  value={r.amount}
+                  onChange={(e) => setRowAmount(r.invoiceId, e.target.value)}
+                />,
+              ])}
             />
-          </Panel>
+          )}
           <div className="summary-strip">
             <span>
-              Allocated<b>{money(allocated)}</b>
+              Allocated
+              <b>
+                {preview ? moneyFromString(preview.allocatedTotal) : previewPending ? '…' : '—'}
+              </b>
             </span>
-            <label
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 4,
-                fontSize: 9,
-                color: '#64748B',
-              }}
-            >
-              WHT u/s 153(1)(b)
-              <input
-                type="number"
-                style={{
-                  height: 30,
-                  border: '1px solid #E4E9EF',
-                  borderRadius: 8,
-                  padding: '0 8px',
-                }}
-                value={wtax}
-                onChange={(e) => setWtax(Number(e.target.value))}
-              />
-            </label>
             <span>
-              Net {kind.toLowerCase()}
-              <b>{money(Math.max(0, allocated - (Number(wtax) || 0)))}</b>
+              Unallocated
+              <b>{preview ? moneyFromString(preview.unallocated) : previewPending ? '…' : '—'}</b>
             </span>
           </div>
+          {preview && preview.problems.length > 0 && (
+            <Banner tone="warn">{preview.problems.map((p) => p.code).join(', ')}</Banner>
+          )}
+        </>
+      )}
+      <div className="modal-foot">
+        <Button kind="secondary" onClick={onClose} type="button">
+          Close
+        </Button>
+        {receiptId && (
+          <Button kind="secondary" onClick={cancelDraft} busy={submitting} type="button">
+            Cancel draft
+          </Button>
+        )}
+        <Button kind="secondary" onClick={saveDraft} busy={submitting} type="button">
+          <FileText /> Save draft
+        </Button>
+        <Button onClick={openConfirm} busy={submitting} disabled={previewPending} type="button">
+          <Check /> Post receipt
+        </Button>
+      </div>
+      {confirmOpen && preview && (
+        <Modal title="Post receipt" onClose={() => setConfirmOpen(false)}>
+          <p>
+            This posts a receipt of <b>{moneyFromString(amount || '0')}</b> for this customer,
+            allocating <b>{moneyFromString(preview.allocatedTotal)}</b> against{' '}
+            {activeAllocations().length} invoice(s)
+            {!Money.isZero(Money.from(preview.unallocated)) && (
+              <>
+                {' '}
+                — <b>{moneyFromString(preview.unallocated)}</b> will remain unallocated, which the
+                server will refuse
+              </>
+            )}
+            . Posted receipts are immutable — they can only be corrected by reversal.
+          </p>
           <div className="modal-foot">
-            <Button kind="secondary" onClick={() => setOpen(false)}>
-              Cancel
+            <Button kind="secondary" onClick={() => setConfirmOpen(false)} type="button">
+              Back
             </Button>
-            <Button onClick={save}>
-              <Check /> Post {kind.toLowerCase()}
+            <Button onClick={post} busy={submitting}>
+              Post receipt
             </Button>
           </div>
         </Modal>
       )}
-    </>
+    </Modal>
   )
 }

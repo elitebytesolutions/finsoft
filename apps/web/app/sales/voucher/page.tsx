@@ -1,15 +1,11 @@
 'use client'
-/* Route /sales/voucher — generated from the prototype route table in
- * ui-prototype/src/App.tsx. The screen and its props are unchanged. */
+/*
+ * Route /sales/voucher — M4-W2: real API (I1–I8). Self-contained, same pattern as
+ * CustomerDetail/AccountLedger — no <Guard> (its own can('invoice.create') plus the server's
+ * 403 are the access control), no mock data/onAdd props.
+ */
 import { SalesVoucher } from '@/screens/sales-voucher'
-import { Guard } from '@/components/guard'
-import { useFinsoft } from '@/app-context'
 
 export default function Page() {
-  const f = useFinsoft()
-  return (
-    <Guard module="Sales & POS">
-      <SalesVoucher data={f.data} onAdd={f.addSale} />
-    </Guard>
-  )
+  return <SalesVoucher />
 }

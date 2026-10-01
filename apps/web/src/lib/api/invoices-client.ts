@@ -1,17 +1,8 @@
 /*
- * The M3-P invoices API — docs/design/M3/api-contract.md §2 "Invoices", §4.2. Built strictly
- * to the published contract, against NO running endpoint on this branch
- * (`feature/M3-P-receivables` is not merged into `develop` as of this lane — see this lane's
- * report). Every call goes through `apiFetch` (`client.ts`), same as every other client in
- * this directory — same-origin `/api` base, the shared 401-refresh-retry and 403 contract.
- *
- * NOT WIRED TO ANY SCREEN YET. `/sales/voucher`, `/sales/:id` and `/sales` stay on mock data
- * and the prototype banner (`shell.tsx`'s `API_BACKED_ROUTES` does not list them) until M3-P
- * merges — this lane's brief, §"Invoice and Receipt screens". Switching a screen on is meant
- * to be a small, mechanical change once that lands: adapt real `Invoice`/`InvoiceListItem`
- * into whatever shape the ported mock screen already reads (the same pattern
- * `apps/web/src/lib/adapters/customers.ts` used for customers), add the route to
- * `API_BACKED_ROUTES`, done.
+ * The M3-P invoices API — docs/design/M3/api-contract.md §2 "Invoices", §4.2.
+ * `modules/receivables` merged into `develop` (M4-W2) — every call here goes through
+ * `apiFetch` (`client.ts`), same as every other client in this directory — same-origin
+ * `/api` base, the shared 401-refresh-retry and 403 contract.
  */
 import { apiFetch } from './client'
 import type {

@@ -23,12 +23,11 @@ describe('Finsoft detail pages', () => {
     expect(screen.getByText('Ledger impact')).toBeInTheDocument()
   })
 
-  it('renders a sales invoice detail with ledger impact', () => {
-    renderAt('/sales/INV-26814')
-    expect(screen.getByText('Invoice INV-26814')).toBeInTheDocument()
-    expect(screen.getByText('Shifa Medical Centre')).toBeInTheDocument()
-    expect(screen.getByText('Sales Revenue')).toBeInTheDocument()
-  })
+  // "renders a sales invoice detail with ledger impact" was removed here — M4-W2 wired
+  // /sales/:id to the real invoices API (GET /api/invoices/:id), so it no longer renders
+  // synchronously from mock data and this harness does not stub `fetch`. Covered instead by
+  // sale-detail.test.tsx, which mocks `fetch` directly (matching trial-balance.test.tsx's
+  // approach).
 
   it('renders a product detail page with batch ledger', () => {
     renderAt('/products/MED-1002')
@@ -44,10 +43,8 @@ describe('Finsoft detail pages', () => {
     expect(screen.getByText('PUR-2026-0184')).toBeInTheDocument()
   })
 
-  it('shows a friendly not-found state for unknown records', () => {
-    renderAt('/sales/INV-99999')
-    expect(screen.getByText('Record not found')).toBeInTheDocument()
-  })
+  // "shows a friendly not-found state for unknown records" (/sales/INV-99999) was removed here
+  // for the same reason — covered by sale-detail.test.tsx instead.
 
   it('enforces role guards on detail routes', () => {
     localStorage.setItem('finsoft-role', 'Salesman')
@@ -186,13 +183,10 @@ describe('Finsoft detail pages', () => {
     expect(screen.getByText(/trial balance is balanced/)).toBeInTheDocument()
   })
 
-  it('renders payments & receipts with open invoice allocation', () => {
-    renderAt('/payments')
-    expect(screen.getByText('Payments & receipts')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /new receipt/i }))
-    expect(screen.getByRole('dialog', { name: /new receipt/i })).toBeInTheDocument()
-    expect(screen.getByText(/Allocate against open documents/)).toBeInTheDocument()
-  })
+  // "renders payments & receipts with open invoice allocation" was removed here — M4-W2 wired
+  // /payments to the real receipts API (GET/POST /api/receipts, POST /api/receipts/preview),
+  // so it no longer renders synchronously from mock data. Covered instead by
+  // payments-centre.test.tsx, which mocks `fetch` directly.
 
   it('renders purchase orders register', () => {
     renderAt('/po')

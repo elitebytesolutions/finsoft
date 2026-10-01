@@ -7,7 +7,51 @@
 | **Module / permission** | Sales & POS · `Sales & POS` · `sale:create` |
 | **Prototype source** | `ui-prototype/src/sales-voucher.tsx` (`SalesVoucher`) |
 | **Reference frame** | `ui-prototype/design/sales voucher page .png` |
-| **Posts to the ledger** | **yes** — revenue, receivable/cash, tax, COGS and stock |
+| **Posts to the ledger** | **yes** — revenue, receivable/cash, tax, COGS and stock (Service mode); **no** (Product mode — prototype only) |
+
+## API note — M4-W2 (2026-10-01)
+
+**PO decision, 2026-10-01: this screen has two modes behind a Service/Product switch**, a
+segmented control (`.mode-picker.lg`, `packages/ui/src/styles/kit.css`) in the page header.
+Service is the default.
+
+**Service mode is live.** `apps/web/src/screens/sales-voucher.tsx`'s `ServiceSalesVoucher`
+posts real service-line invoices against `modules/receivables` (I1–I8,
+`docs/design/M3/api-contract.md` §4.2). The product/batch/GST sale this doc otherwise describes
+has no counterpart in the real invoice contract (a line is `{description, quantity, unitPrice}`
+only — `packages/shared-types/src/receivables.ts`), so Service mode's actual anatomy is a
+service-line grid (#, Description, Qty, Rate, Net amount) in place of §2's item table, and drops
+the Fulfillment & Sales Team card and the Sale No/PO No/PO Date/Bill Book No doc-number strip
+entries (no schema field for any of them). Due date and Narration, real fields the mock never
+had, were added to the customer card.
+
+Money discipline: every line net amount and the invoice total come from I6
+(`POST /api/invoices/calculate`), debounced on every edit, **sent over complete lines only** —
+an incomplete line used to be padded with `'0'` defaults and included anyway, which could total
+differently from what Post actually sends (`validLines`). Save & Post stays disabled while a
+calculation is still in flight. The post-confirm dialog quotes the **saved draft's own
+server-computed `netAmount`** (I2/I4's response), never a parallel `/calculate` figure — `openPost`
+saves (or re-saves) the draft first, then opens the dialog with that draft's id/version/netAmount,
+so the dialog can never show a number different from what gets posted.
+
+The customer picker is a debounced search (C1, capped at 8 results) resolving on an exact
+"Name (CODE)" match — **ACTIVE customers only**, unlike the receipt picker on `/payments`, which
+also includes INACTIVE ones (a receipt settles a debt an inactive customer can still owe; a new
+invoice does not get raised against one).
+
+Permissions: `invoice.create` gates the page (and Save Draft/Cancel/line edits); `invoice.post`
+gates Save & Post — UI affordance only, the controllers' own `@RequirePermission` is the real
+gate. Errors route through `apps/web/src/lib/adapters/receivables-errors.ts`'s shared mapper.
+
+**Product mode is the original prototype, unchanged, and permanently disconnected.** Restored
+verbatim from before this branch (`git show 65efbba:apps/web/src/screens/sales-voucher.tsx`) as
+`ProductSalesVoucher` — every field, panel, button and calculation display this doc's §2–§8
+describe. It shows the "Prototype — not connected to the ledger" banner unconditionally (the
+route is API-backed now via Service mode, so the shell's own automatic per-route banner no
+longer fires for it) and never posts: Save Draft and Save & Post are permanently `disabled` with
+`title="Coming with inventory and tax (Waves 5–9)"`. The fabricated `INV-…` number this doc's
+mock once showed is gone — "Assigned on posting" in its place, since this mode has never created
+a real invoice and must not claim one.
 
 ## 1. Purpose
 

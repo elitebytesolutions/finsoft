@@ -180,6 +180,10 @@ const API_BACKED_ROUTES: string[] = [
   '/customers',
   '/customers/*',
   '/admin-audit',
+  // M4-W2 — the invoice detail/edit and receipt screens; the /sales list itself is still mock
+  '/sales/*',
+  '/receipts',
+  '/receipts/*',
 ]
 
 function isApiBackedRoute(path: string): boolean {
