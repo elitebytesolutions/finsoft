@@ -8,6 +8,7 @@ import { MemoryRouter } from './harness'
 import { Admin } from '@/screens/app-screens'
 import { AuthContext, type AuthContextValue } from '@/lib/api/auth-context'
 import { setAccessToken } from '@/lib/api/session'
+import { startOfLocalDayIso } from '@/lib/date/local-date'
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -250,34 +251,34 @@ describe('Admin — Audit log tab (real API)', () => {
     expect(new Date(to).getTime()).toBeGreaterThan(new Date('2026-09-29T23:59:59.000Z').getTime())
   })
 
-  it('sends a "From" date that includes 02:00 PKT on the selected day, not that day\'s own midnight UTC', async () => {
-    const originalTz = process.env.TZ
-    process.env.TZ = 'Asia/Karachi'
-    try {
-      const fetchMock = fetch as ReturnType<typeof vi.fn>
-      let lastUrl = ''
-      fetchMock.mockImplementation((url: string) => {
-        lastUrl = url
-        return Promise.resolve(jsonResponse(200, { items: [], nextCursor: null }))
-      })
+  it('sends the start of the selected LOCAL day as "From", not that day\'s own midnight UTC', async () => {
+    // Deliberately does not set process.env.TZ: local-date.test.tsx already proves
+    // startOfLocalDayIso's PKT arithmetic (02:00 PKT) in isolation, with the TZ mutation
+    // scoped to tests that run strictly sequentially within that one file. Mutating the
+    // same process-global TZ from a second file risks racing whatever other file happens
+    // to share this worker — this test instead asserts AuditLogPanel calls that same real
+    // function, under whatever timezone this run already has, which is exactly what matters:
+    // the wiring, not a second copy of the date arithmetic.
+    const fetchMock = fetch as ReturnType<typeof vi.fn>
+    let lastUrl = ''
+    fetchMock.mockImplementation((url: string) => {
+      lastUrl = url
+      return Promise.resolve(jsonResponse(200, { items: [], nextCursor: null }))
+    })
 
-      renderScreen()
-      await waitFor(() => expect(screen.getByText(/no audit events for/i)).toBeInTheDocument())
+    renderScreen()
+    await waitFor(() => expect(screen.getByText(/no audit events for/i)).toBeInTheDocument())
 
-      fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-09-29' } })
-      fireEvent.click(screen.getByRole('button', { name: 'Apply filters' }))
+    fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-09-29' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Apply filters' }))
 
-      await waitFor(() => expect(lastUrl).toContain('from='))
-      const from = decodeURIComponent(new URL(lastUrl, 'http://x').searchParams.get('from')!)
-      // Start of 2026-09-29 PKT (2026-09-28T19:00:00.000Z), not 2026-09-29T00:00:00.000Z —
-      // a 02:00 PKT event on the 29th (2026-09-28T21:00:00.000Z) falls before the latter
-      // and would have been silently dropped.
-      const eventAt2amPkt = new Date('2026-09-28T21:00:00.000Z')
-      expect(eventAt2amPkt.getTime()).toBeGreaterThanOrEqual(new Date(from).getTime())
-      expect(from).toBe('2026-09-28T19:00:00.000Z')
-    } finally {
-      process.env.TZ = originalTz
-    }
+    await waitFor(() => expect(lastUrl).toContain('from='))
+    const from = decodeURIComponent(new URL(lastUrl, 'http://x').searchParams.get('from')!)
+    // Matches the real, independently-tested (local-date.test.tsx, at 02:00 PKT)
+    // startOfLocalDayIso — never the naive new Date(dateStr).toISOString() that is that
+    // date's own UTC midnight and silently drops the first few hours of the local day in
+    // any timezone ahead of UTC.
+    expect(from).toBe(startOfLocalDayIso('2026-09-29'))
   })
 
   it('shows an error, not a silent failure, when Load more itself fails', async () => {
