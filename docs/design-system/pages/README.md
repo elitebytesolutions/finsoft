@@ -62,6 +62,7 @@ Archetype codes: **A** Register · **B** Document entry · **C** Document detail
 | Accounts receivable | `/receivables` | A | [receivables](receivables/) |
 | Accounts payable | `/payables` | A | [payables](payables/) |
 | Payments & receipts | `/payments` | B | [payments-centre](payments-centre/) |
+| Receipt detail | `/receipts/:id` | C | [receipt-detail](receipt-detail/) |
 | Credit limits & terms | `/credit-limits` | A | [credit-limits](credit-limits/) |
 
 ## Sales & distribution
