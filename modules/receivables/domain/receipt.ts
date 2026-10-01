@@ -249,7 +249,18 @@ export function buildCustomerPaymentPayload(
     customerId,
     method: complete.method,
     amount: complete.amount,
-    allocations: complete.allocations.map((a) => ({ invoiceId: a.invoiceId, amount: a.amount })),
+    // A2 (Accounting seat, second Council re-check of 2a02731): the ORIGINAL
+    // post builds `complete.allocations` from `currentProposals` (sorted by
+    // invoice_id) and a REPLAY rebuilds it from `allocationsOf` (sorted by
+    // invoice_date, receipts.repository.ts). Both feed this same function,
+    // whose OUTPUT is what computeRequestFingerprint hashes — so the sort
+    // belongs HERE, once, on the payload itself, rather than trusting two
+    // different repository queries to agree on an order neither one is
+    // documented to guarantee. A genuine retry must fingerprint identically
+    // no matter which query supplied its rows.
+    allocations: [...complete.allocations]
+      .sort((a, b) => a.invoiceId.localeCompare(b.invoiceId))
+      .map((a) => ({ invoiceId: a.invoiceId, amount: a.amount })),
   }
 }
 

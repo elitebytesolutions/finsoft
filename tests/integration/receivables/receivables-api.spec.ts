@@ -798,6 +798,76 @@ describe('audit', () => {
   })
 })
 
+describe('K4 (second Council re-check of 2a02731, Architecture+Accounting): sourceNumber only for document source types', () => {
+  it("a journal voucher's user-typed reference never surfaces as sourceNumber, even when it LOOKS like a document number; a posted invoice's own INV number does", async () => {
+    const customer = await createCustomer(app, alpha)
+    const invoice = await createPostedInvoice(app, alpha, customer.id)
+
+    const accounts = await runAs({ tenantId: alpha.tenantId, userId: alpha.ownerId }, () =>
+      withTenant((tx) =>
+        tx
+          .selectFrom('accounts')
+          .select(['id', 'code'])
+          .where('tenant_id', '=', alpha.tenantId)
+          .where('code', 'in', ['1120', '3100'])
+          .execute(),
+      ),
+    )
+    const bankId = accounts.find((a) => a.code === '1120')?.id as string
+    const capitalId = accounts.find((a) => a.code === '3100')?.id as string
+
+    // The reference is deliberately shaped LIKE a document number — proving
+    // the gate is on `source_type`, not on the string's own shape.
+    const jv = await request(app.getHttpServer())
+      .post('/api/journals')
+      .set(asOwner(alpha))
+      .set('Idempotency-Key', idemKey('k4-jv'))
+      .send({
+        occurredAt: '2026-09-05',
+        narration: 'test: K4 — a JV reference must never leak into sourceNumber',
+        reference: 'INV-LOOKS-LIKE-A-DOCUMENT-NUMBER',
+        lines: [
+          { accountId: bankId, debit: '1000.0000' },
+          { accountId: capitalId, credit: '1000.0000' },
+        ],
+      })
+      .expect(200)
+
+    const bankLedger = await request(app.getHttpServer())
+      .get(`/api/ledgers/${bankId}`)
+      .set(asOwner(alpha))
+      .query({ from: '2026-09-05', to: '2026-09-05' })
+      .expect(200)
+
+    const jvLine = (
+      bankLedger.body.lines as readonly {
+        sourceType: string
+        sourceId: string
+        sourceNumber: string | null
+      }[]
+    )
+      // A JV's own `source_id` is a synthetic id distinct from its entry id
+      // (`jv.body.id`) — `jv.body.sourceId` is the one that matches a
+      // ledger line's `sourceId`.
+      .find((l) => l.sourceType === 'journal_voucher' && l.sourceId === jv.body.sourceId)
+    expect(jvLine).toBeDefined()
+    expect(jvLine?.sourceNumber).toBeNull()
+
+    const customerLedger = await request(app.getHttpServer())
+      .get(`/api/customers/${customer.id}/ledger`)
+      .set(asOwner(alpha))
+      .expect(200)
+    const invoiceLine = (
+      customerLedger.body.lines as readonly {
+        sourceType: string
+        sourceId: string
+        sourceNumber: string
+      }[]
+    ).find((l) => l.sourceType === 'sales_invoice' && l.sourceId === invoice.id)
+    expect(invoiceLine?.sourceNumber).toBe(invoice.number)
+  })
+})
+
 describe('S-D (Security seat, Council review of efb7e3f): receipt isolation, allocation validation, idempotency-key shape', () => {
   it("returns the identical 404 body for an unknown receipt id and another tenant's receipt id", async () => {
     const customer = await createCustomer(app, alpha)
@@ -1002,15 +1072,48 @@ describe('receipt RBAC', () => {
   })
 })
 
-describe('A2 (Accounting seat, Council review of efb7e3f): multi-allocation receipt replay', () => {
-  it('replays a two-invoice receipt post idempotently, both while POSTED and after REVERSED', async () => {
+describe('A2 (Accounting seat, second Council re-check of 2a02731): multi-allocation receipt replay', () => {
+  it('replays a two-invoice receipt post idempotently, both while POSTED and after REVERSED, when id-order and date-order DISAGREE', async () => {
     const customer = await createCustomer(app, alpha)
-    const invoice1 = await createPostedInvoice(app, alpha, customer.id, [
-      { description: 'A', quantity: '1.000000', unitPrice: '4000.000000' },
-    ])
-    const invoice2 = await createPostedInvoice(app, alpha, customer.id, [
-      { description: 'B', quantity: '1.000000', unitPrice: '6000.000000' },
-    ])
+
+    // The original post builds its payload from `currentProposals` (sorted
+    // by invoice_id); a replay rebuilds it from `allocationsOf` (sorted by
+    // invoice_date). Both now funnel through `buildCustomerPaymentPayload`'s
+    // own invoiceId sort, so they must fingerprint identically regardless —
+    // but that is only a REAL test when id-order and date-order actually
+    // disagree. Invoice ids are random UUIDs, independent of invoice_date,
+    // so retry until the LATER-dated invoice has the SMALLER id: a case the
+    // single-date version of this test (same day for both) could not catch,
+    // since date-order and request-order coincided there by construction.
+    let invoice1!: Record<string, unknown> // earlier date (2026-09-01), LARGER id
+    let invoice2!: Record<string, unknown> // later date (2026-09-10), SMALLER id
+    for (let attempt = 1; ; attempt++) {
+      const earlier = await createPostedInvoice(
+        app,
+        alpha,
+        customer.id,
+        [{ description: 'A', quantity: '1.000000', unitPrice: '4000.000000' }],
+        '2026-09-01',
+      )
+      const later = await createPostedInvoice(
+        app,
+        alpha,
+        customer.id,
+        [{ description: 'B', quantity: '1.000000', unitPrice: '6000.000000' }],
+        '2026-09-10',
+      )
+      if ((later.id as string) < (earlier.id as string)) {
+        invoice1 = earlier
+        invoice2 = later
+        break
+      }
+      if (attempt >= 20) {
+        throw new Error(
+          'could not find a later-dated invoice with a smaller id in 20 attempts — ' +
+            'astronomically unlikely by chance; check UUID generation before suspecting this test.',
+        )
+      }
+    }
 
     const draft = await request(app.getHttpServer())
       .post('/api/receipts')

@@ -52,7 +52,12 @@ export interface CustomerLedgerLine {
   readonly entryNumber: string
   readonly sourceType: 'sales_invoice' | 'customer_receipt' | 'journal_voucher' | null
   readonly sourceId: string | null
-  /** INV-… / RCT-… (K4). Null for a journal voucher, which has no source document number of its own. */
+  /**
+   * INV-… / RCT-… (K4) — null for a journal voucher (whose `reference` is
+   * free text the user typed, not a document number) and for any other
+   * `sourceType` not on a document-type allow-list
+   * (`packages/database`'s `REFERENCE_IS_A_DOCUMENT_NUMBER_FOR`).
+   */
   readonly sourceNumber: string | null
   readonly narration: string
   readonly debit: string
