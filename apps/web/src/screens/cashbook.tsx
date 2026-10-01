@@ -585,16 +585,16 @@ function CashLedger({
           No cash movements between {from} and {to}.
         </div>
       ) : (
-        <div className="table-wrap">
+        <div className="table-wrap al-table">
           <table>
             <thead>
               <tr>
                 <th>Date</th>
-                <th>Voucher No.</th>
+                <th>Voucher</th>
                 <th>Particulars</th>
                 <th className="num">Receipt (Rs)</th>
                 <th className="num">Payment (Rs)</th>
-                <th className="num">Balance (Rs)</th>
+                <th className="num">Balance</th>
                 <th>Status</th>
               </tr>
             </thead>
@@ -603,19 +603,25 @@ function CashLedger({
                 const running = formatRunningBalance(line.runningBalance)
                 return (
                   <tr key={line.lineId}>
-                    <td>{line.occurredAt}</td>
-                    <td>{line.entryNumber}</td>
-                    <td>{line.narration}</td>
-                    <td className="num money-debit">
-                      {moneyFromString(line.debit, { zeroAsDash: true })}
+                    <td className="date">{line.occurredAt}</td>
+                    <td>
+                      <span className="al-ref">{line.entryNumber}</span>
                     </td>
-                    <td className="num money-credit">
+                    <td className="part">
+                      <b>{line.narration}</b>
+                    </td>
+                    <td className="num dr">{moneyFromString(line.debit, { zeroAsDash: true })}</td>
+                    <td className="num cr">
                       {moneyFromString(line.credit, { zeroAsDash: true })}
                     </td>
-                    <td className="num">
+                    <td className="num bal">
                       {running.amount} <small>{running.side}</small>
                     </td>
-                    <td>{line.entryStatus === 'REVERSED' ? 'Reversed' : 'Posted'}</td>
+                    <td>
+                      <span className={`al-type ${line.entryStatus === 'REVERSED' ? 'payment' : 'sales'}`}>
+                        {line.entryStatus === 'REVERSED' ? 'Reversed' : 'Posted'}
+                      </span>
+                    </td>
                   </tr>
                 )
               })}
