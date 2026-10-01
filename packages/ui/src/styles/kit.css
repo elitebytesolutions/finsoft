@@ -1120,6 +1120,11 @@ main{min-width:0;padding-bottom:72px}.topbar{margin:14px 22px 0;height:72px;back
 .vn-types small{font-size:12px;color:#556B60}
 .vn-types button.active{background:#E8F5EC;border-color:#3FA46B;box-shadow:0 0 0 2px rgba(63,164,107,.18)}
 .vn-types button.active svg,.vn-types button.active b{color:#12833F}.vn-types button.active small{color:#2E7D4E}
+/* Only Journal posts in M2 (journal-voucher.md §1) — the other five preset cards stay visible
+ * (never deleted) but disabled; this is the only one of the pre-existing "coming soon" controls
+ * in this file that had no :disabled treatment at all, so a disabled preset card looked exactly
+ * like a clickable one. M2-UI restoration, coordinator review. */
+.vn-types button:disabled{opacity:.45;cursor:not-allowed}
 
 .vn-card{background:#fff;border:1px solid #E1E9E4;border-radius:12px;padding:16px 20px 20px;margin-bottom:16px}
 .vn-card-head{display:flex;align-items:center;gap:14px;margin-bottom:16px}
