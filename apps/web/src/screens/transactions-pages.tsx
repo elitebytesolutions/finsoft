@@ -337,6 +337,13 @@ function ReceiptsTable({ receipts }: { receipts: ReceiptListItem[] }) {
 
 type AllocRow = { invoiceId: string; number: string; outstanding: string; amount: string }
 
+/** "Name (CODE)", with "— Inactive" appended for an inactive customer — the receipt picker's
+ * one sanctioned label, used both to render the datalist option and to resolve a typed/pasted
+ * selection back to a customer id, so the two can never drift apart. */
+function receiptCustomerLabel(c: CustomerListItem): string {
+  return `${c.name} (${c.code})${c.status === 'INACTIVE' ? ' — Inactive' : ''}`
+}
+
 function NewReceiptDialog({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
   const [customerId, setCustomerId] = useState<string | null>(null)
   const [customerQuery, setCustomerQuery] = useState('')
@@ -374,13 +381,19 @@ function NewReceiptDialog({ onClose, onDone }: { onClose: () => void; onDone: ()
     }
     let active = true
     const t = setTimeout(() => {
-      listCustomers({ q: searchTermFor(q), status: 'ACTIVE', limit: 8 })
+      // Not filtered to ACTIVE (unlike the invoice picker on /sales/voucher, which creates new
+      // billing against a customer and stays ACTIVE-only): a receipt SETTLES a debt, and an
+      // inactive customer can still owe one. Ruling R-2 — excluding INACTIVE here would make an
+      // inactive customer's balance uncollectable through this screen.
+      listCustomers({ q: searchTermFor(q), limit: 8 })
         .then((page) => {
           if (!active) return
           setCustomerOptions([...page.items])
           // Same reasoning as sales-voucher.tsx: resolve an exact match that arrived after it
-          // was typed, instead of silently leaving customerId unset.
-          const exact = page.items.find((c) => `${c.name} (${c.code})` === q)
+          // was typed, instead of silently leaving customerId unset. The label it matches
+          // against is the plain "Name (CODE)" the datalist option's VALUE carries — the
+          // "(Inactive)" suffix is display-only (label below), not part of that value.
+          const exact = page.items.find((c) => receiptCustomerLabel(c) === q)
           if (exact) setCustomerId(exact.id)
         })
         .catch(() => active && setCustomerOptions([]))
@@ -393,15 +406,31 @@ function NewReceiptDialog({ onClose, onDone }: { onClose: () => void; onDone: ()
 
   const onCustomerQueryChange = (v: string) => {
     setCustomerQuery(v)
-    const match = customerOptions.find((c) => `${c.name} (${c.code})` === v)
+    const match = customerOptions.find((c) => receiptCustomerLabel(c) === v)
     setCustomerId(match ? match.id : null)
     setRows([])
     setPreview(null)
     touchedRef.current = false
   }
 
+  // The request body's `allocations` — every row with a nonzero amount, invoiceId+amount only.
+  // Used both as the effect's dependency (a primitive string, so it only changes when an
+  // amount actually changes) and, via rowsRef below, as the value the effect sends — `rows`
+  // itself is NOT a dependency: the effect's own response handler calls setRows, which would
+  // otherwise make the effect re-trigger itself on every response, forever (Accounting review,
+  // 66019c0).
+  const activeAllocationsKey = JSON.stringify(
+    rows
+      .filter((r) => r.amount.trim() !== '' && r.amount.trim() !== '0')
+      .map((r) => ({ invoiceId: r.invoiceId, amount: r.amount })),
+  )
+  const rowsRef = useRef(rows)
+  rowsRef.current = rows
+
   // R2 — debounced preview: the only sanctioned source of openInvoices, allocatedTotal,
-  // unallocated and the oldest-first suggestion. Re-run on every customer/date/amount/row edit.
+  // unallocated and the oldest-first suggestion. Re-run on every customer/date/amount/row edit
+  // (activeAllocationsKey changes whenever an edited row's amount does — fixes the totals and
+  // the post-confirm figures going stale after an edit, Accounting review 66019c0).
   useEffect(() => {
     if (!customerId) {
       setPreview(null)
@@ -416,7 +445,7 @@ function NewReceiptDialog({ onClose, onDone }: { onClose: () => void; onDone: ()
         receiptDate,
         amount: amount || undefined,
         allocations: touchedRef.current
-          ? rows
+          ? rowsRef.current
               .filter((r) => r.amount.trim() !== '' && r.amount.trim() !== '0')
               .map((r) => ({ invoiceId: r.invoiceId, amount: r.amount }))
           : undefined,
@@ -445,8 +474,7 @@ function NewReceiptDialog({ onClose, onDone }: { onClose: () => void; onDone: ()
       active = false
       clearTimeout(t)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [customerId, receiptDate, amount])
+  }, [customerId, receiptDate, amount, activeAllocationsKey, receiptId])
 
   const setRowAmount = (invoiceId: string, value: string) => {
     touchedRef.current = true
@@ -569,7 +597,7 @@ function NewReceiptDialog({ onClose, onDone }: { onClose: () => void; onDone: ()
           />
           <datalist id="receipt-customers">
             {customerOptions.map((c) => (
-              <option key={c.id} value={`${c.name} (${c.code})`} />
+              <option key={c.id} value={receiptCustomerLabel(c)} />
             ))}
           </datalist>
         </label>

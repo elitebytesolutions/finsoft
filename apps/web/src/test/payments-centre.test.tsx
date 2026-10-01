@@ -212,6 +212,100 @@ describe('PaymentsCentre', () => {
     })
   })
 
+  it('editing an allocation refreshes the Allocated/Unallocated totals (not stale)', async () => {
+    const fetchMock = fetch as ReturnType<typeof vi.fn>
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (url.startsWith('/api/receipts/preview') && init?.method === 'POST') {
+        const body = JSON.parse(init.body as string) as { allocations?: unknown[] }
+        // Echo back a preview whose totals actually reflect what was asked for — the UI must
+        // show whichever response arrives LAST, not the first one it ever saw (regression:
+        // the preview effect was missing `rows` from its dependencies, so an edited row never
+        // triggered a fresh request at all — Accounting review, 66019c0).
+        const edited = (body.allocations?.[0] as { amount?: string } | undefined)?.amount
+        return Promise.resolve(
+          jsonResponse(
+            200,
+            preview(
+              edited === '4000' ? { allocatedTotal: '4000.0000', unallocated: '2000.0000' } : {},
+            ),
+          ),
+        )
+      }
+      return baseRouter()(url, init)
+    })
+
+    renderScreen()
+    fireEvent.click(await screen.findByRole('button', { name: /new receipt/i }))
+    const dialog = screen.getByRole('dialog', { name: /new receipt/i })
+    fireEvent.change(within(dialog).getByLabelText('Customer'), {
+      target: { value: 'Shifa Medical Centre (CUST-000001)' },
+    })
+    fireEvent.change(within(dialog).getByLabelText('Amount'), { target: { value: '6000' } })
+    await waitFor(() => expect(within(dialog).getByText('Rs 6,000.00')).toBeInTheDocument())
+
+    fireEvent.change(within(dialog).getByLabelText('Allocate INV-000001'), {
+      target: { value: '4000' },
+    })
+
+    await waitFor(() => expect(within(dialog).getByText('Rs 4,000.00')).toBeInTheDocument())
+    expect(within(dialog).getByText('Rs 2,000.00')).toBeInTheDocument() // Unallocated, refreshed
+  })
+
+  it('includes INACTIVE customers in the receipt picker, marked Inactive', async () => {
+    const fetchMock = fetch as ReturnType<typeof vi.fn>
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (url.startsWith('/api/customers')) {
+        const q = new URL(url, 'http://localhost').searchParams
+        // Ruling R-2: a receipt settles a debt an inactive customer can still owe — unlike the
+        // invoice picker (sales-voucher.tsx), this search must NOT filter to ACTIVE.
+        expect(q.get('status')).toBeNull()
+        return Promise.resolve(
+          jsonResponse(200, {
+            items: [
+              ...CUSTOMERS_PAGE.items,
+              {
+                id: 'cus-2',
+                code: 'CUST-000002',
+                name: 'Old Pharmacy',
+                phone: null,
+                city: 'Lahore',
+                status: 'INACTIVE',
+                balance: '1500.0000',
+                balanceAsOf: '2026-09-01',
+              },
+            ],
+            nextCursor: null,
+          }),
+        )
+      }
+      return baseRouter()(url, init)
+    })
+
+    renderScreen()
+    fireEvent.click(await screen.findByRole('button', { name: /new receipt/i }))
+    const dialog = screen.getByRole('dialog', { name: /new receipt/i })
+    fireEvent.change(within(dialog).getByLabelText('Customer'), { target: { value: 'Old' } })
+
+    await waitFor(() => {
+      const options = Array.from(
+        dialog.querySelector('datalist')?.querySelectorAll('option') ?? [],
+      ).map((o) => o.getAttribute('value'))
+      expect(options).toContain('Old Pharmacy (CUST-000002) — Inactive')
+    })
+
+    // And it resolves to a real selection, exactly like an active customer does.
+    fireEvent.change(within(dialog).getByLabelText('Customer'), {
+      target: { value: 'Old Pharmacy (CUST-000002) — Inactive' },
+    })
+    fireEvent.change(within(dialog).getByLabelText('Amount'), { target: { value: '1500' } })
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find((c) => c[0] === '/api/receipts/preview')
+      expect(call).toBeTruthy()
+      const body = JSON.parse((call![1] as RequestInit).body as string)
+      expect(body.customerId).toBe('cus-2')
+    })
+  })
+
   it('Post receipt confirms, warning when unallocated would be nonzero', async () => {
     const fetchMock = fetch as ReturnType<typeof vi.fn>
     fetchMock.mockImplementation(
