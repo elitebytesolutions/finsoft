@@ -5,7 +5,7 @@
  *
  * Nothing here decides a number or a permission. It moves bytes and translates transport
  * failures into the typed `ApiError` screens branch on. */
-import { getAccessToken, notifyForbidden, setAccessToken } from './session'
+import { getAccessToken, notifyForbidden, notifyRefreshed, setAccessToken } from './session'
 import { ApiError, type LoginRequest, type LoginResponse, type MeResponse } from './types'
 
 const REQUESTED_WITH_HEADER = 'X-Requested-With'
@@ -149,6 +149,7 @@ async function performRefresh(): Promise<boolean> {
     }
     const data = (await res.json()) as LoginResponse
     setAccessToken(data.accessToken)
+    notifyRefreshed()
     return true
   } catch {
     setAccessToken(null)

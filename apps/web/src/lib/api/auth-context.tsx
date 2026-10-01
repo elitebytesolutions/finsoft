@@ -22,7 +22,7 @@ import { usePathname, useNavigate } from '@/lib/router'
 import { logout as apiLogout, me } from './client'
 import { getMyPermissions } from './permissions-client'
 import { rawSearchParam, safeNextPath } from './safe-next-path'
-import { onForbidden } from './session'
+import { onForbidden, onRefreshed } from './session'
 import { ApiError, type SessionTenant, type SessionUser } from './types'
 
 export type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated' | 'error'
@@ -102,30 +102,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAttempt((n) => n + 1)
   }, [])
 
+  // Reloads S1 alone, never the rest of the session — called on first authentication, on
+  // every `permissionVersion` change, and after a token refresh (see the two effects
+  // below), so a permission revoked server-side (which bumps `permissionVersion` and
+  // rejects the old token at the guard, ADR-0009) disappears from the UI without a
+  // reload. Guarded to apply only while still authenticated: a response landing after a
+  // sign-out or session-expiry must not resurrect a permissions array for a state that no
+  // longer has one. A transport hiccup here is a UI-affordance failure only (S1,
+  // api-contract.md §2) — it degrades to "offer nothing" (permissions: []) rather than
+  // failing sign-in or leaving the previous (possibly stale/over-privileged) list in
+  // place.
+  const loadPermissions = useCallback(async () => {
+    try {
+      const granted = await getMyPermissions()
+      const permissions = Array.isArray(granted.permissions) ? granted.permissions : []
+      setState((prev) =>
+        prev.status === 'authenticated'
+          ? { ...prev, permissions, permissionVersion: granted.permissionVersion }
+          : prev,
+      )
+    } catch {
+      setState((prev) => (prev.status === 'authenticated' ? { ...prev, permissions: [] } : prev))
+    }
+  }, [])
+
   // The one place `GET /auth/me` is called. Shared by the on-load effect below and by
   // `syncAfterLogin`, so "what does it mean to have a session" is decided once.
   const checkSession = useCallback(async () => {
     setState((prev) => ({ ...prev, status: 'loading', errorMessage: null }))
     try {
       const session = await me()
-      // Fetched in its own try/catch, deliberately separate from the one around `me()`
-      // above: S1 is a UI affordance (api-contract.md §2), and a transport hiccup on it
-      // must not fail the whole sign-in — it degrades to "offer nothing" (permissions: []),
-      // with every real gate still enforced server-side regardless.
-      let permissions: string[] = []
-      try {
-        const granted = await getMyPermissions()
-        permissions = Array.isArray(granted.permissions) ? granted.permissions : []
-      } catch {
-        permissions = []
-      }
+      // `permissions: null` here, not fetched inline — the effect below (keyed on
+      // `status`/`permissionVersion`) loads them the instant this resolves to
+      // 'authenticated', the same path a later permissionVersion change reuses.
       setState({
         status: 'authenticated',
         user: session.user,
         tenant: session.tenant,
         sessionId: session.sessionId,
         permissionVersion: session.permissionVersion,
-        permissions,
+        permissions: null,
         errorMessage: null,
       })
     } catch (err) {
@@ -156,6 +172,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (state.status === 'authenticated') wasAuthenticated.current = true
   }, [state.status])
+
+  // Trigger 1: on first authentication, and whenever `permissionVersion` itself changes
+  // (the one thing that ever changes it is `loadPermissions`'s own response — a role
+  // change bumps it server-side and the next read reflects that; this keeps the two
+  // reasons-to-reload ("just signed in" and "the version moved") on one path instead of
+  // two copies of the same fetch).
+  useEffect(() => {
+    if (state.status === 'authenticated') void loadPermissions()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.status, state.permissionVersion])
+
+  // Trigger 2: after every successful token refresh (session.ts's onRefreshed) — a
+  // rotated token can reflect a permission change even when this tab's own
+  // `permissionVersion` hasn't been re-read yet, so this is a second, independent path
+  // to the same `loadPermissions`, not a replacement for the effect above.
+  useEffect(() => onRefreshed(() => void loadPermissions()), [loadPermissions])
 
   // Session-required guard: any route other than /login and /unauthorized needs an
   // authenticated session client-side. This is a UX affordance only — the server
