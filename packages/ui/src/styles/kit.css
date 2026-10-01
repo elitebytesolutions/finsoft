@@ -2775,6 +2775,8 @@ main{min-width:0;padding-bottom:72px}.topbar{margin:14px 22px 0;height:72px;back
 .sav-btn{height:42px;padding:0 16px;border:1px solid #dfe6e1;border-radius:9px;background:#fff;color:#1e2b3a;font-size:13.5px;font-weight:600;display:inline-flex;align-items:center;gap:8px;white-space:nowrap}.sav-btn svg{width:17px}.sav-btn:hover{background:#f6f9f7}
 .sav-btn.solid{background:#1b7f47;border-color:#1b7f47;color:#fff}.sav-btn.solid:hover{background:#166b3c}.sav-btn.solid:disabled{opacity:.5;cursor:not-allowed}
 .sav-btn.green{border-color:#bfe0cb;color:#1b7f47}.sav-btn.green:hover{background:#eef7f1}
+.sav-btn.danger{border-color:#f3c2c2;color:#a3291f}.sav-btn.danger:hover{background:#fdeeee}.sav-btn:disabled{opacity:.5;cursor:not-allowed}
+.sav-line-error{display:block;color:#a3291f;font-size:11.5px;margin-top:4px}
 .sav-toast{display:flex;align-items:center;gap:10px;background:#e6f4ec;border:1px solid #bfe0cb;color:#0b5e33;border-radius:10px;padding:10px 14px;font-size:13px;margin-bottom:12px}.sav-toast svg{width:16px}.sav-toast button{margin-left:auto;border:0;background:transparent;color:#0b5e33;display:grid;place-items:center}
 .sav-refs{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:12px}
 .sav-ref{background:#fff;border:1px solid #e3e9e5;border-radius:12px;padding:12px 14px;display:flex;align-items:center;gap:12px;min-width:0}.sav-ref>span{width:44px;height:44px;border-radius:10px;background:#e6f4ec;color:#1b7f47;display:grid;place-items:center;flex:none}.sav-ref>span svg{width:22px}
