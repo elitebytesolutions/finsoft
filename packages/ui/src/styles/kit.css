@@ -4059,12 +4059,31 @@ output.sav-num{display:inline-flex;align-items:center;justify-content:center;bac
  * subaccounts / balance / change / status / mod ("Last Modified") / actions. Parent Account is
  * dropped (not in the coordinator's required column list).
  */
-.coa2-table .coa2-tr.coa2-tr2{grid-template-columns:40px var(--name-w,minmax(260px,1.6fr)) 90px 110px 110px 150px 90px 110px 140px 60px!important}
+/*
+ * Column widths sized to fit the CONTENT area next to the sidebar (~1110px at a 1440 viewport,
+ * ~976px at 1280 — not the full viewport width), with `--name-w` at its real default (420px,
+ * set as an inline custom property by the section wrapper below, resizable by the user and
+ * persisted to localStorage) — not the `minmax()` fallback, which only applies if `--name-w` is
+ * ever unset. A first attempt sized against the fallback and overflowed the row by ~150px at
+ * 1440, pushing Last Modified and Actions off the visible, captured viewport entirely.
+ */
+.coa2-table .coa2-tr.coa2-tr2{grid-template-columns:36px var(--name-w,minmax(200px,1.4fr)) 64px 84px 84px 126px 64px 84px 100px 44px!important}
+/*
+ * kit.css's OLDER `.coa2-tr` system still carries `@media(max-width:1600px){.c-parent,.c-mod{
+ * display:none!important}}` above — a single-class `!important` selector that matched this
+ * table's `.c-mod` cells too (the class name is reused) at every width from 1366 up to 1600,
+ * including 1440, and hid "Last Modified" outright with no track left behind for it at all
+ * (not a sizing issue — `display:none` removes the element from layout). `.c-parent` is no
+ * longer used by this table (that column was dropped), so only `.c-mod` collides. A two-class
+ * selector beats that rule's specificity regardless of which rule is later in the file, so this
+ * does not depend on source order the way the first attempt at this fix implicitly did.
+ */
+.coa2-tr2 .c-change,.coa2-tr2 .c-mod{display:flex!important}
 @media(max-width:1366px){
   /* Change and Last Modified hide — on the head row exactly as the body, via the same class,
    * so nothing can hide one row's cell and not the other's. Eight tracks remain, matching the
    * eight cells still in DOM flow (display:none removes a grid item from auto-placement
    * entirely, so the template itself must shrink to match, not just visually hide a track). */
-  .coa2-table .coa2-tr.coa2-tr2{grid-template-columns:40px minmax(220px,1.4fr) 80px 100px 100px 140px 100px 60px!important}
+  .coa2-table .coa2-tr.coa2-tr2{grid-template-columns:36px var(--name-w,minmax(180px,1.2fr)) 64px 84px 84px 126px 84px 44px!important}
   .coa2-tr2 .c-change,.coa2-tr2 .c-mod{display:none!important}
 }
