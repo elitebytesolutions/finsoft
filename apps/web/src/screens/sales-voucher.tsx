@@ -84,36 +84,41 @@ function isLineComplete(l: Line): boolean {
 /*
  * The mode switch itself — the one genuinely new piece of markup this file adds. `.mode-picker`
  * is the existing kit class the mock's own Payment/Receipt switch used (transactions-pages.tsx,
- * before M4-W2) — reused rather than invented.
+ * before M4-W2) — reused rather than invented; `.lg` is a new size modifier on that SAME base
+ * class (packages/ui/src/styles/kit.css), added for this page-header-level control without
+ * touching the base class every other `.mode-picker` still uses (design-system review,
+ * 66019c0). Rendered inside each mode's own page header (passed down as `modeSwitch`) rather
+ * than floating above it, so it reads as part of the page, not a stray control above the title.
  */
 export function SalesVoucher() {
   const [mode, setMode] = useState<'Service' | 'Product'>('Service')
   const { data } = useFinsoft()
-  return (
-    <>
-      <div className="mode-picker">
-        <button
-          type="button"
-          className={mode === 'Service' ? 'active' : ''}
-          onClick={() => setMode('Service')}
-        >
-          Service
-        </button>
-        <button
-          type="button"
-          className={mode === 'Product' ? 'active' : ''}
-          onClick={() => setMode('Product')}
-        >
-          Product
-        </button>
-      </div>
-      {mode === 'Product' && <Banner tone="warn">Prototype — not connected to the ledger</Banner>}
-      {mode === 'Service' ? <ServiceSalesVoucher /> : <ProductSalesVoucher data={data} />}
-    </>
+  const modeSwitch = (
+    <div className="mode-picker lg" role="group" aria-label="Sales voucher mode">
+      <button
+        type="button"
+        className={mode === 'Service' ? 'active' : ''}
+        onClick={() => setMode('Service')}
+      >
+        Service
+      </button>
+      <button
+        type="button"
+        className={mode === 'Product' ? 'active' : ''}
+        onClick={() => setMode('Product')}
+      >
+        Product
+      </button>
+    </div>
+  )
+  return mode === 'Service' ? (
+    <ServiceSalesVoucher modeSwitch={modeSwitch} />
+  ) : (
+    <ProductSalesVoucher data={data} modeSwitch={modeSwitch} />
   )
 }
 
-function ServiceSalesVoucher() {
+function ServiceSalesVoucher({ modeSwitch }: { modeSwitch: ReactNode }) {
   const navigate = useNavigate()
   const { can } = useAuth()
   const [params] = useSearchParams()
@@ -145,6 +150,10 @@ function ServiceSalesVoucher() {
 
   // ---- calculation (I6) ---------------------------------------------------
   const [calc, setCalc] = useState<InvoiceCalculation | null>(null)
+  // The line keys `calc` was computed from — lets a row look up its OWN calc result even
+  // while a newer calculation is still in flight, instead of matching by array index (which
+  // breaks the moment an incomplete line sits between two complete ones).
+  const [calcKeys, setCalcKeys] = useState<number[]>([])
   const [calcPending, setCalcPending] = useState(false)
 
   // ---- submission state ----------------------------------------------------
@@ -152,6 +161,14 @@ function ServiceSalesVoucher() {
   const [toast, setToast] = useState('')
   const [savingDraft, setSavingDraft] = useState(false)
   const [postOpen, setPostOpen] = useState(false)
+  // The draft exactly as the server has it once `openPost` ensures it — the post confirm
+  // dialog quotes THIS netAmount, never a parallel /calculate figure, so it can never disagree
+  // with what actually gets posted (Accounting review, 66019c0).
+  const [postDraft, setPostDraft] = useState<{
+    id: string
+    version: number
+    netAmount: string
+  } | null>(null)
   const [cancelOpen, setCancelOpen] = useState(false)
   const { key: createKey, reset: resetCreateKey } = useIdempotencyKey()
   const { key: postKey, reset: resetPostKey } = useIdempotencyKey()
@@ -260,24 +277,32 @@ function ServiceSalesVoucher() {
 
   // Debounced I6 recalculation — the one sanctioned source for a line's net amount and the
   // invoice total while the user types (rule 19: no money arithmetic in the browser).
+  //
+  // Sent over COMPLETE lines only (Accounting review, 66019c0): an incomplete line used to be
+  // padded with '0' defaults and included anyway, so this calculation covered a different set
+  // of lines than what Post actually sends (validLines) — the two totals could disagree.
   useEffect(() => {
     const complete = lines.filter(isLineComplete)
     if (complete.length === 0) {
       setCalc(null)
+      setCalcKeys([])
       return
     }
     let active = true
     setCalcPending(true)
+    const keys = complete.map((l) => l.key)
     const t = setTimeout(() => {
       calculateInvoice(
-        lines.map((l) => ({
+        complete.map((l) => ({
           description: l.description,
-          quantity: l.quantity || '0',
-          unitPrice: l.unitPrice || '0',
+          quantity: l.quantity,
+          unitPrice: l.unitPrice,
         })),
       )
         .then((result) => {
-          if (active) setCalc(result)
+          if (!active) return
+          setCalc(result)
+          setCalcKeys(keys)
         })
         .catch(() => {
           if (active) setCalc(null)
@@ -300,7 +325,7 @@ function ServiceSalesVoucher() {
   const isDraftEditable = status === null || status === 'DRAFT'
   const validLines = lines.filter(isLineComplete)
 
-  async function ensureDraft(): Promise<{ id: string; version: number }> {
+  async function ensureDraft(): Promise<{ id: string; version: number; netAmount: string }> {
     const body = {
       customerId: customerId!,
       invoiceDate,
@@ -319,11 +344,11 @@ function ServiceSalesVoucher() {
       setInvoiceNumber(inv.number)
       setStatus(inv.status)
       resetCreateKey()
-      return { id: inv.id, version: inv.version }
+      return { id: inv.id, version: inv.version, netAmount: inv.netAmount }
     }
     const inv = await updateInvoice(invoiceId, { ...body, version: version! })
     setVersion(inv.version)
-    return { id: invoiceId, version: inv.version }
+    return { id: invoiceId, version: inv.version, netAmount: inv.netAmount }
   }
 
   const validate = (): string | null => {
@@ -353,14 +378,26 @@ function ServiceSalesVoucher() {
     }
   }
 
-  const openPost = () => {
+  // Saves (or updates) the draft FIRST, then opens the confirm dialog quoting that draft's own
+  // server-computed netAmount — never a parallel /calculate figure, which can cover a
+  // different set of lines than what actually gets saved (Accounting review, 66019c0).
+  const openPost = async () => {
     const problem = validate()
     if (problem) {
       setFormError(problem)
       return
     }
     setFormError(null)
-    setPostOpen(true)
+    setSavingDraft(true)
+    try {
+      const draft = await ensureDraft()
+      setPostDraft(draft)
+      setPostOpen(true)
+    } catch (err) {
+      setFormError(receivablesErrorMessage(err))
+    } finally {
+      setSavingDraft(false)
+    }
   }
 
   if (!canCreate) {
@@ -394,6 +431,7 @@ function ServiceSalesVoucher() {
 
   return (
     <div className="sav-page">
+      {modeSwitch}
       <header className="sav-head">
         <span className="sav-head-icon">
           <FileText />
@@ -414,7 +452,7 @@ function ServiceSalesVoucher() {
           <button
             type="button"
             className="sav-btn solid"
-            disabled={!canPost || !isDraftEditable || savingDraft}
+            disabled={!canPost || !isDraftEditable || savingDraft || calcPending}
             onClick={openPost}
           >
             <Check /> Save &amp; Post
@@ -565,8 +603,13 @@ function ServiceSalesVoucher() {
             </thead>
             <tbody>
               {lines.map((l, i) => {
-                const calcLine = calc?.lines[i]
-                const problem = calc?.problems.find((p) => p.lineNo === i + 1)
+                // calc (and its problems) cover calcKeys, in that order — never the raw array
+                // index, which would drift the moment an incomplete line sits between two
+                // complete ones, or while a fresher calculation is still in flight.
+                const calcIdx = calcKeys.indexOf(l.key)
+                const calcLine = calcIdx === -1 ? undefined : calc?.lines[calcIdx]
+                const problem =
+                  calcIdx === -1 ? undefined : calc?.problems.find((p) => p.lineNo === calcIdx + 1)
                 return (
                   <tr key={l.key}>
                     <td className="sav-idx">{i + 1}</td>
@@ -663,24 +706,34 @@ function ServiceSalesVoucher() {
         </div>
       </footer>
 
-      {postOpen && calc && customerId && (
+      {postOpen && postDraft && (
         <PostConfirmDialog
           customerLabel={customerQuery}
-          netAmount={calc.netAmount}
+          netAmount={postDraft.netAmount}
           lineCount={validLines.length}
-          onClose={() => setPostOpen(false)}
+          onClose={() => {
+            setPostOpen(false)
+            setPostDraft(null)
+          }}
           onConfirm={async () => {
             setSavingDraft(true)
             try {
-              const draft = await ensureDraft()
-              const posted = await postInvoice(draft.id, { version: draft.version }, postKey)
+              // postDraft is the draft openPost just saved (or re-saved) — its id/version are
+              // the ones the netAmount in this dialog was quoted from.
+              const posted = await postInvoice(
+                postDraft.id,
+                { version: postDraft.version },
+                postKey,
+              )
               resetPostKey()
               setInvoiceNumber(posted.number)
               setStatus(posted.status)
               setPostOpen(false)
+              setPostDraft(null)
               navigate(`/sales/${posted.id}`)
             } catch (err) {
               setPostOpen(false)
+              setPostDraft(null)
               setFormError(receivablesErrorMessage(err))
             } finally {
               setSavingDraft(false)
@@ -796,7 +849,7 @@ function ProductPick({
   )
 }
 
-function ProductSalesVoucher({ data }: { data: AppData }) {
+function ProductSalesVoucher({ data, modeSwitch }: { data: AppData; modeSwitch: ReactNode }) {
   const navigate = useNavigate()
   const customers = data.masters.filter((m: Master) => m.type === 'Customer')
   const [customer, setCustomer] = useState(customers[0]?.name ?? '')
@@ -825,8 +878,7 @@ function ProductSalesVoucher({ data }: { data: AppData }) {
   const [lines, setLines] = useState<ProductLine[]>(() => productSeed(data.products)),
     [query, setQuery] = useState(''),
     [toast, setToast] = useState('')
-  const saleNo = `SV-2026-${String(123 + data.sales.length).padStart(6, '0')}`,
-    invNo = `INV-${String(8912 + data.sales.length).padStart(6, '0')}`
+  const saleNo = `SV-2026-${String(123 + data.sales.length).padStart(6, '0')}`
   const totals = useMemo(() => {
     const g = lines.reduce((a, l) => a + productGross(l), 0)
     const d = lines.reduce((a, l) => a + (productGross(l) * l.disc) / 100, 0)
@@ -891,6 +943,8 @@ function ProductSalesVoucher({ data }: { data: AppData }) {
 
   return (
     <div className="sav-page">
+      {modeSwitch}
+      <Banner tone="warn">Prototype — not connected to the ledger</Banner>
       <header className="sav-head">
         <span className="sav-head-icon">
           <FileText />
@@ -1002,7 +1056,7 @@ function ProductSalesVoucher({ data }: { data: AppData }) {
           </span>
           <div>
             <small>Invoice No</small>
-            <b>{invNo}</b>
+            <b>Assigned on posting</b>
           </div>
         </div>
         <div className="sav-ref">

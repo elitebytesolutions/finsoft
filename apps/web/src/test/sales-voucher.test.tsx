@@ -96,6 +96,7 @@ function fetchRouter(
         number: null,
         status: 'DRAFT',
         version: 1,
+        netAmount: '10000.0000',
       }
       return Promise.resolve(jsonResponse(200, result))
     }
@@ -140,6 +141,10 @@ describe('SalesVoucher', () => {
     expect(screen.getByText('Fulfillment & Sales Team')).toBeInTheDocument()
     expect(screen.getByText('Sale No')).toBeInTheDocument()
     expect(screen.getByRole('columnheader', { name: /GST %/ })).toBeInTheDocument()
+    // Accounting review (66019c0): the fake INV-... number is gone, replaced with a neutral
+    // placeholder — this prototype has never created a real invoice, so it must never claim one.
+    expect(screen.getByText('Assigned on posting')).toBeInTheDocument()
+    expect(screen.queryByText(/^INV-\d+$/)).not.toBeInTheDocument()
 
     const saveDraft = screen.getByRole('button', { name: /save draft/i })
     const savePost = screen.getByRole('button', { name: /save & post/i })
@@ -209,6 +214,91 @@ describe('SalesVoucher', () => {
       const headers = (postCall![1] as RequestInit).headers as Headers
       expect(headers.get('Idempotency-Key')).toBeTruthy()
     })
+  })
+
+  it("calculates and posts over complete lines only, and quotes the saved draft's own figure", async () => {
+    // Accounting review (66019c0): /calculate used to include an incomplete line padded with
+    // '0' defaults while Post sent only complete lines — the two totals could disagree. The
+    // fix sends /calculate over complete lines only, and the confirm dialog quotes the SAVED
+    // draft's own netAmount, not a parallel /calculate figure — proven here by making them
+    // different: calc says 10,000 (one line), the draft the server actually saved says
+    // 12,000, as if a server-side rounding or a second viewer's edit made them diverge.
+    const fetchMock = fetch as ReturnType<typeof vi.fn>
+    fetchMock.mockImplementation(
+      fetchRouter({
+        create: () => ({
+          id: 'inv-new',
+          number: null,
+          status: 'DRAFT',
+          version: 1,
+          netAmount: '12000.0000',
+        }),
+      }),
+    )
+
+    renderScreen()
+    await fillOneLine()
+    await waitFor(() => expect(screen.getAllByText('Rs 10,000.00').length).toBeGreaterThan(0))
+
+    // A second, incomplete line — description only, no qty/rate. Adding it reruns the
+    // debounced /calculate effect (still over the one complete line) — wait for THAT to settle
+    // before posting, the same way a real user's click would land after, not during, typing.
+    fireEvent.click(screen.getByRole('button', { name: /add row/i }))
+    fireEvent.change(screen.getByLabelText('Description 2'), {
+      target: { value: 'Follow-up (not priced yet)' },
+    })
+    await waitFor(() => expect(screen.getByRole('button', { name: /save & post/i })).toBeEnabled())
+
+    fireEvent.click(screen.getByRole('button', { name: /save & post/i }))
+
+    const dialog = await screen.findByRole('dialog', { name: /post invoice/i })
+    // The dialog quotes the DRAFT's server figure (12,000), not the /calculate figure (10,000).
+    expect(within(dialog).getByText(/Rs 12,000\.00/)).toBeInTheDocument()
+    expect(within(dialog).queryByText(/Rs 10,000\.00/)).not.toBeInTheDocument()
+
+    // Neither /calculate nor the POST that created the draft ever carried the incomplete
+    // second row — not even padded with '0' defaults.
+    const calcCall = fetchMock.mock.calls.find((c) => c[0] === '/api/invoices/calculate')
+    expect(calcCall).toBeTruthy()
+    expect(JSON.parse((calcCall![1] as RequestInit).body as string).lines).toEqual([
+      { description: 'Consulting', quantity: '2', unitPrice: '5000' },
+    ])
+    const createCall = fetchMock.mock.calls.find(
+      (c) => c[0] === '/api/invoices' && (c[1] as RequestInit)?.method === 'POST',
+    )
+    expect(createCall).toBeTruthy()
+    expect(JSON.parse((createCall![1] as RequestInit).body as string).lines).toEqual([
+      { description: 'Consulting', quantity: '2', unitPrice: '5000' },
+    ])
+  })
+
+  it('keeps Save & Post disabled while a calculation is pending', async () => {
+    const fetchMock = fetch as ReturnType<typeof vi.fn>
+    let resolveCalc: ((v: unknown) => void) | null = null
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (url === '/api/invoices/calculate' && init?.method === 'POST') {
+        return new Promise((resolve) => {
+          resolveCalc = resolve
+        })
+      }
+      return fetchRouter()(url, init)
+    })
+
+    renderScreen()
+    await fillOneLine()
+
+    // The debounced /calculate call is now in flight and never resolved — Post must stay
+    // disabled for as long as that's true.
+    await waitFor(() => expect(resolveCalc).not.toBeNull())
+    expect(screen.getByRole('button', { name: /save & post/i })).toBeDisabled()
+
+    resolveCalc!(
+      new Response(JSON.stringify(calcResponse()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    await waitFor(() => expect(screen.getByRole('button', { name: /save & post/i })).toBeEnabled())
   })
 
   it('disables the Post button without invoice.post', async () => {
