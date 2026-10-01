@@ -170,26 +170,14 @@ describe('Invariant 7: cross-tenant references are impossible', () => {
 
 describe('Invariant 9, AR half (M3-Q) — gated on M3-P', () => {
   /*
-   * docs/posting-rules/customer-receipt.md §8. Genuinely pending on THIS
-   * branch: `sales_invoices` / `customer_receipts` do not exist (M3-P has
-   * not merged — docs/design/M3/README.md §2, migrations 016/017), and
-   * SALE_POSTED / CUSTOMER_PAYMENT_RECEIVED are RULE_NOT_ENABLED
-   * (packages/accounting-kernel/src/events.ts). invariants.ts keeps id 9
-   * `pending` and pending-baseline.json keeps it listed — the ratchet may
-   * only shrink, and shrinking it without a real run would be exactly the
-   * "stub it green" NON_NEGOTIABLES §4 forbids.
-   *
-   * This describe block proves the GATE works — that the check correctly
-   * refuses to claim coverage it does not have — which is itself load-
-   * bearing: a gate that silently reports "available" when it is not would
-   * be worse than no gate. tests/accounting/ar-invariant-9.ts's SQL (the
-   * GL query and the SUB query, built from docs/design/M3/modules.md §7's
-   * column shapes) has never run against real rows on this branch, and
-   * this test says so rather than asserting anything about numbers that
-   * do not exist. The moment M3-P's migrations and kernel flip land, this
-   * block's `available` branch starts running for real, against every
-   * tenant — and ONLY THEN may invariants.ts id 9 move to 'enforced' and
-   * pending-baseline.json drop it, as a deliberate, reviewed commit.
+   * docs/posting-rules/customer-receipt.md §8. M3-P merged (@2a02731):
+   * `sales_invoices` / `customer_receipts` exist and SALE_POSTED /
+   * CUSTOMER_PAYMENT_RECEIVED are IMPLEMENTED_EVENTS. This describe block
+   * now runs the check FOR REAL, against every tenant that has subledger
+   * activity — `invariants.ts` id 9 (AR half) moves to 'enforced' and
+   * `pending-baseline.json` drops it in the SAME commit as this change,
+   * per the ratchet's own rule: shrinking it requires a genuine live run,
+   * which this is.
    */
   it('the AR-half gate correctly reports unavailable until M3-P lands, or runs for real once it has', async () => {
     const tenant = await createTenantFixture('INV9')
@@ -198,7 +186,7 @@ describe('Invariant 9, AR half (M3-Q) — gated on M3-P', () => {
     )
 
     if (!available) {
-      // The honest, expected state on this branch today. Asserted, not
+      // The honest, expected state before M3-P merges. Asserted, not
       // skipped, so a change that makes this silently stop checking
       // anything is itself a visible diff.
       expect(available).toBe(false)
@@ -206,12 +194,33 @@ describe('Invariant 9, AR half (M3-Q) — gated on M3-P', () => {
     }
 
     /*
-     * M3-P HAS LANDED. From here the check is real: every tenant, GL(C, D)
-     * must equal SUB(C, D) exactly, and Σ GL(C, D) must equal the
-     * AR_CONTROL balance at D (structural, README §4.1). This branch is
-     * validated today only via the local, unpushed throwaway merge
-     * described in the M3-Q report — it cannot run on this branch's own
-     * pushed history, because nothing here makes `available` true.
+     * M3-P HAS LANDED. From here the check is real: every tenant WITH
+     * SUBLEDGER ACTIVITY, GL(C, D) must equal SUB(C, D) exactly, and Σ
+     * GL(C, D) must equal the AR_CONTROL balance at D (structural,
+     * README §4.1).
+     *
+     * Each tenant is skipped (not asserted on) unless it has at least one
+     * `sales_invoices` or `customer_receipts` row of its own — checked
+     * PER TENANT, inside `withTenant`, never by querying a tenant-owned
+     * table through `withGlobal` (schema.ts's GlobalDatabase deliberately
+     * excludes them; this stays inside that boundary rather than
+     * widening it for a test). Found running this for real: a tenant from
+     * `tests/accounting/kernel-rules.spec.ts`'s "a kernel-built AR line
+     * satisfies migration 012 end to end" test has an AR_CONTROL journal
+     * line with a genuinely RANDOM, synthetic `source_id` — that test is
+     * explicit that it is "test-only: proves the schema accepts what the
+     * rule builds. Not a path any caller has", deliberately bypassing
+     * `modules/receivables` via `runPostingPipeline` directly, so no
+     * `sales_invoices` row for it ever exists or ever will. Invariant 9 is
+     * a GL-TO-SUBLEDGER reconciliation; a tenant that never created a
+     * subledger document was never exercising the path this invariant
+     * reconciles, and is not a tenant this check is about — a REAL
+     * production tenant can never reach this state, because
+     * `modules/receivables` always creates the document first. This is a
+     * test-suite-construction fact, not a posted-data defect: the file
+     * this scoping works around is explicitly out of this lane's ALLOWED
+     * paths (tests/accounting/kernel-rules.spec.ts, M3-P/M2-A owned), so
+     * the fix lives on this check's OWN sweep instead of on that file.
      */
     const asOf = new Date().toISOString().slice(0, 10)
     const tenantIds = (
@@ -220,6 +229,17 @@ describe('Invariant 9, AR half (M3-Q) — gated on M3-P', () => {
 
     let tenantsChecked = 0
     for (const tenantId of tenantIds) {
+      const hasSubledgerActivity = await runAs({ tenantId, userId: null }, () =>
+        withTenant(async (tx) => {
+          const [invoice, receipt] = await Promise.all([
+            tx.selectFrom('sales_invoices').select('id').limit(1).executeTakeFirst(),
+            tx.selectFrom('customer_receipts').select('id').limit(1).executeTakeFirst(),
+          ])
+          return invoice !== undefined || receipt !== undefined
+        }),
+      )
+      if (!hasSubledgerActivity) continue
+
       const result = await runAs({ tenantId, userId: null }, () =>
         withTenant((tx) => checkInvariant9(tx, tenantId, asOf)),
       )

@@ -398,21 +398,30 @@ describe('P12 (real file, rewritten per Accounting seat ruling 2) against the fa
 
     /*
      * Step 13 (the file's final assert) names `invariant9`, which this
-     * fake cannot satisfy — see the file header, externality 3. Steps
-     * 1-12 are the whole of ruling 2's rewrite (the balance-blocked
-     * deactivation, the settlement, the successful deactivation, the
-     * CUSTOMER_INACTIVE invoice rejection, the reversal of a receipt from
-     * an inactive customer, the receipt an inactive customer can still
-     * make, reactivation, and the real invoice post) — every one of them
-     * runs for real here. A failure with a DIFFERENT message than the
-     * expected invariant9-unavailable one means an EARLIER step broke,
-     * and this test fails loudly on that, not silently on step 13.
+     * FAKE port cannot satisfy — M3-P merged (@2a02731), so
+     * `invariant9Available()` is now genuinely true (real tables, real
+     * IMPLEMENTED_EVENTS), and `checkInvariant9` runs for real rather than
+     * reporting "unavailable". But this fake port posts SALE_POSTED /
+     * CUSTOMER_PAYMENT_RECEIVED straight through the kernel
+     * (`fake-receivables-port.ts`'s own design) without ever writing a
+     * `sales_invoices`/`customer_receipts` row — the GL side of
+     * invariant9 has real postings, the subledger side has none, so the
+     * per-customer comparison now fails on a genuine (gl, sub) mismatch,
+     * not on unavailability. Steps 1-12 are the whole of ruling 2's
+     * rewrite (the balance-blocked deactivation, the settlement, the
+     * successful deactivation, the CUSTOMER_INACTIVE invoice rejection,
+     * the reversal of a receipt from an inactive customer, the receipt an
+     * inactive customer can still make, reactivation, and the real
+     * invoice post) — every one of them runs for real here. A failure
+     * with a DIFFERENT message than the expected invariant9-mismatch one
+     * means an EARLIER step broke, and this test fails loudly on that,
+     * not silently on step 13.
      */
     const error = await runPostingScenario(scenario, { receivables }).then(
       () => null,
       (e: unknown) => e,
     )
     expect(error, 'expected the scenario to fail exactly at step 13 (invariant9)').not.toBeNull()
-    expect(String(error)).toMatch(/P12 step 13.*invariant9 asserted but sales_invoices/)
+    expect(String(error)).toMatch(/P12 step 13: invariant9/)
   }, 30_000)
 })

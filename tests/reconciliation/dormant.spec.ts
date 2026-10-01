@@ -53,6 +53,25 @@ function meaningfulSource(relative: string): string {
  * reconciliation becomes both possible and necessary. The inventory half is
  * unchanged. The GL half now exists and is covered live by the
  * FinancialInvariantSuite (Invariants 1, 2, 6) for every tenant.
+ *
+ * M3-Q: THE AR HALF OF THIS RE-ARM FIRED IN TURN, AS DESIGNED, AND WAS
+ * ANSWERED RATHER THAN DELETED (2026-10-01, M3-P @2a02731 merged).
+ *
+ * SALE_POSTED and CUSTOMER_PAYMENT_RECEIVED are now IMPLEMENTED_EVENTS, and
+ * `modules/receivables` posts both for real, so an AR_CONTROL balance now
+ * genuinely exists in the GL. The instruction was carried out, not
+ * sidestepped: `tests/accounting/ar-invariant-9.ts` (GL(C,D) = SUB(C,D),
+ * customer-receipt.md §8), `tests/accounting/financial-invariant-suite.
+ * spec.ts`'s Invariant 9 block, and `tests/reconciliation/subledger-to-gl-
+ * ar.spec.ts` all run FOR REAL now, against every tenant with subledger
+ * activity, through `withTenant` — not against fixtures only. The golden
+ * runner (P04-P12) executes the same postings through the real module in
+ * the same gate (`tests/accounting/posting-scenarios-m3.spec.ts`).
+ *
+ * The tripwire is re-armed once more, on what is STILL true: no enabled
+ * rule reaches an AP control account (vendor bills/payments are Wave 6),
+ * and no stock table exists yet (Wave 5, the inventory half of Invariant
+ * 9/10). It fires again the moment EITHER of those changes.
  */
 const RECONCILE_LIVE_INSTRUCTIONS =
   'THE RECONCILIATION SUITE IS NOW UNDER-POWERED. It proves its reconcilers\n' +
@@ -68,14 +87,16 @@ const RECONCILE_LIVE_INSTRUCTIONS =
   '     for FND-012, which both record this as deferred.'
 
 describe('the reconciliation deferral is still valid', () => {
-  it('no enabled posting rule can reach an AR/AP control account (M2-A re-arm)', async () => {
+  it('no enabled posting rule can reach an AP control account (AR answered, M3-Q re-arm)', async () => {
     const { IMPLEMENTED_EVENTS } = await import('@finsoft/accounting-kernel')
     expect(
       [...IMPLEMENTED_EVENTS].sort(),
-      'A posting rule beyond the manual journal voucher is now enabled, so a\n' +
-        'customer or vendor balance can now exist in the GL.\n\n' +
+      'A posting rule beyond the three already answered (JOURNAL_VOUCHER_POSTED,\n' +
+        'SALE_POSTED, CUSTOMER_PAYMENT_RECEIVED) is now enabled — almost certainly\n' +
+        'a vendor bill or vendor payment, which would make an AP control balance\n' +
+        'possible in the GL for the first time.\n\n' +
         RECONCILE_LIVE_INSTRUCTIONS,
-    ).toEqual(['JOURNAL_VOUCHER_POSTED'])
+    ).toEqual(['CUSTOMER_PAYMENT_RECEIVED', 'JOURNAL_VOUCHER_POSTED', 'SALE_POSTED'])
   })
 
   it.each([['packages/inventory-kernel/src/index.ts', 'ADR-0008/0018 movement ledger', 'Wave 6']])(
@@ -119,15 +140,37 @@ describe('the reconciliation deferral is still valid', () => {
    *
    * `CUSTOMERS_TABLE_ANSWERED_BY` is a narrow, reviewed exception — like
    * `GLOBALLY_UNIQUE_INDEX_ALLOWLIST` (database/tests/schema.spec.ts) — not
-   * a widening of the regex: `customer_receipts`, `sales_invoices` and an
-   * allocations table still trip this same assertion the moment M3-P adds
-   * them, exactly as designed, because only the literal name "customers" is
-   * excepted.
+   * a widening of the regex: a vendor/purchase/payment table or
+   * `stock_movements` still trips this same assertion the moment a later
+   * wave adds one, exactly as designed, because only the literal table
+   * names below are excepted.
+   *
+   * M3-Q (2026-10-01, M3-P @2a02731 merged): `sales_invoices`,
+   * `sales_invoice_lines`, `customer_receipts`,
+   * `customer_receipt_draft_allocations` and `customer_receipt_allocations`
+   * join `customers` in the exception list for the SAME reason — answered,
+   * not deferred. `tests/reconciliation/subledger-to-gl-ar.spec.ts` wires
+   * `reconcileSubledgerToGeneralLedger` (this directory's own, unchanged
+   * comparison) to these tables' real rows, via `tests/accounting/
+   * ar-invariant-9.ts`'s GL(C,D)/SUB(C,D) (customer-receipt.md §8), for
+   * every tenant with subledger activity, through `withTenant`. A vendor
+   * equivalent (AP, Wave 6) and `stock_movements` (Wave 5) are NOT excepted
+   * and still trip this assertion the moment either is migrated.
    */
   const CUSTOMERS_TABLE_ANSWERED_BY =
     'tests/reconciliation/party-registry.spec.ts (ADR-0026 Compliance 6)'
+  const AR_TABLES_ANSWERED_BY =
+    'tests/reconciliation/subledger-to-gl-ar.spec.ts (customer-receipt.md §8)'
+  const ANSWERED_TABLES = [
+    'customers',
+    'sales_invoices',
+    'sales_invoice_lines',
+    'customer_receipts',
+    'customer_receipt_draft_allocations',
+    'customer_receipt_allocations',
+  ]
 
-  it('no subledger or stock table that would need reconciling has been migrated (except customers, answered)', () => {
+  it('no subledger or stock table that would need reconciling has been migrated (except AR, answered)', () => {
     /*
      * The second precondition, and the one that can change without either
      * kernel gaining a line: a migration adding a document subledger
@@ -166,50 +209,51 @@ describe('the reconciliation deferral is still valid', () => {
           t,
         ),
       )
-      .filter((t) => t !== 'customers')
+      .filter((t) => !ANSWERED_TABLES.includes(t))
 
     expect(
       reconcilable,
       'A table that reconciliation is ABOUT now exists, so the fixture-only suite\n' +
         'in this directory no longer covers what it appears to cover. See the\n' +
         'instructions on the kernel assertions above.\n\n' +
-        `('customers' is excepted, answered by ${CUSTOMERS_TABLE_ANSWERED_BY} — see this file's ` +
+        `(${ANSWERED_TABLES.join(', ')} are excepted: 'customers' answered by ` +
+        `${CUSTOMERS_TABLE_ANSWERED_BY}, the rest by ${AR_TABLES_ANSWERED_BY} — see this file's ` +
         'own comment above this test for why that is not a widening of the regex.)',
     ).toEqual([])
   })
 
   /*
-   * M3-Q (2026-09-29): NEITHER PRECONDITION HAS FIRED, SO NOTHING HERE
-   * CHANGES — this note exists so a reader can see this was checked, not
-   * assumed. `sales_invoices` / `customer_receipts` still do not exist
-   * (M3-P has not merged migrations 016/017; as of this writing M3-P's own
-   * branch carries zero commits beyond `develop` — see the M3-Q report),
-   * and `IMPLEMENTED_EVENTS` above is still exactly
-   * `['JOURNAL_VOUCHER_POSTED']`. Both assertions in this describe block
-   * are therefore still correctly PASSING, i.e. the tripwire is still
-   * correctly ARMED — this is not the moment either fires.
-   *
-   * What IS ready, so the tripwire's own instructions ("wire
-   * reconcileSubledgerToGeneralLedger... to real rows") take one PR to
-   * carry out rather than a redesign, once it does fire:
+   * M3-Q (2026-10-01): BOTH ORIGINAL M2-A PRECONDITIONS HAVE NOW FIRED, AND
+   * BOTH ARE ANSWERED, NOT DELETED. M3-P merged (@2a02731): migrations 016
+   * (sales_invoices, sales_invoice_lines) and 017 (customer_receipts,
+   * customer_receipt_draft_allocations, customer_receipt_allocations)
+   * exist, and SALE_POSTED / CUSTOMER_PAYMENT_RECEIVED are
+   * IMPLEMENTED_EVENTS. The follow-through this note used to describe as
+   * "built and waiting" has now RUN, for real, against real rows:
    *   - tests/accounting/ar-invariant-9.ts: GL(C, D) and SUB(C, D) per
-   *     customer-receipt.md §8, gated by `invariant9Available()` on the
-   *     same two preconditions this file checks.
+   *     customer-receipt.md §8, `invariant9Available()` now true.
+   *   - tests/accounting/financial-invariant-suite.spec.ts's Invariant 9
+   *     block: every tenant WITH subledger activity, GL = SUB exactly and
+   *     Σ GL = the AR_CONTROL account's own balance (structural).
    *   - tests/reconciliation/subledger-to-gl-ar.spec.ts: wires
    *     `reconcileSubledgerToGeneralLedger` (THIS directory's own,
-   *     unchanged comparison) to real rows via ar-invariant-9.ts, gated
-   *     the same way — it reports "unavailable" today, for the same
-   *     reason this file does.
-   *   - tests/accounting/golden-posting-runner.ts and
-   *     tests/accounting/posting-scenarios-m3.spec.ts: the golden-scenario
-   *     runner support for P04-P12, gated on a REAL `modules/receivables`
-   *     (tests/accounting/receivables-real-port.ts), not on this file's
-   *     two preconditions — a third, independent gate, because the golden
-   *     runner needs the MODULE, not only the kernel event flip.
+   *     unchanged comparison) to real rows via ar-invariant-9.ts.
+   *   - tests/accounting/posting-scenarios-m3.spec.ts: P04-P06, P08 (in
+   *     full), P09, P10, P11, P12 all execute through the real
+   *     `modules/receivables`, not a fake.
    *
-   * None of the above weakens this file. Flipping either precondition is
-   * still a deliberate act in M3-P's own PR — this note only says the
-   * follow-through is already built and waiting, not that it has run.
+   * Both run scoped to tenants with subledger activity of their own, not
+   * literally every tenant in the shared test database — a tenant from
+   * tests/accounting/kernel-rules.spec.ts posts an AR_CONTROL line through
+   * the kernel's internal pipeline directly (that file's own words:
+   * "test-only... not a path any caller has"), with no `sales_invoices` row
+   * ever created for it. That is a fact about a lower-level kernel
+   * conformance test this lane does not own, not a posted-data defect, and
+   * not a reason to weaken either live check.
+   *
+   * The tripwire above is re-armed on what remains: no enabled rule reaches
+   * an AP control account, and no stock table exists. See the file-level
+   * comment block for the full account.
    */
 })
 

@@ -382,9 +382,16 @@ export async function loadReceivablesRealPort(): Promise<ReceivablesPort | null>
           expectedVersion: current.invoice.version,
           actor: actor(),
         })
+        /*
+         * `updateInvoiceDraft`/`cancelInvoiceDraft` now return the FULL
+         * `GetInvoiceResult` (Council review of efb7e3f, @2a02731), not a
+         * flat `{status, number}` — found re-verifying this adapter
+         * against the merged M3-P: P11 step 10 read `updated.status` as
+         * `undefined`. Same nesting as `getInvoice`'s own `.invoice`.
+         */
         return {
-          documentStatus: updated.status,
-          documentNumber: updated.number,
+          documentStatus: updated.invoice.status,
+          documentNumber: updated.invoice.number,
         } satisfies DraftResult
       }
       const current = await uc.getReceipt(doc.id)
@@ -395,8 +402,8 @@ export async function loadReceivablesRealPort(): Promise<ReceivablesPort | null>
         actor: actor(),
       })
       return {
-        documentStatus: updated.status,
-        documentNumber: updated.number,
+        documentStatus: updated.receipt.status,
+        documentNumber: updated.receipt.number,
       } satisfies DraftResult
     },
 
@@ -410,8 +417,8 @@ export async function loadReceivablesRealPort(): Promise<ReceivablesPort | null>
           actor: actor(),
         })
         return {
-          documentStatus: updated.status,
-          documentNumber: updated.number,
+          documentStatus: updated.invoice.status,
+          documentNumber: updated.invoice.number,
         } satisfies DraftResult
       }
       const current = await uc.getReceipt(doc.id)
@@ -421,8 +428,8 @@ export async function loadReceivablesRealPort(): Promise<ReceivablesPort | null>
         actor: actor(),
       })
       return {
-        documentStatus: updated.status,
-        documentNumber: updated.number,
+        documentStatus: updated.receipt.status,
+        documentNumber: updated.receipt.number,
       } satisfies DraftResult
     },
 

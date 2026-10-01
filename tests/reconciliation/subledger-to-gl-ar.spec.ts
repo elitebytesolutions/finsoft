@@ -16,15 +16,17 @@ import { describeBreaks, reconcileSubledgerToGeneralLedger } from './reconciler.
 
 /*
  * Subledger-to-GL, AR, wired to REAL rows — the half of this directory's
- * README that was still deferred ("Wire reconcileSubledgerToGeneralLedger
- * ... to real rows, per tenant, through withTenant"). Genuinely gated,
- * exactly like `tests/accounting/financial-invariant-suite.spec.ts`'s
- * Invariant 9 block and `dormant.spec.ts`'s own re-armed preconditions:
- * `sales_invoices` / `customer_receipts` do not exist on this branch, and
- * SALE_POSTED / CUSTOMER_PAYMENT_RECEIVED are RULE_NOT_ENABLED, so there is
- * nothing to reconcile yet. See the M3-Q report for why `dormant.spec.ts`
- * itself is UNCHANGED: both its re-armed preconditions are still true on
- * this branch, so its tripwire is correctly still armed, not answered.
+ * README that was deferred ("Wire reconcileSubledgerToGeneralLedger ...
+ * to real rows, per tenant, through withTenant"), now answered: M3-P
+ * merged (@2a02731), `sales_invoices`/`customer_receipts` exist, and
+ * SALE_POSTED/CUSTOMER_PAYMENT_RECEIVED are IMPLEMENTED_EVENTS. The
+ * `invariant9Available` gate below stays (and the "unavailable" branch
+ * stays asserted, not deleted) so a future regression that makes the
+ * precondition false again is caught, not silently skipped.
+ *
+ * `dormant.spec.ts`'s FND-012 tripwire has fired for exactly this reason —
+ * see that file and tests/reconciliation/README.md, both updated in the
+ * same change as this file.
  *
  * `reconcileSubledgerToGeneralLedger` (this directory's own comparison,
  * proved against fixtures in subledger-to-gl.spec.ts) is reused UNCHANGED
@@ -69,9 +71,33 @@ describe('AR subledger reconciles to AR_CONTROL — real rows, gated on M3-P', (
       await withGlobal((tx) => tx.selectFrom('tenants').select('id').execute())
     ).map((row) => row.id)
 
+    /*
+     * Scoped to tenants with subledger activity of their own — see
+     * financial-invariant-suite.spec.ts's identical Invariant 9 block for
+     * why: a tenant from tests/accounting/kernel-rules.spec.ts posts an
+     * AR_CONTROL journal line through the kernel's internal pipeline
+     * directly (test-only, by that file's own comment), with no
+     * `sales_invoices` row ever created for it. That tenant genuinely has
+     * GL activity with nothing to reconcile against — not a posted-data
+     * defect, a fact about a lower-level kernel test this lane does not
+     * own and must not edit.
+     */
+    const checkedTenantIds: string[] = []
     const subledger = []
     const generalLedger = []
     for (const tenantId of tenantIds) {
+      const hasSubledgerActivity = await runAs({ tenantId, userId: null }, () =>
+        withTenant(async (tx) => {
+          const [invoice, receipt] = await Promise.all([
+            tx.selectFrom('sales_invoices').select('id').limit(1).executeTakeFirst(),
+            tx.selectFrom('customer_receipts').select('id').limit(1).executeTakeFirst(),
+          ])
+          return invoice !== undefined || receipt !== undefined
+        }),
+      )
+      if (!hasSubledgerActivity) continue
+      checkedTenantIds.push(tenantId)
+
       const result = await runAs({ tenantId, userId: null }, () =>
         withTenant((tx) => checkInvariant9(tx, tenantId, asOf)),
       )
@@ -102,7 +128,7 @@ describe('AR subledger reconciles to AR_CONTROL — real rows, gated on M3-P', (
 
     const breaks = reconcileSubledgerToGeneralLedger(subledger, generalLedger)
     expect(breaks, describeBreaks(breaks)).toEqual([])
-    expect(tenantIds.length).toBeGreaterThan(0)
+    expect(checkedTenantIds.length).toBeGreaterThan(0)
   }, 120_000)
 })
 

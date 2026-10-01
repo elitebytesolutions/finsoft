@@ -1,6 +1,6 @@
 # tests/reconciliation/
 
-**The comparison is built and proved. The data source is deferred.**
+**The comparison is built and proved. The AR half of the data source is now live; AP and inventory are still deferred.**
 
 That split is the whole design of this directory, and the rest of this file
 is the reasoning behind it. The argument below for writing nothing was made
@@ -19,8 +19,8 @@ valuation against the stock ledger.
 | `reconciler.ts` | `reconcileSubledgerToGeneralLedger` and `reconcileValuationToStockLedger`. Pure functions over rows. No tolerance parameter exists, and a test greps to keep it that way |
 | `subledger-to-gl.spec.ts` | Criteria 1-4 below, against fixtures including deliberate breaks |
 | `valuation-to-ledger.spec.ts` | The Wave 6 criteria, including the `9533.3333` vs `9533.3334` case the forbidden recomputation produces |
-| `dormant.spec.ts` | **The tripwire.** Fails the moment a posting rule that can reach AR/AP is enabled, the inventory kernel stops being `export {}`, or a subledger/stock table is migrated (re-armed in M2-A — see below) |
-| `subledger-to-gl-ar.spec.ts` | AR wired to real rows (M3-Q, 2026-09-29): `reconcileSubledgerToGeneralLedger` against `Σ SUB(C, D)` / `Σ GL(C, D)` from `../accounting/ar-invariant-9.ts`, for every tenant. Gated the same way `dormant.spec.ts` re-arms — reports "unavailable" today, reconciles for real the moment M3-P's migrations and kernel flip land |
+| `dormant.spec.ts` | **The tripwire.** Fails the moment a posting rule that can reach AP is enabled, the inventory kernel stops being `export {}`, or an AP/stock table is migrated (re-armed in M3-Q on the AP/inventory half only — see below; the AR half fired and is answered) |
+| `subledger-to-gl-ar.spec.ts` | AR wired to real rows (M3-Q, live since 2026-10-01, M3-P @2a02731): `reconcileSubledgerToGeneralLedger` against `Σ SUB(C, D)` / `Σ GL(C, D)` from `../accounting/ar-invariant-9.ts`, for every tenant with subledger activity of its own (not literally every tenant — see the file's own header on why). The `invariant9Available()` gate stays, so a future regression that makes the precondition false again is caught, not silently skipped |
 
 Nothing here imports a kernel, a repository or a posting engine, and nothing
 ever should. A control that shares an implementation with the thing it checks
@@ -59,8 +59,9 @@ it at.
 | **Deferred to** | **Wave 5** for the first suite (posting exists), **Wave 6** for inventory valuation |
 | **Blocked by** | ADR-0005's posting engine and ADR-0008/0018's movement ledger. ADR-0018 is currently **rejected** and carries 19 required changes |
 | **Owner** | Accounting Guardian for the invariants; QA Engineer for the suites |
-| **M2-A (2026-09-28)** | The accounting tripwire fired: migration 012 created the journal and the kernel gained a posting engine. The GL side now exists and is checked live for every tenant by the FinancialInvariantSuite (Invariants 1, 2, 6). Subledger-to-GL stays deferred to **M3**: no document subledger exists, and no enabled path reaches a control account (manual JV to AR/AP is `ACCOUNT_CONTROL_MANUAL_FORBIDDEN`; `SALE_POSTED` / `CUSTOMER_PAYMENT_RECEIVED` are `RULE_NOT_ENABLED`). The tripwire is re-armed on those two facts. The FND-012 register entry is outside this lane and still needs the same note |
+| **M2-A (2026-09-28)** | The accounting tripwire fired: migration 012 created the journal and the kernel gained a posting engine. The GL side now exists and is checked live for every tenant by the FinancialInvariantSuite (Invariants 1, 2, 6). Subledger-to-GL stays deferred to **M3**: no document subledger exists, and no enabled path reaches a control account (manual JV to AR/AP is `ACCOUNT_CONTROL_MANUAL_FORBIDDEN`; `SALE_POSTED` / `CUSTOMER_PAYMENT_RECEIVED` are `RULE_NOT_ENABLED`). The tripwire is re-armed on those two facts |
 | **M3-C (2026-09-29)** | `dormant.spec.ts`'s table-creation tripwire partially fired: migration 015 created `customers`. Answered, not widened: `customers` is master data with no monetary lines of its own, so it does not make subledger-to-GL reconciliation possible — that still needs `sales_invoices` / `customer_receipts` / an allocations table, M3-P's tables, which still trip the same assertion the moment they land. What `customers` DOES make possible — ADR-0026 Compliance 6's party-registry check (every `parties` row has exactly one detail row; an orphan is a failure) — is answered live, not deferred: `tests/reconciliation/party-registry.spec.ts`, against real rows, with a fixture proving it detects and names an orphan. `dormant.spec.ts` carries a narrow, reviewed exception for the literal name `customers` only |
+| **M3-Q (2026-10-01, M3-P merged)** | Both remaining M2-A preconditions fired for the AR half, and both are answered, not deleted: migrations 016/017 created `sales_invoices`/`sales_invoice_lines`/`customer_receipts`/`customer_receipt_draft_allocations`/`customer_receipt_allocations`, and `SALE_POSTED`/`CUSTOMER_PAYMENT_RECEIVED` are `IMPLEMENTED_EVENTS`. `subledger-to-gl-ar.spec.ts` now reconciles for real, for every tenant with subledger activity, through `withTenant` — not fixtures only — and `tests/accounting/financial-invariant-suite.spec.ts`'s Invariant 9 block does the same per-customer and structural (Σ GL = AR_CONTROL balance) checks. `dormant.spec.ts` carries reviewed exceptions for the five AR table names above, alongside `customers`. The tripwire is re-armed on what remains: no enabled rule reaches an **AP** control account, and no stock table exists (Wave 5/6) |
 
 ---
 
