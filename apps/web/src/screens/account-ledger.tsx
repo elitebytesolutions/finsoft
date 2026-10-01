@@ -11,24 +11,47 @@
  * `runningBalance` (ledger-and-trial-balance.md §2) via `formatRunningBalance` — never
  * re-derived. "Related Accounts" balances are the same rule: each is that account's OWN
  * `closingBalance` from its own ledger call, not a locally summed figure.
+ *
+ * Design-system review (post-684a0bf): Export, Open Full Page, Saved Views, Columns and
+ * Save-as-view are back in the DOM — the PO's rule is to keep his design, not thin it out
+ * because a piece isn't wired yet — but every one of them is `disabled`, titled "Coming soon".
+ * None of them has a real API behind it in M2: there is no saved-view persistence contract, no
+ * export endpoint, and "Open Full Page" pointed at a `/finance/accounts/:code` record route
+ * this product doesn't have. Total Debits/Total Credits are back too, but as "—": the ledger
+ * response (`AccountLedgerResponseDto`) carries `openingBalance`/`closingBalance` per line, not
+ * a server-computed debit/credit total for the range — summing `lines[].debit` in the browser
+ * to fill that tile would be exactly the arithmetic this restoration removed from the opening/
+ * closing/running-balance figures, so it stays undone rather than half-fixed. Same rule for
+ * Sort and the rest of the filter row: only Date (from/to) reaches the real
+ * `GET /api/ledgers/:accountId` query; Voucher Type, Transaction Type, Amount,
+ * Reference/Counterparty, Status, Sort and Columns render — restored — but disabled, because
+ * there is no server parameter to wire them to (ledger-query.dto.ts: from/to/limit/cursor/
+ * partyId only, and partyId is inert — no posting rule carries a party in M2).
  */
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from '@/lib/router'
 import {
   ArrowRight,
+  ArrowUpDown,
+  ArrowUpRight,
+  Calculator,
   CalendarDays,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   Coins,
-  Calculator,
+  Columns3,
+  Download,
   Ellipsis,
+  ExternalLink,
   FileText,
   Filter,
   Landmark,
   RotateCw,
   Search,
   ShieldAlert,
+  SlidersHorizontal,
+  Star,
   X,
 } from 'lucide-react'
 import { Button } from '@finsoft/ui'
@@ -63,6 +86,17 @@ export function AccountLedger() {
           </div>
           <h1>Account Ledger</h1>
           <p>Detailed transactions and running balance, read from the server.</p>
+        </div>
+        <div className="al-head-actions">
+          <button className="al-btn" disabled title="Coming soon">
+            <Star /> Saved Views <ChevronDown />
+          </button>
+          <button className="al-btn" disabled title="Coming soon">
+            <Download /> Export <ChevronDown />
+          </button>
+          <button className="al-btn primary" disabled title="Coming soon">
+            <ExternalLink /> Open Full Page
+          </button>
         </div>
       </div>
 
@@ -273,6 +307,28 @@ function LedgerBody({
                 </b>
               </div>
             </article>
+            {/* "—", never summed from the loaded rows: the ledger response carries each line's
+             * own debit/credit, not a server-computed total for the range (unlike trial-balance's
+             * totalDebit/totalCredit). Design-system review: show the honest gap, don't fill it
+             * with browser arithmetic. */}
+            <article title="Not provided by the ledger API yet">
+              <span className="al-stat-icon">
+                <ArrowUpRight />
+              </span>
+              <div>
+                <small>Total Debits</small>
+                <b>—</b>
+              </div>
+            </article>
+            <article title="Not provided by the ledger API yet">
+              <span className="al-stat-icon orange">
+                <ArrowUpRight />
+              </span>
+              <div>
+                <small>Total Credits</small>
+                <b>—</b>
+              </div>
+            </article>
             <article>
               <span className="al-stat-icon">
                 <Calculator />
@@ -362,10 +418,20 @@ function LedgerBody({
                   >
                     <Filter /> Filters
                   </button>
+                  <button className="al-btn" disabled title="Coming soon">
+                    <ArrowUpDown /> Sort
+                  </button>
+                  <button className="al-btn icon" aria-label="Columns" disabled title="Coming soon">
+                    <Columns3 />
+                  </button>
                 </div>
               </div>
               {filtersOpen && (
                 <div className="al-filters">
+                  {/* Date is the one filter that is real — it's the from/to query the ledger
+                   * endpoint actually takes, edited via the inputs above. Everything else here
+                   * is restored from the PO's design but disabled: no server parameter exists
+                   * for it yet (ledger-query.dto.ts). */}
                   <div className="al-filter">
                     <CalendarDays />
                     <div>
@@ -375,7 +441,58 @@ function LedgerBody({
                       </b>
                     </div>
                   </div>
-                  <button className="al-link right" onClick={() => setFiltersOpen(false)}>
+                  <label className="al-filter" title="Coming soon">
+                    <div>
+                      <small>Voucher Type</small>
+                      <select aria-label="Voucher type" disabled defaultValue="All Types">
+                        <option>All Types</option>
+                      </select>
+                    </div>
+                    <ChevronDown />
+                  </label>
+                  <label className="al-filter" title="Coming soon">
+                    <div>
+                      <small>Transaction Type</small>
+                      <select aria-label="Transaction type" disabled defaultValue="All">
+                        <option>All</option>
+                      </select>
+                    </div>
+                    <ChevronDown />
+                  </label>
+                  <label className="al-filter" title="Coming soon">
+                    <div>
+                      <small>Amount</small>
+                      <select aria-label="Amount" disabled defaultValue="Any amount">
+                        <option>Any amount</option>
+                      </select>
+                    </div>
+                    <ChevronDown />
+                  </label>
+                  <label className="al-filter grow" title="Coming soon">
+                    <div>
+                      <small>Reference / Counterparty</small>
+                      <select aria-label="Reference" disabled defaultValue="All">
+                        <option>All</option>
+                      </select>
+                    </div>
+                    <ChevronDown />
+                  </label>
+                  <label className="al-filter" title="Coming soon">
+                    <div>
+                      <small>Status</small>
+                      <select aria-label="Status" disabled defaultValue="Posted + Reversed">
+                        <option>Posted + Reversed</option>
+                      </select>
+                    </div>
+                    <ChevronDown />
+                  </label>
+                  <button className="al-btn" disabled title="Coming soon">
+                    <SlidersHorizontal /> More Filters
+                  </button>
+                  <button className="al-link right" disabled title="Coming soon">
+                    <Star /> Save as View
+                  </button>
+                  <button className="al-link" onClick={() => setFiltersOpen(false)}>
                     <X /> Close
                   </button>
                 </div>

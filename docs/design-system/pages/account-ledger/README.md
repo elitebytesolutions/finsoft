@@ -22,6 +22,30 @@ also gone — a ledger line scoped to one account does not carry its counter-acc
 extra fetch per row, so it renders empty (or "Reversed" / "Reverses an earlier entry" when true)
 rather than repeating the narration as filler.
 
+**Design-system review (post-684a0bf): every header/toolbar control from the PO's design is back
+in the DOM — the PO's rule is to keep his design, not thin it because a piece isn't wired yet.**
+What is live vs. what renders disabled, labelled "Coming soon":
+
+| Control | Status | Reason |
+|---|---|---|
+| Switch account | **Live** | `GET /api/accounts` |
+| Date range (from/to) | **Live** | The one real query param pair on `GET /api/ledgers/:accountId` |
+| Search (transactions / related accounts) | **Live** | Client-side filter over the already-fetched page — not a server call, never used to compute a total |
+| Rows per page / pager / Load more | **Live** | Client-side pagination of the already-fetched page, plus cursor-based "Load more" against the real endpoint |
+| Opening balance / Closing balance / Total transactions KPIs | **Live** | Server-computed (`openingBalance`/`closingBalance`), and a count of the fetched lines |
+| **Total Debits / Total Credits KPIs** | **Disabled — shows "—"** | `AccountLedgerResponseDto` carries no server-computed debit/credit total for the range (only per-line `debit`/`credit` and `openingBalance`/`closingBalance`); summing the loaded lines in the browser is exactly the arithmetic this restoration removed elsewhere on this page, so it is not done here either |
+| Saved Views (header) | **Disabled** | No saved-view persistence contract |
+| Export | **Disabled** | No export endpoint |
+| Open Full Page | **Disabled** | Pointed at `/finance/accounts/:code`, a record route this product does not have |
+| Sort | **Disabled** | No sort query param — the API's order is fixed server-side (`occurred_at`, then `created_at`, then entry number) |
+| Columns | **Disabled** | No column-configuration contract |
+| Filters: Voucher Type / Transaction Type / Amount / Reference-Counterparty / Status / More Filters | **Disabled** | No matching query param on `GET /api/ledgers/:accountId` (`ledger-query.dto.ts`: `from`/`to`/`limit`/`cursor`/`partyId` only — `partyId` itself is accepted but inert, no M2 posting rule carries a party) |
+| Save as View | **Disabled** | Same missing persistence contract as Saved Views |
+
+Every disabled control renders its real label and icon (not hidden, not a stub) with
+`disabled` and `title="Coming soon"` — the same convention Chart of Accounts uses for Import/
+Add Account.
+
 ## API note — M2-S (2026-09-29)
 
 `REPORT/account-ledger@1` ([ledger-and-trial-balance.md](../../../posting-rules/ledger-and-trial-balance.md)
