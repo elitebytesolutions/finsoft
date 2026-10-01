@@ -9,7 +9,6 @@ describe('buildCashEntryRequest', () => {
       counterAccountId: 'sales-1',
       amount: '5000',
       date: '2026-09-29',
-      party: 'Walk-in Customer',
       reference: 'INV-1042',
       notes: '',
     })
@@ -20,7 +19,6 @@ describe('buildCashEntryRequest', () => {
     expect(body.occurredAt).toBe('2026-09-29')
     expect(body.reference).toBe('INV-1042')
     expect(body.narration).toContain('received')
-    expect(body.narration).toContain('Walk-in Customer')
   })
 
   it('Cash Out: credits the cash account, debits the chosen account', () => {
@@ -30,7 +28,6 @@ describe('buildCashEntryRequest', () => {
       counterAccountId: 'expense-1',
       amount: '1200.50',
       date: '2026-09-29',
-      party: '',
       reference: '',
       notes: 'Office supplies',
     })
@@ -50,7 +47,6 @@ describe('buildCashEntryRequest', () => {
       counterAccountId: 'sales-1',
       amount: '100',
       date: '2026-09-29',
-      party: '',
       reference: '',
       notes: '',
     })

@@ -13,9 +13,12 @@
  *      Petty Cash" balances the mock invented (locally summed client-side deltas over a fake
  *      base) are GONE — there is no multi-drawer model in the real chart, only the one
  *      CASH_DEFAULT-role account this screen already resolves below.
- *   2. `CashBookReady`/`CashLedger` — M2-S's read-only statement of that same account,
- *      unchanged (same markup, same text, same role/code-fallback banner), so its existing
- *      tests (cashbook.test.tsx) keep passing without a single selector change.
+ *   2. `CashBookReady`/`CashLedger` — M2-S's read-only statement of that same account.
+ *      Resolved by the CASH_DEFAULT role ONLY (Accounting seat review, post-ab229ff): the
+ *      earlier code-fallback to account 1110 when no account held the role is gone. A tenant
+ *      whose chart diverges from the standard template and has no CASH_DEFAULT account gets
+ *      the same empty/error state as any other tenant with no matching account — never a
+ *      guess at which account the number "1110" happens to mean in that chart.
  */
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import {
@@ -39,11 +42,7 @@ import { useNavigate } from '@/lib/router'
 import { listAccounts, getLedger, postJournal } from '@/lib/api/accounting-client'
 import { useApiQuery } from '@/lib/api/use-api-query'
 import { useIdempotencyKey } from '@/lib/api/idempotency-key'
-import {
-  accountByRole,
-  accountByCode,
-  postableJournalAccounts,
-} from '@/lib/accounting/account-tree'
+import { accountByRole, postableJournalAccounts } from '@/lib/accounting/account-tree'
 import { adaptLedgerPages } from '@/lib/adapters/account-ledger'
 import { buildCashEntryRequest } from '@/lib/adapters/cash-book'
 import { formatRunningBalance } from '@/lib/money/running-balance'
@@ -52,7 +51,6 @@ import { ApiError } from '@/lib/api/types'
 import type { AccountDto, LedgerResponse } from '@/lib/api/accounting-types'
 
 const CASH_ROLE = 'CASH_DEFAULT'
-const CASH_CODE_INTERIM = '1110'
 
 export function CashBook() {
   const navigate = useNavigate()
@@ -106,9 +104,7 @@ export function CashBook() {
 }
 
 function CashBookReady({ accounts }: { accounts: AccountDto[] }) {
-  const byRole = accountByRole(accounts, CASH_ROLE)
-  const byCode = accountByCode(accounts, CASH_CODE_INTERIM)
-  const cash = byRole ?? byCode
+  const cash = accountByRole(accounts, CASH_ROLE)
 
   if (!cash) {
     return (
@@ -119,18 +115,10 @@ function CashBookReady({ accounts }: { accounts: AccountDto[] }) {
     )
   }
 
-  return <CashScreen cash={cash} accounts={accounts} usedInterimLookup={!byRole} />
+  return <CashScreen cash={cash} accounts={accounts} />
 }
 
-function CashScreen({
-  cash,
-  accounts,
-  usedInterimLookup,
-}: {
-  cash: AccountDto
-  accounts: AccountDto[]
-  usedInterimLookup: boolean
-}) {
+function CashScreen({ cash, accounts }: { cash: AccountDto; accounts: AccountDto[] }) {
   const [refreshToken, setRefreshToken] = useState(0)
   return (
     <>
@@ -139,11 +127,7 @@ function CashScreen({
         counterAccounts={postableJournalAccounts(accounts).filter((a) => a.id !== cash.id)}
         onPosted={() => setRefreshToken((n) => n + 1)}
       />
-      <CashLedger
-        account={cash}
-        usedInterimLookup={usedInterimLookup}
-        refreshToken={refreshToken}
-      />
+      <CashLedger account={cash} refreshToken={refreshToken} />
     </>
   )
 }
@@ -238,10 +222,8 @@ function CashEntryPanels({
         counterAccountId: f.counterAccountId,
         amount: f.amount,
         date: f.date,
-        party: f.party,
         reference: f.reference,
-        notes:
-          kind === 'Out' && f.mode !== 'Cash' ? `Payment mode: ${f.mode}. ${f.notes}` : f.notes,
+        notes: f.notes,
       })
       const usedKey = kind === 'In' ? keyIn : keyOut
       await postJournal(body, usedKey)
@@ -479,15 +461,7 @@ function CashEntryPanels({
  * M2-S, unchanged — the real ledger of the resolved cash account.
  * ------------------------------------------------------------------ */
 
-function CashLedger({
-  account,
-  usedInterimLookup,
-  refreshToken = 0,
-}: {
-  account: AccountDto
-  usedInterimLookup: boolean
-  refreshToken?: number
-}) {
+function CashLedger({ account, refreshToken = 0 }: { account: AccountDto; refreshToken?: number }) {
   const [from] = useState(startOfMonthIso)
   const [to] = useState(todayIso)
   const [pages, setPages] = useState<LedgerResponse[]>([])
@@ -550,13 +524,6 @@ function CashLedger({
 
   return (
     <>
-      {usedInterimLookup && (
-        <Banner tone="warn">
-          Resolved by code {CASH_CODE_INTERIM}, not by role — no account in this tenant's chart
-          holds the {CASH_ROLE} role. If this tenant's chart ever diverges from the standard
-          template, this page may be looking at the wrong account.
-        </Banner>
-      )}
       <div className="al-stats">
         <article>
           <div>

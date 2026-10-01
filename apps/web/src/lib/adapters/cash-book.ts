@@ -19,11 +19,18 @@ export interface CashEntryInput {
   /** Decimal string, exactly as typed — never parsed to a number here. */
   amount: string
   date: string
-  party: string
   reference: string
   notes: string
 }
 
+/*
+ * Party and Payment Mode are NOT accepted here, deliberately — the Accounting seat's review
+ * (M2-UI coordinator, post-ab229ff): those two fields render on screen, disabled, for the
+ * user's own reference only, and must never reach the posting API, not even folded into the
+ * narration. Taking them out of this function's input entirely (rather than trusting the
+ * screen to keep passing empty strings) means there is no code path left that could leak them
+ * into a posted journal, even if the screen's `disabled` attribute were ever dropped.
+ */
 export function buildCashEntryRequest(input: CashEntryInput): PostJournalRequest {
   const cashLine: PostJournalLineInput =
     input.kind === 'In'
@@ -34,14 +41,11 @@ export function buildCashEntryRequest(input: CashEntryInput): PostJournalRequest
       ? { accountId: input.counterAccountId, credit: input.amount }
       : { accountId: input.counterAccountId, debit: input.amount }
 
-  const partyNote = input.party.trim()
-    ? ` — ${input.kind === 'In' ? 'from' : 'to'} ${input.party.trim()}`
-    : ''
   const notesSuffix = input.notes.trim() ? `. ${input.notes.trim()}` : ''
 
   return {
     occurredAt: input.date,
-    narration: `Cash ${input.kind === 'In' ? 'received' : 'paid'}${partyNote}${notesSuffix}`,
+    narration: `Cash ${input.kind === 'In' ? 'received' : 'paid'}${notesSuffix}`,
     reference: input.reference.trim() || null,
     lines: [cashLine, counterLine],
   }

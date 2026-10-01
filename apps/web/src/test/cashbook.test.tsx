@@ -106,7 +106,9 @@ describe('CashBook', () => {
     expect(screen.queryByText(/resolved by code/i)).not.toBeInTheDocument()
   })
 
-  it('falls back to code 1110 and warns when no account holds the CASH_DEFAULT role', async () => {
+  it('shows the empty state, not a code fallback, when no account holds the CASH_DEFAULT role', async () => {
+    // Accounting seat review (post-ab229ff): there is no more fallback to account code 1110.
+    // An account AT that code with no role set must be treated exactly like no account at all.
     const fetchMock = fetch as ReturnType<typeof vi.fn>
     fetchMock.mockImplementation((url: string) => {
       if (url.startsWith('/api/accounts'))
@@ -129,24 +131,14 @@ describe('CashBook', () => {
             ],
           }),
         )
-      if (url.startsWith('/api/ledgers/'))
-        return Promise.resolve(
-          jsonResponse(200, {
-            accountId: 'a1110',
-            code: '1110',
-            name: 'Cash in Hand',
-            type: 'ASSET',
-            openingBalance: '0.0000',
-            closingBalance: '0.0000',
-            lines: [],
-            nextCursor: null,
-          }),
-        )
       throw new Error(`unexpected fetch: ${url}`)
     })
 
     renderScreen()
-    await waitFor(() => expect(screen.getByText(/resolved by code 1110/i)).toBeInTheDocument())
+    await waitFor(() =>
+      expect(screen.getByText(/No account holds the Cash in Hand role/)).toBeInTheDocument(),
+    )
+    expect(screen.queryByText(/resolved by code/i)).not.toBeInTheDocument()
   })
 
   it('shows an empty state naming the fact there is nothing to see, without a fabricated chart mismatch', async () => {

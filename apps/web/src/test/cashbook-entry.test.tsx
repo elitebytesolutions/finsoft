@@ -214,8 +214,8 @@ describe('Cash Book entry — Cash Out', () => {
 })
 
 describe('Cash Book entry — Payment Mode and Party are not sent', () => {
-  it('posts only the account/amount lines and a narration — no payment-mode or party field', async () => {
-    let posted: { narration: string; reference: string | null; lines: unknown[] } | null = null
+  it('posts only the account/amount lines and a narration — no payment-mode or party field, not even inside the narration', async () => {
+    let posted: PostedBody | null = null
     mockFetch((body) => {
       posted = body
     })
@@ -232,12 +232,49 @@ describe('Cash Book entry — Payment Mode and Party are not sent', () => {
 
     fireEvent.change(screen.getByLabelText('Income account'), { target: { value: 'a4100' } })
     fireEvent.change(screen.getByLabelText('Cash in amount'), { target: { value: '750' } })
+    fireEvent.change(within(panel).getByPlaceholderText('e.g. Payment for invoice'), {
+      target: { value: 'Covers March rent top-up' },
+    })
     fireEvent.click(screen.getByRole('button', { name: /save cash in/i }))
     const dialog = await screen.findByRole('dialog', { name: /confirm cash in/i })
     fireEvent.click(within(dialog).getByRole('button', { name: /post entry/i }))
 
     await waitFor(() => expect(posted).not.toBeNull())
     expect(posted!.lines).toHaveLength(2)
+    // Not a separate field in the request body at all...
+    expect(Object.keys(posted!)).not.toContain('party')
+    expect(Object.keys(posted!)).not.toContain('mode')
+    expect(Object.keys(posted!)).not.toContain('paymentMode')
+    // ...and not folded into the narration either, even though the user's own free-text
+    // Notes field (which DOES travel in the narration) is present in this same request.
+    expect(posted!.narration).toContain('Covers March rent top-up')
     expect(posted!.narration.toLowerCase()).not.toContain('payment mode')
+    expect(posted!.narration.toLowerCase()).not.toContain('walk-in customer')
+  })
+
+  it('Cash Out: Party and Payment Mode still never reach the request', async () => {
+    let posted: PostedBody | null = null
+    mockFetch((body) => {
+      posted = body
+    })
+    renderScreen()
+
+    await waitFor(() => expect(screen.getByLabelText('Expense account')).toBeInTheDocument())
+    const panel = screen.getByText('Cash Out').closest('form')!
+    const modeSelect = within(panel).getByDisplayValue('Cash') as HTMLSelectElement
+    expect(modeSelect).toBeDisabled()
+
+    fireEvent.change(screen.getByLabelText('Expense account'), { target: { value: 'a6300' } })
+    fireEvent.change(screen.getByLabelText('Cash out amount'), { target: { value: '1200' } })
+    fireEvent.click(screen.getByRole('button', { name: /save cash out/i }))
+    const dialog = await screen.findByRole('dialog', { name: /confirm cash out/i })
+    fireEvent.click(within(dialog).getByRole('button', { name: /post entry/i }))
+
+    await waitFor(() => expect(posted).not.toBeNull())
+    expect(Object.keys(posted!)).not.toContain('party')
+    expect(Object.keys(posted!)).not.toContain('mode')
+    expect(Object.keys(posted!)).not.toContain('paymentMode')
+    expect(posted!.narration.toLowerCase()).not.toContain('payment mode')
+    expect(posted!.narration.toLowerCase()).not.toContain('cheque')
   })
 })
