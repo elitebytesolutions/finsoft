@@ -3095,6 +3095,7 @@ output.sav-num{display:inline-flex;align-items:center;justify-content:center;bac
 .al-account-icon{width:60px;height:60px;border-radius:50%;background:var(--a-mint);color:var(--a-green);display:grid;place-items:center;flex:none}.al-account-icon svg{width:28px;height:28px}
 .al-account-text{flex:1;min-width:0}.al-account-text>div{display:flex;align-items:center;gap:12px}.al-account-text h2{margin:0;font-size:22px;font-weight:800;letter-spacing:-.3px}.al-account-text p{margin:6px 0 4px;font-size:12.5px;color:#3D5166;display:flex;align-items:center;gap:8px}.al-account-text p i{width:3px;height:3px;border-radius:50%;background:#94A3B8}.al-account-text small{font-size:12px;color:var(--a-mute)}
 .al-status{background:var(--a-mint);color:var(--a-green-dk);font-size:11.5px;font-weight:700;padding:4px 10px;border-radius:6px}
+.al-daterange{display:flex;gap:14px;margin:16px 0}.al-daterange .vn-fld{width:190px}
 .al-office{display:flex;align-items:center;gap:12px;padding-left:24px;border-left:1px solid var(--a-line)}.al-office-icon{width:40px;height:40px;display:grid;place-items:center;color:var(--a-green)}.al-office-icon svg{width:24px;height:24px}.al-office b{display:block;font-size:13.5px}.al-office small{font-size:12px;color:var(--a-mute)}
 .al-select{position:relative;height:40px;display:inline-flex;align-items:center;gap:8px;padding:0 12px;border:1px solid var(--a-line);border-radius:10px;background:#fff;font-size:12.5px;font-weight:600;margin-left:14px;min-width:170px}.al-select select{position:absolute;inset:0;opacity:0;width:100%;cursor:pointer}.al-select>svg{width:14px;height:14px;margin-left:auto;color:var(--a-mute)}.al-select.sm{height:32px;min-width:0;margin:0;font-size:12px;padding:0 10px}
 /* stats */
@@ -3140,20 +3141,42 @@ output.sav-num{display:inline-flex;align-items:center;justify-content:center;bac
 @media(max-width:780px){.coa2,.al{margin:-18px;padding:16px}}
 
 /* ---- Account ledger table refinement ---- */
-.al-table{border:1px solid var(--a-line);border-radius:12px;overflow:hidden}
-.al-table table{border-collapse:separate;border-spacing:0}
-.al-table th{background:#F7F9FB;font-size:11px;font-weight:700;color:#6B7C8E;padding:12px 16px;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--a-line)}
-.al-table td{padding:14px 16px;font-size:13px;border-bottom:1px solid #EEF2F5;vertical-align:middle;line-height:1.35}.al-table tbody tr:last-child td{border-bottom:0}
-.al-table td.date{color:var(--a-mute);white-space:nowrap;width:110px}
-.al-ref{display:block;font-weight:700;color:var(--a-ink);white-space:nowrap}
+/* overflow-x:auto (not hidden): at a narrow viewport the colgroup-driven min-width below can
+ * exceed the panel's width — the table scrolls INSIDE this box rather than clipping Balance,
+ * which `overflow:hidden` used to do at 1440 itself (design-system review). */
+.al-table{border:1px solid var(--a-line);border-radius:12px;overflow-x:auto;overflow-y:hidden}
+/* table-layout:fixed + the colgroup in account-ledger.tsx is the actual column-width contract —
+ * Date/Voucher/Debit/Credit/Balance/Actions are fixed, Particulars (no <col> width) takes
+ * whatever is left. min-width is the sum of those fixed columns plus a readable floor for
+ * Particulars; below that the wrapper above scrolls instead of squeezing cells illegibly. */
+.al-table table{border-collapse:separate;border-spacing:0;table-layout:fixed;width:100%;min-width:790px}
+/* Compact density (docs/design-system/pages/account-ledger/README.md §11: "Compact density is
+ * the default here") — tighter than the kit's usual table padding, which buys back the room
+ * seven fixed-plus-flexible columns need at 1440 without squeezing Particulars to the point of
+ * breaking words mid-word. */
+.al-table th{background:#F7F9FB;font-size:11px;font-weight:700;color:#6B7C8E;padding:10px 12px;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--a-line);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.al-table td{padding:11px 12px;font-size:13px;border-bottom:1px solid #EEF2F5;vertical-align:middle;line-height:1.35}.al-table tbody tr:last-child td{border-bottom:0}
+/* Only Particulars (the one flexible column) and the Voucher reference truncate with an
+ * ellipsis as a safety net for unusually long content — Date/Debit/Credit/Balance are
+ * fixed-format values with generous-enough columns (below) that they never need to. */
+.al-table td.date{color:var(--a-mute);white-space:nowrap}
+.al-ref{display:block;font-weight:700;color:var(--a-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .al-type{display:inline-block;margin-top:4px;font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:999px;background:#EEF2F5;color:#5B6B80}.al-type.sales{background:#E6F4EC;color:#0B5E33}.al-type.receipt{background:#E8F1FD;color:#1B5FB4}.al-type.payment{background:#FFF1E4;color:#B4560E}
-.al-table td.part b{display:block;font-size:13px;font-weight:600;color:var(--a-ink)}.al-table td.part small{display:block;font-size:11.5px;color:var(--a-mute);margin-top:2px}
-.al-table td.num{font-variant-numeric:tabular-nums;white-space:nowrap;width:130px}.al-table td.num i{font-style:normal;color:#C4CFDA}
+/* Wraps (not nowrap+ellipsis): a `white-space:nowrap` narration has a min-content width equal
+ * to its FULL unwrapped text even with overflow:hidden set — table-layout:fixed still floors
+ * the Particulars column at that width for a column with no declared <col> width, which is
+ * exactly what was pushing the whole table past its container again. Wrapping caps the min-
+ * content at the single longest word instead, and a two-line narration costs nothing a user
+ * can't read. */
+/* white-space:normal overrides the inherited `.table-wrap table{white-space:nowrap}` (this
+ * table carries both classes) — without it, the narration never wraps and silently overflows
+ * past its column, visually overlapping Debit/Credit instead of clipping or wrapping. */
+.al-table td.part b{display:block;font-size:13px;font-weight:600;color:var(--a-ink);white-space:normal;overflow-wrap:break-word}.al-table td.part small{display:block;font-size:11.5px;color:var(--a-mute);margin-top:2px;white-space:normal;overflow-wrap:break-word}
+.al-table td.num{font-variant-numeric:tabular-nums;white-space:nowrap;overflow:visible}.al-table td.num i{font-style:normal;color:#C4CFDA}
 .al-table td.dr{color:var(--money-debit);font-weight:600}.al-table td.cr{color:var(--money-credit);font-weight:600}
 .al-table td.bal{font-weight:800;color:var(--a-ink)}.al-table td.bal small{display:inline;font-size:10.5px;color:var(--a-mute);font-weight:600;margin-left:5px}
 .al-table tr.bf td{background:#F7FBF8}.al-table tr.bf .al-ref{color:var(--a-mute);font-weight:600}
 .al-table tbody tr:hover td{background:#FAFCFB}.al-table tr.bf:hover td{background:#F2F8F4}
-.al-table .ctr{width:48px}
 /* ledger table — vertical column dividers */
 .al-table th,.al-table td{border-right:1px solid #EEF2F5}.al-table th:last-child,.al-table td:last-child{border-right:0}
 .al-table th{border-right-color:#E6EBF0}
