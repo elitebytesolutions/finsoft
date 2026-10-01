@@ -1581,8 +1581,13 @@ export function HR({
   )
 }
 export function Admin({
-  role,
-  setRole,
+  // Neither is read any more — the Roles & permissions tab's switcher (the only thing
+  // that ever called setRole, or compared against role) was removed (Security seat
+  // condition 2). Kept in the signature since every caller (admin-audit/page.tsx,
+  // admin/page.tsx, admin-roles/page.tsx) still passes them from app-context.tsx's mock
+  // store, which other, still-mock parts of the app continue to read.
+  role: _role,
+  setRole: _setRole,
   initialTab = 'Users',
 }: {
   role: string
@@ -1639,17 +1644,15 @@ export function Admin({
         ))}
       </div>
       {tab === 'Roles & permissions' ? (
-        <Panel
-          title="Role access preview"
-          sub="Switch role to preview the application exactly as that user"
-        >
+        // Security seat condition 2: no more role switching from here — this used to
+        // call the mock setRole(name) on click, letting anyone browsing Admin flip which
+        // role the whole app (including still-mock screens' module gates) behaved as,
+        // with nothing clearing it on sign-out. Read-only now: what each role grants,
+        // not a control.
+        <Panel title="Roles" sub="What each role grants">
           <div className="role-cards">
             {Object.entries(roles).map(([name, permissions]) => (
-              <button
-                className={role === name ? 'selected' : ''}
-                onClick={() => setRole(name)}
-                key={name}
-              >
+              <div className="role-card-static" key={name}>
                 <span>{name.slice(0, 2).toUpperCase()}</span>
                 <div>
                   <b>{name}</b>
@@ -1659,8 +1662,7 @@ export function Admin({
                       : `${permissions.length} modules enabled`}
                   </small>
                 </div>
-                {role === name && <Check />}
-              </button>
+              </div>
             ))}
           </div>
         </Panel>

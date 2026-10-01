@@ -232,6 +232,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     await apiLogout()
+    // app-context.tsx's mock role (the prototype screens' own can()/act(), not this
+    // provider's real permissions) must not survive a sign-out — a different person
+    // signing in on the same browser otherwise inherits whatever role the last person
+    // last switched to, silently. Cleared directly (not via FinsoftProvider, which this
+    // module does not and should not depend on) since this is the one place every sign-
+    // out, from any screen, actually passes through.
+    try {
+      localStorage.removeItem('finsoft-role')
+    } catch {
+      // storage can be unavailable (private browsing, disabled cookies) — sign-out must
+      // not fail because of it.
+    }
     setState({ ...initialState, status: 'unauthenticated' })
     navigate('/login', { replace: true })
   }, [navigate])
