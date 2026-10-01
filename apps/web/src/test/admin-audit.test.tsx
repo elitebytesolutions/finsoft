@@ -194,4 +194,82 @@ describe('Admin — Audit log tab (real API)', () => {
     )
     expect(screen.queryByRole('button', { name: /invite user/i })).not.toBeInTheDocument()
   })
+
+  it('never shows the full actor uuid, not even as a hover title', async () => {
+    const fetchMock = fetch as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValue(jsonResponse(200, AUDIT_PAGE))
+
+    renderScreen()
+    await waitFor(() => expect(screen.getAllByText(/^User · /).length).toBeGreaterThan(0))
+    expect(document.querySelector('[title="user-bbbbbbbb-1111"]')).toBeNull()
+    expect(screen.queryByText('user-bbbbbbbb-1111')).not.toBeInTheDocument()
+  })
+
+  it('splits DENIED (warn, "Denied") from FAIL (danger, "Failed") from everything else (good, "Success")', async () => {
+    const fetchMock = fetch as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, {
+        items: [
+          { ...AUDIT_PAGE.items[0], id: 'ok', action: 'CUSTOMER_CREATED' },
+          { ...AUDIT_PAGE.items[0], id: 'denied', action: 'PERMISSION_DENIED' },
+          { ...AUDIT_PAGE.items[0], id: 'failed', action: 'LOGIN_FAILED' },
+        ],
+        nextCursor: null,
+      }),
+    )
+
+    renderScreen()
+
+    const success = await screen.findByText('Success')
+    expect(success.className).toContain('good')
+    const denied = screen.getByText('Denied')
+    expect(denied.className).toContain('warn')
+    const failed = screen.getByText('Failed')
+    expect(failed.className).toContain('danger')
+  })
+
+  it('sends an inclusive "To" date — the start of the next local day, not that day\'s own midnight UTC', async () => {
+    const fetchMock = fetch as ReturnType<typeof vi.fn>
+    let lastUrl = ''
+    fetchMock.mockImplementation((url: string) => {
+      lastUrl = url
+      return Promise.resolve(jsonResponse(200, { items: [], nextCursor: null }))
+    })
+
+    renderScreen()
+    await waitFor(() => expect(screen.getByText(/no audit events for/i)).toBeInTheDocument())
+
+    fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-09-29' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Apply filters' }))
+
+    await waitFor(() => expect(lastUrl).toContain('to='))
+    const to = decodeURIComponent(new URL(lastUrl, 'http://x').searchParams.get('to')!)
+    // Start of 2026-09-30 local, not 2026-09-29T00:00:00.000Z (which would exclude the
+    // whole selected day in any timezone ahead of UTC).
+    expect(to.startsWith('2026-09-29T00:00:00')).toBe(false)
+    expect(new Date(to).getTime()).toBeGreaterThan(new Date('2026-09-29T23:59:59.000Z').getTime())
+  })
+
+  it('shows an error, not a silent failure, when Load more itself fails', async () => {
+    const fetchMock = fetch as ReturnType<typeof vi.fn>
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(jsonResponse(200, { items: AUDIT_PAGE.items, nextCursor: 'cursor-2' })),
+    )
+
+    renderScreen()
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Load more' })).toBeInTheDocument(),
+    )
+
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(jsonResponse(500, { statusCode: 500, error: 'internal', message: 'boom' })),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
+
+    await waitFor(() =>
+      expect(screen.getByText(/could not load more audit events/i)).toBeInTheDocument(),
+    )
+    // The button survives the failure — the user can retry rather than losing the action.
+    expect(screen.getByRole('button', { name: 'Load more' })).toBeInTheDocument()
+  })
 })

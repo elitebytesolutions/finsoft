@@ -77,7 +77,7 @@ import { useApiQuery } from '@/lib/api/use-api-query'
 import { listAuditEvents } from '@/lib/api/audit-client'
 import type { AuditEvent, AuditPage } from '@/lib/api/audit-types'
 import { humanizeAction, actorLabel, entityLabel } from '@/lib/adapters/audit'
-import { todayIso } from '@/lib/date/local-date'
+import { todayIso, nextLocalDayIso } from '@/lib/date/local-date'
 
 export function Dashboard({
   go,
@@ -1730,10 +1730,15 @@ function AuditLogPanel() {
   const [draft, setDraft] = useState<AuditFilters>(EMPTY_AUDIT_FILTERS)
   const [applied, setApplied] = useState<AuditFilters>(EMPTY_AUDIT_FILTERS)
   const [pages, setPages] = useState<AuditPage[]>([])
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null)
 
   const query = (cursor?: string) => ({
     from: applied.from ? new Date(applied.from).toISOString() : undefined,
-    to: applied.to ? new Date(applied.to).toISOString() : undefined,
+    // Exclusive start-of-next-local-day, not the selected day's own midnight UTC — see
+    // nextLocalDayIso's own comment (Security seat condition 4: the selected day was
+    // being excluded in any timezone ahead of UTC, Pakistan included).
+    to: applied.to ? nextLocalDayIso(applied.to) : undefined,
     action: applied.action || undefined,
     entityType: applied.entityType || undefined,
     limit: 50,
@@ -1763,17 +1768,38 @@ function AuditLogPanel() {
   const items = pages.flatMap((p) => p.items)
   const loadMore = () => {
     if (!lastPage?.nextCursor) return
-    listAuditEvents(query(lastPage.nextCursor)).then((page) => setPages((prev) => [...prev, page]))
+    setLoadingMore(true)
+    setLoadMoreError(null)
+    listAuditEvents(query(lastPage.nextCursor)).then(
+      (page) => {
+        setPages((prev) => [...prev, page])
+        setLoadingMore(false)
+      },
+      () => {
+        // A fixed, plain-language message rather than the server's own — consistent with
+        // the main load error above, and with not surfacing a technical message to an
+        // end user.
+        setLoadingMore(false)
+        setLoadMoreError('Could not load more audit events. Try again.')
+      },
+    )
   }
   const applyFilters = () => setApplied(draft)
   const resetFilters = () => {
     setDraft(EMPTY_AUDIT_FILTERS)
     setApplied(EMPTY_AUDIT_FILTERS)
   }
-  const outcomeOf = (ev: AuditEvent): 'good' | 'warn' | 'danger' => {
+  /**
+   * Design-system seat: DENIED and FAIL are not the same outcome — a permission denial
+   * (the user did something they are not allowed to) is a `warn`, not a `danger`; a
+   * genuine failure (the action itself broke) is the `danger`. Collapsing them both into
+   * "Denied" mislabelled real failures as access-control events.
+   */
+  const outcomeOf = (ev: AuditEvent): { tone: 'good' | 'warn' | 'danger'; label: string } => {
     const a = ev.action.toUpperCase()
-    if (a.includes('DENIED') || a.includes('FAIL')) return 'danger'
-    return 'good'
+    if (a.includes('DENIED')) return { tone: 'warn', label: 'Denied' }
+    if (a.includes('FAIL')) return { tone: 'danger', label: 'Failed' }
+    return { tone: 'good', label: 'Success' }
   }
 
   return (
@@ -1840,22 +1866,31 @@ function AuditLogPanel() {
         <>
           <Table
             headers={['Timestamp', 'User', 'Action', 'Entity', 'Detail', 'Outcome']}
-            rows={items.map((ev) => [
-              <time dateTime={ev.occurredAt}>{ev.occurredAt.replace('T', ' ').slice(0, 19)}</time>,
-              <span title={ev.actorUserId ?? undefined}>
-                {actorLabel(ev.actorUserId, user?.id)}
-              </span>,
-              humanizeAction(ev.action),
-              `${ev.entityType} · ${entityLabel(ev.entityId)}`,
-              humanizeAction(ev.action),
-              <Badge tone={outcomeOf(ev)}>
-                {outcomeOf(ev) === 'danger' ? 'Denied' : 'Success'}
-              </Badge>,
-            ])}
+            rows={items.map((ev) => {
+              const outcome = outcomeOf(ev)
+              return [
+                <time dateTime={ev.occurredAt}>
+                  {ev.occurredAt.replace('T', ' ').slice(0, 19)}
+                </time>,
+                // No title/tooltip with the full actor id — Security seat condition 3: it
+                // leaked the raw uuid on hover even though the cell itself shows a short
+                // label.
+                actorLabel(ev.actorUserId, user?.id),
+                humanizeAction(ev.action),
+                `${ev.entityType} · ${entityLabel(ev.entityId)}`,
+                humanizeAction(ev.action),
+                <Badge tone={outcome.tone}>{outcome.label}</Badge>,
+              ]
+            })}
           />
           {lastPage?.nextCursor && (
             <div style={{ textAlign: 'center', margin: '12px 0' }}>
-              <Button kind="secondary" onClick={loadMore}>
+              {loadMoreError && (
+                <div className="empty-state" role="alert" style={{ marginBottom: 8 }}>
+                  {loadMoreError}
+                </div>
+              )}
+              <Button kind="secondary" onClick={loadMore} busy={loadingMore}>
                 Load more
               </Button>
             </div>
