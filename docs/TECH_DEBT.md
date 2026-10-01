@@ -480,43 +480,39 @@ only the first is fixed. TD-014 stays open exactly as stated above.
 
 ---
 
-## TD-015 · P04-P06/P10 must execute in the gate before anything reaches `main`
+## TD-015 · CLOSED — P04-P06/P08/P09-P12 now execute in the gate, through the real module
 
-**What.** `packages/accounting-kernel/src/events.ts`'s `IMPLEMENTED_EVENTS` now
-includes `SALE_POSTED` and `CUSTOMER_PAYMENT_RECEIVED`, and `modules/receivables`
-posts both for real — proven by its own integration suite
-(`tests/integration/receivables/receivables-api.spec.ts`) against the real
-HTTP API, matching the P04 (10,000.0000 invoice), P05 (6,000.0000 partial
-receipt), P06 (reversal) and P10 (half-way rounding tie) figures exactly.
-But the golden scenario files themselves — `posting-p04-service-invoice.json`,
-`posting-p05-customer-receipt.json`, `posting-p06-reversal.json` and
-`posting-p10-service-line-rounding.json` — are still `PENDING` in
-`tests/accounting/golden-posting-registry.ts`, not `EXECUTED_IN_M2`, because
-`golden-posting-runner.ts` (owned by the parallel M3-Q lane) has no path yet
-that drives a scenario through a module's `index.ts` (ADR-0028 statement 10);
-it still hardcodes `executableFrom === 'M2'` and `referenceType:
-'journal_voucher'`.
-
-**Why this is accepted only temporarily, not resolved.** This is NOT a normal
-piece of deferred debt: it is a condition on shipping. A kernel rule that is
-`IMPLEMENTED` with no golden scenario executing against it in the financial
-gate is exactly the gap docs/posting-rules/README.md §3 exists to close
-("golden first, same PR" — the rule change and its golden land together, or
-the rule is not really proven). M3-P's own integration suite is real
-coverage, but it is not the SAME reviewable, hand-computed-figures mechanism
-every other posting rule is held to, and it does not run where CI's
-financial gate looks.
-
-**Owner.** M3-Q lane (owns `tests/accounting/**` and the golden runner, per
-docs/design/M3/README.md §3).
-
-**What would force it — and must, before `main`.** M3-Q's
-`golden-posting-runner.ts` update: support for `executableFrom: "M3"`, the
+**Closed 2026-10-01 (M3-Q, M3-P @2a02731+ merged).** `golden-posting-runner.ts`
+gained the module-routed path ADR-0028 statement 10 asks for: the
 `saveDraft`/`editDraft`/`cancelDraft`/`customer` verbs the golden files
-already use, and a `post`/`reverse` path that drives
-`sales_invoice`/`customer_receipt` sources through `modules/receivables`'s
-own `index.ts` rather than `postingEngine.post` directly. Once that lands,
-P04, P05, P06 and P10 move from `PENDING` to `EXECUTED` in
-`golden-posting-registry.ts` — the Council review of efb7e3f treats this
-flip, in the financial gate, as a precondition for this feature reaching
-`main`, not an optional follow-up.
+already used, a `post`/`reverse` path that drives `sales_invoice`/
+`customer_receipt` sources through `modules/receivables`'s own `index.ts`
+(`receivables-real-port.ts`, a `ReceivablesPort` adapter — never a fake, never
+a throwaway merge) instead of `postingEngine.post` directly, an `'ALL'`
+milestone for P08's dual M2/M3 subset, and a `level: "kernel"` escape for the
+handful of kernel-only rejections the module's own command shape cannot
+reproduce (no client-submittable `lineNet`, `kind` or `settlement` field).
+
+P04, P05, P06, P08 (all ten steps), P09, P10, P11 and P12 now run through
+`posting-scenarios-m3.spec.ts` against the REAL `modules/receivables`, and
+are `EXECUTED_IN_M3` in `tests/accounting/golden-posting-registry.ts` — not
+`PENDING`. `PENDING` is empty: every posting golden scenario README §6 lists
+now executes somewhere, for real. Invariant 9 (AR half) and
+`tests/reconciliation/subledger-to-gl-ar.spec.ts` are enforced on real rows
+in the same change (`tests/accounting/invariants.ts`,
+`tests/accounting/pending-baseline.json`); `tests/reconciliation/
+dormant.spec.ts`'s FND-012 tripwire is re-armed on what remains (AP, Wave 6;
+inventory, Wave 5) instead of on AR, which is answered.
+
+**What was the original gap.** `packages/accounting-kernel/src/events.ts`'s
+`IMPLEMENTED_EVENTS` included `SALE_POSTED`/`CUSTOMER_PAYMENT_RECEIVED`, and
+`modules/receivables` posted both for real — proven by its own integration
+suite (`tests/integration/receivables/receivables-api.spec.ts`) — but the
+golden scenario files themselves had no runner path to execute through the
+module (ADR-0028 statement 10), so the SAME reviewable, hand-computed-figures
+mechanism every other posting rule is held to was not yet proving these
+rules in the financial gate. Docs/posting-rules/README.md §3's "golden
+first, same PR" was true of the RULE but not yet of its golden.
+
+**Owner.** M3-Q lane (owned `tests/accounting/**` and the golden runner, per
+docs/design/M3/README.md §3).
