@@ -125,13 +125,19 @@ describe('parties', () => {
         `update parties set party_type = 'VENDOR' where id = '${id}'`,
         `update parties set version = version + 1 where id = '${id}'`,
         `delete from parties where id = '${id}'`,
-        // Listed first so ITS before-truncate trigger fires first; journal_lines
-        // and customers are included only because the FK forbids truncating
-        // parties alone — customers (M3-C, migration 015) is the second
-        // table with a foreign key into parties (ADR-0026 statement 4), so
-        // omitting it here now fails at the FK check (0A000) before the
-        // trigger even runs, rather than at parties_forbid_mutation.
-        'truncate parties, journal_lines, customers',
+        // Listed first so ITS before-truncate trigger fires first; every
+        // other table here is named only because the FK forbids truncating
+        // parties or customers alone. customers (M3-C, migration 015) has a
+        // foreign key into parties (ADR-0026 statement 4); sales_invoices
+        // and customer_receipts (M3-P, migrations 016-017) each have a
+        // foreign key into customers; sales_invoice_lines,
+        // customer_receipt_draft_allocations and customer_receipt_allocations
+        // each have a foreign key into sales_invoices (and the latter two
+        // into customer_receipts too). Omitting any of them now fails at
+        // the FK check (0A000) before the trigger even runs, rather than at
+        // parties_forbid_mutation.
+        'truncate parties, journal_lines, customers, sales_invoices, sales_invoice_lines, ' +
+          'customer_receipts, customer_receipt_draft_allocations, customer_receipt_allocations',
       ]) {
         await client.query('BEGIN')
         try {
@@ -142,7 +148,9 @@ describe('parties', () => {
           // (40P01) against a concurrent posting on a shared test cluster.
           // Observed once without this.
           await client.query(
-            'lock table journal_lines, parties, customers in access exclusive mode',
+            'lock table journal_lines, parties, customers, sales_invoices, sales_invoice_lines, ' +
+              'customer_receipts, customer_receipt_draft_allocations, customer_receipt_allocations ' +
+              'in access exclusive mode',
           )
           await expect(client.query(statement), statement).rejects.toMatchObject({
             code: '42501',

@@ -26,10 +26,12 @@ import { readSchemaHealth } from '@finsoft/database'
  * silently — while the running container still needs no access to the
  * migration files.
  *
- * 15: 015_create_customers.sql (M3-C). Renumbered from the M3 design pack's
- * original 014 — see that migration's own header for why.
+ * 17: 017_create_customer_receipts.sql (M3-P). 016 is
+ * 016_create_sales_invoices.sql, also M3-P. 15: 015_create_customers.sql
+ * (M3-C). Renumbered from the M3 design pack's original 014 — see that
+ * migration's own header for why.
  */
-export const REQUIRED_SCHEMA_VERSION = 15
+export const REQUIRED_SCHEMA_VERSION = 17
 
 /**
  * A readiness probe must answer quickly or it is useless: an orchestrator
