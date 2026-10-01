@@ -744,8 +744,7 @@ function ChartReady({ data }: { data: Awaited<ReturnType<typeof loadChart>> }) {
           {rows.map(({ m, depth, last, trail }) => {
             const Icon = iconOf(m),
               kids = childrenOf(m.code).length,
-              isOpen = open.has(m.code),
-              parent = accounts.find((a) => a.code === m.parent)
+              isOpen = open.has(m.code)
             return (
               <div
                 key={m.code}
@@ -796,11 +795,10 @@ function ChartReady({ data }: { data: Awaited<ReturnType<typeof loadChart>> }) {
                   </span>
                 </span>
                 <span className="c-code">{m.code}</span>
-                <span>
+                <span className="c-type-h">
                   <span className={`coa2-kind ${m.kind.toLowerCase()}`}>{m.kind}</span>
                 </span>
-                <span className="c-parent">{parent ? `${parent.name} (${parent.code})` : '—'}</span>
-                <span>
+                <span className="c-subaccounts">
                   <span className={`coa2-count ${kids ? 'on' : ''}`}>{kids}</span>
                 </span>
                 {/* Two lines (amount, then Dr/Cr), not one long inline string — a fixed-width
@@ -820,18 +818,18 @@ function ChartReady({ data }: { data: Awaited<ReturnType<typeof loadChart>> }) {
                 {/* Not fabricated — the mock's per-row "Change" was a hash-derived fake
                  * percentage with no period-comparison API behind it. An em dash, not
                  * invented data (CLAUDE.md, "never fake data"); the column stays so the
-                 * table's fixed 11-column grid (.coa2-tr, kit.css) does not shift. */}
+                 * table's own explicit grid (.coa2-tr2, kit.css) does not shift. */}
                 <span className="c-change flat">
                   <em>● —</em>
+                </span>
+                <span className="c-status">
+                  <span className={`coa2-status ${m.status === 'Active' ? 'on' : 'off'}`}>
+                    ● {m.status}
+                  </span>
                 </span>
                 <span className="c-mod">
                   <b>—</b>
                   <small>not tracked yet</small>
-                </span>
-                <span>
-                  <span className={`coa2-status ${m.status === 'Active' ? 'on' : 'off'}`}>
-                    ● {m.status}
-                  </span>
                 </span>
                 <span className="c-actions">
                   <button
