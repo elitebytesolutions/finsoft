@@ -41,10 +41,15 @@ const fakeAuth: AuthContextValue = {
   tenant: { id: 'test-tenant', code: 'TEST', name: 'Test Tenant' },
   sessionId: 'test-session',
   permissionVersion: 1,
+  // Ported screen tests exercise the mock `can()`/`act()` on `@/app-context`, not this real
+  // permission list — `all` here just keeps every ported test's ambient assumption ("the
+  // fake session can do anything") unchanged now that ANY consumer could call `useAuth().can`.
+  permissions: ['all'],
   errorMessage: null,
   retry: () => {},
   syncAfterLogin: async () => {},
   signOut: async () => {},
+  can: () => true,
 }
 
 export function MemoryRouter({

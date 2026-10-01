@@ -811,6 +811,60 @@ function tableOwnershipSyntax(table) {
   ]
 }
 
+/**
+ * C8 / S2 (ADR-0028), the receivables variant of `tableOwnershipSyntax`:
+ * `modules/receivables/infrastructure/**` owns FIVE tables (modules.md §2:
+ * `sales_invoices`, `sales_invoice_lines`, `customer_receipts`,
+ * `customer_receipt_draft_allocations`, `customer_receipt_allocations`),
+ * all created by ITS OWN migrations (016, 017) — one module, one
+ * infrastructure directory, five tables it may name. Same literal-only,
+ * fails-closed shape as `tableOwnershipSyntax`, PLUS the same "no sql`` tag
+ * at all" sub-rule customers has.
+ *
+ * Security seat, Council review of efb7e3f (S-B): the earlier version of
+ * this function argued the plain `sql` tag was safe here because every use
+ * was non-table-bearing (`now()`, an ISO date cast, the outstanding
+ * aggregate's `SUM(...)`). Rejected — the point of banning the tag ENTIRELY,
+ * not auditing each use, is exactly that a reviewer must not have to keep
+ * proving every call site is still safe as the file changes; the repository
+ * has since been rewritten to use Kysely helpers instead
+ * (`eb.fn('now', [])`, `eb.cast(eb.val(iso), 'date')`, `eb.fn.sum(...)`,
+ * `eb('version', '+', 1)`), so the ban now costs nothing real here either.
+ */
+function multiTableOwnershipSyntax(tables, moduleName) {
+  const allowedLiteral = `/^(${tables.join('|')})(\\s+as\\s+[A-Za-z_][A-Za-z0-9_]*)?$/`
+  const message =
+    `C8 / S2 (ADR-0028): modules/${moduleName}/infrastructure/** names only its own tables, ` +
+    `${tables.map((t) => `'${t}'`).join(', ')} (optionally aliased, e.g. '${tables[0]} as x'). A ` +
+    'builder call naming any other table, or a non-literal (dynamic) table argument, is a lint ' +
+    'error — the check fails closed.'
+  return [
+    {
+      selector:
+        `CallExpression[callee.property.name=/^(${BUILDER_METHODS})$/]` +
+        `[arguments.0.type='Literal']:not([arguments.0.value=${allowedLiteral}])`,
+      message,
+    },
+    {
+      selector:
+        `CallExpression[callee.property.name=/^(${BUILDER_METHODS})$/]` +
+        `:not([arguments.0.type='Literal'])`,
+      message,
+    },
+    {
+      // S2 (Security seat): no sql`` tag at all in this directory, under
+      // any spelling — see tableOwnershipSyntax's identical clause and its
+      // own header note on the two escapes ("fragment composition" and "a
+      // second comma-joined table") that a per-use audit cannot close.
+      selector: "TaggedTemplateExpression[tag.name='sql']",
+      message:
+        `S2 (ADR-0028): modules/${moduleName}/infrastructure/** does not use the sql\`\` tag at all — ` +
+        'every read and write goes through the Kysely builder, whose table argument the ' +
+        'selectors above check literally and fail closed on.',
+    },
+  ]
+}
+
 export default tseslint.config(
   {
     ignores: [
@@ -1202,6 +1256,38 @@ export default tseslint.config(
                 'ADR-0028 statement 4 / C6: apps/api/src/customers/** controllers open no ' +
                 'transaction. Call one use case from @finsoft/customers, which opens its own ' +
                 'withTenant unit of work inside modules/customers/application/.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+
+  /* ---------------------------------------------------------------- *
+   * ADR-0028 statement 4 / C6, M3-P: apps/api/src/receivables/** — the
+   * same adapter ban as apps/api/src/customers/** above.
+   * ---------------------------------------------------------------- */
+  {
+    files: ['apps/api/src/receivables/**/*.ts'],
+    ignores: ['apps/api/src/receivables/**/*.spec.ts', 'apps/api/src/receivables/**/*.test.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            ...DECIMAL_LIB_IMPORT_PATHS,
+            REQUEST_SCOPE_IMPORT_BAN,
+            TENANT_CONTEXT_IMPORT_BAN,
+            TESTING_IMPORT_BAN,
+            PROVISIONING_IMPORT_BAN,
+            WITHGLOBAL_MODULES_BAN,
+            {
+              name: '@finsoft/database',
+              importNames: ['withTenant'],
+              message:
+                'ADR-0028 statement 4 / C6: apps/api/src/receivables/** controllers open no ' +
+                'transaction. Call one use case from @finsoft/receivables, which opens its own ' +
+                'withTenant unit of work inside modules/receivables/application/.',
             },
           ],
         },
@@ -1668,6 +1754,56 @@ export default tseslint.config(
         ...noDecoratorsSyntax,
         ...noDynamicTableEscapeHatchSyntax,
         ...tableOwnershipSyntax('customers'),
+      ],
+    },
+  },
+
+  /* ---------------------------------------------------------------- *
+   * C8 / S2 (ADR-0028), M3-P: modules/receivables/infrastructure/** names
+   * only its own FIVE tables, and — Security seat, Council review of
+   * efb7e3f (S-B) — bans the sql`` tag exactly as customers' block does.
+   * ---------------------------------------------------------------- */
+  {
+    files: ['modules/receivables/infrastructure/**/*.ts'],
+    ignores: ['modules/receivables/infrastructure/**/*.spec.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            ...MODULES_IMPORT_BAN_PATHS,
+            WITHTENANT_OUTSIDE_APPLICATION_BAN,
+            KYSELY_SQL_IMPORT_BAN,
+          ],
+          patterns: [
+            {
+              group: ['@nestjs/*', 'express', 'fastify'],
+              message:
+                'ADR-0028 statement 1: modules/** has no NestJS, express or fastify import. ' +
+                'Controllers live in apps/api/src/<module>/.',
+            },
+          ],
+        },
+      ],
+      'no-restricted-syntax': [
+        'error',
+        ...invariantSyntax,
+        ...connectionOwnershipSyntax,
+        ...authLookupIdentifierSyntax,
+        ...financialTruthWriteSyntax,
+        ...stripOnlySyntax,
+        ...noDecoratorsSyntax,
+        ...noDynamicTableEscapeHatchSyntax,
+        ...multiTableOwnershipSyntax(
+          [
+            'sales_invoices',
+            'sales_invoice_lines',
+            'customer_receipts',
+            'customer_receipt_draft_allocations',
+            'customer_receipt_allocations',
+          ],
+          'receivables',
+        ),
       ],
     },
   },

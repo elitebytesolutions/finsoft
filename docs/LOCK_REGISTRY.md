@@ -311,6 +311,53 @@ COLUMN`, or dropped in a later migration — not silently left ambiguous.
 
 ---
 
+## Row locks — migrations 016-017 (sales_invoices / customer_receipts, M3-P)
+
+**New positions, inserted before today's position 2** (stock, still Wave 5+ and unclaimed):
+
+| Position | Lock | Mode | Taken by |
+|---|---|---|---|
+| **1a** | `customers` row | `FOR SHARE` (posting) · `FOR UPDATE` (deactivate, reactivate, update) | `requireActiveForPosting` / `requireForPayment` (`modules/customers`), customer mutations |
+| **1b** | `customer_receipts` row | `FOR UPDATE` | `PostReceipt`, `ReverseReceipt`, receipt draft update and cancel |
+| **1c** | `sales_invoices` rows | `FOR UPDATE`, **ascending `id`, one statement per row** (the migration-008 lesson: `ORDER BY … FOR UPDATE` does not fix acquisition order — see the migration-008 section above) | `PostInvoice`, `PostReceipt`, `ReverseInvoice`, `ReverseReceipt`, draft update and cancel |
+| **1d** | `customer_receipt_allocations` rows of one receipt | row locks of the `LIVE → VOIDED` `UPDATE` (a single statement) | `ReverseReceipt` only, and only while already holding 1b |
+| **5a** | `document_sequences` row of a document series (`INV`, `RCT`) | `FOR UPDATE` | `documentNumbers.next` (K3, `FISCAL_YEAR` scope), inside `PostInvoice` / `PostReceipt` |
+| 5b | `document_sequences` row of an entry series (`JE`, `RV`) | `FOR UPDATE` | unchanged — inside `postingEngine.post` / `reversalEngine.reverseForSource` (K2) |
+| 6 | audit, terminal | | `recordAudit` — unchanged |
+
+Full narrative, including why 1a is `FOR SHARE` for a posting read and `FOR UPDATE` only for a
+customer-status mutation (so a deactivation correctly waits for in-flight postings and then
+reads the balance they produced), why 1c must lock ascending `id` one statement at a time rather
+than `ORDER BY … FOR UPDATE`, and why 1d is scoped to "only while already holding 1b," lives in
+[`docs/design/M3/modules.md` §10](design/M3/modules.md#10-numbering-and-locks) — this entry is
+the register that §10 names itself as owing. A transaction in this module takes at most one 5a
+row and one 5b row, 5a always before 5b; no transaction described in `modules.md` §4 takes a lock
+out of this order. `PostInvoice`/`PostReceipt`'s own unlocked outstanding-balance read (`modules.md`
+§4.2 step 5) is not a lock and so is not ordered here — it runs after the 1c locks are already
+held, so it observes every committed allocation to those invoices.
+
+**Reversal (`ReverseInvoice`/`ReverseReceipt`).** Same 1a/1b/1c/1d order as posting — a reversal
+locks the same rows a post would, in the same order, before taking 5b (`reverseForSource` takes
+no 5a row: no new document number is consumed on reversal, only a new entry-series number at 5b).
+
+Recorded per the Council review of `feature/M3-P-receivables` @ `efb7e3f` (Architecture and
+Database seats), closing the placeholder `modules.md` §10 left for this file. See
+`database/migrations/016_create_sales_invoices.sql` and
+`database/migrations/017_create_customer_receipts.sql` for the code-adjacent version of this
+entry, and `tests/integration/receivables/receivables-api.spec.ts`'s "concurrency: lock order"
+suite for the two-connection proof.
+
+**Note on the `5a`/`5b` labels above (M2-C merge, 2026-10-01).** These reuse the `5a`/`5b` short
+names for a `document_sequences` row taken inside `PostInvoice`/`PostReceipt` — a different lock
+than the global table's own `5a` (the reversal-entry row) and `5b` (the `fiscal_periods` row). The
+global table was not amended by M3-P to add `1a`-`1d` or a document-sequences-specific `5a`/`5b`;
+this section is reproduced verbatim from develop as merged, and the discrepancy is pre-existing,
+not introduced by this merge. Reconciling the table with this narrative (either by giving these
+module-scoped positions their own, non-colliding labels, or by folding them into the global table
+properly) is Architecture Guardian follow-up, not resolved here.
+
+---
+
 ## Row locks — migration 018 (accounts create/edit, M2-C) — position 5d
 
 **Order:** a single row, `accounts (tenant_id, id)` — the account being edited, `FOR UPDATE`. Claims

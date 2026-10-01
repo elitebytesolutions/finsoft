@@ -59,8 +59,25 @@ import {
 import { usePersistentData } from '@/mocks/api'
 import { MasterModal, ProductFormModal } from './master-form'
 import { EmployeeFormModal } from './employee-form'
-import { Button, Badge, PageHead, Kpi, Panel, SearchField, Modal, Table } from '@finsoft/ui'
+import {
+  Button,
+  Badge,
+  PageHead,
+  Kpi,
+  Panel,
+  SearchField,
+  Modal,
+  Table,
+  Field,
+  TextInput,
+} from '@finsoft/ui'
 import { money } from '@finsoft/ui'
+import { useAuth } from '@/lib/api/auth-context'
+import { useApiQuery } from '@/lib/api/use-api-query'
+import { listAuditEvents } from '@/lib/api/audit-client'
+import type { AuditEvent, AuditPage } from '@/lib/api/audit-types'
+import { humanizeAction, actorLabel, entityLabel } from '@/lib/adapters/audit'
+import { todayIso, nextLocalDayIso, startOfLocalDayIso } from '@/lib/date/local-date'
 
 export function Dashboard({
   go,
@@ -1564,8 +1581,13 @@ export function HR({
   )
 }
 export function Admin({
-  role,
-  setRole,
+  // Neither is read any more — the Roles & permissions tab's switcher (the only thing
+  // that ever called setRole, or compared against role) was removed (Security seat
+  // condition 2). Kept in the signature since every caller (admin-audit/page.tsx,
+  // admin/page.tsx, admin-roles/page.tsx) still passes them from app-context.tsx's mock
+  // store, which other, still-mock parts of the app continue to read.
+  role: _role,
+  setRole: _setRole,
   initialTab = 'Users',
 }: {
   role: string
@@ -1574,6 +1596,7 @@ export function Admin({
 }) {
   const [tab, setTab] = useState(initialTab),
     navigate = useNavigate()
+  const { can } = useAuth()
   return (
     <>
       <PageHead
@@ -1581,21 +1604,31 @@ export function Admin({
         title="Admin & control"
         description="Manage people, permissions, periods and every security-sensitive action."
         actions={
-          <Button>
-            <Plus /> Invite user
-          </Button>
+          // "Invite user" has no endpoint behind it yet — shown disabled (Button's own
+          // "coming later" title) to a holder of admin.user_manage, hidden for anyone else,
+          // rather than offered as if it worked (M4-W course correction).
+          can('admin.user_manage') ? (
+            <Button disabled>
+              <Plus /> Invite user
+            </Button>
+          ) : undefined
         }
       />
-      <div className="admin-banner">
-        <span>
-          <ShieldCheck />
-        </span>
-        <div>
-          <b>Security posture is strong</b>
-          <p>2FA is enabled for 14 of 16 users. No unusual activity detected.</p>
+      {/* M4-W: the old banner claimed 2FA coverage and a security score neither of which
+          exist (MFA is GAP-003) — removed. Its slot stays in the layout; only the Audit log
+          tab has real data to say something honest with. Every other tab is still mock, so
+          the slot is simply empty there rather than showing invented content. */}
+      {tab === 'Audit log' && (
+        <div className="admin-banner">
+          <span>
+            <ShieldCheck />
+          </span>
+          <div>
+            <b>Audit trail</b>
+            <p>Every security-sensitive action, in order, with a tamper-evident hash chain.</p>
+          </div>
         </div>
-        <Badge tone="good">92 / 100</Badge>
-      </div>
+      )}
       <div className="tabs">
         {[
           'Users',
@@ -1611,17 +1644,15 @@ export function Admin({
         ))}
       </div>
       {tab === 'Roles & permissions' ? (
-        <Panel
-          title="Role access preview"
-          sub="Switch role to preview the application exactly as that user"
-        >
+        // Security seat condition 2: no more role switching from here — this used to
+        // call the mock setRole(name) on click, letting anyone browsing Admin flip which
+        // role the whole app (including still-mock screens' module gates) behaved as,
+        // with nothing clearing it on sign-out. Read-only now: what each role grants,
+        // not a control.
+        <Panel title="Roles" sub="What each role grants">
           <div className="role-cards">
             {Object.entries(roles).map(([name, permissions]) => (
-              <button
-                className={role === name ? 'selected' : ''}
-                onClick={() => setRole(name)}
-                key={name}
-              >
+              <div className="role-card-static" key={name}>
                 <span>{name.slice(0, 2).toUpperCase()}</span>
                 <div>
                   <b>{name}</b>
@@ -1631,8 +1662,7 @@ export function Admin({
                       : `${permissions.length} modules enabled`}
                   </small>
                 </div>
-                {role === name && <Check />}
-              </button>
+              </div>
             ))}
           </div>
         </Panel>
@@ -1655,21 +1685,7 @@ export function Admin({
           />
         </Panel>
       ) : tab === 'Audit log' ? (
-        <Panel title="Audit log" sub="Security-sensitive actions across the organisation">
-          <Table
-            headers={['Date', 'User', 'Action', 'Detail']}
-            rows={users.flatMap((u) =>
-              u.audit.map((a) => [
-                a.date,
-                <button className="linkable" onClick={() => navigate(`/admin/users/${u.id}`)}>
-                  {u.name}
-                </button>,
-                a.action,
-                a.detail,
-              ]),
-            )}
-          />
-        </Panel>
+        <AuditLogPanel />
       ) : (
         <Panel title={tab} sub="Administration records">
           <Table
@@ -1687,5 +1703,203 @@ export function Admin({
         </Panel>
       )}
     </>
+  )
+}
+
+/**
+ * The "Audit log" tab of `Admin`, wired to the real `GET /api/audit` (M4-W). The mock's
+ * `Panel` + `Table` structure stays; only the data source, and the filters/pagination the
+ * real contract needs, are new — audit-trail/README.md §2's FilterBar and cursor pager.
+ * Viewers hold no `audit.view` (a privileged permission, catalog.ts), so this checks
+ * `can('audit.view')` before ever calling the API and shows a Denied panel instead — never
+ * a blank table that quietly 403s and redirects (docs/design-system/04-states.md §5).
+ */
+/** The filters `AuditLogPanel` actually queries with — set only by Apply/Reset, never live
+ * on every keystroke, matching the Customers filter bar's own Apply Filters/Reset pattern. */
+interface AuditFilters {
+  from: string
+  to: string
+  action: string
+  entityType: string
+}
+const EMPTY_AUDIT_FILTERS: AuditFilters = { from: '', to: '', action: '', entityType: '' }
+
+function AuditLogPanel() {
+  const { can, user } = useAuth()
+  const allowed = can('audit.view')
+  const [draft, setDraft] = useState<AuditFilters>(EMPTY_AUDIT_FILTERS)
+  const [applied, setApplied] = useState<AuditFilters>(EMPTY_AUDIT_FILTERS)
+  const [pages, setPages] = useState<AuditPage[]>([])
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null)
+
+  const query = (cursor?: string) => ({
+    // Start of the selected LOCAL day, not its own UTC midnight — see startOfLocalDayIso's
+    // own comment (Security seat follow-up: 00:00-04:59 PKT on the start day was being
+    // dropped).
+    from: applied.from ? startOfLocalDayIso(applied.from) : undefined,
+    // Exclusive start-of-next-local-day, not the selected day's own midnight UTC — see
+    // nextLocalDayIso's own comment (Security seat condition 4: the selected day was
+    // being excluded in any timezone ahead of UTC, Pakistan included).
+    to: applied.to ? nextLocalDayIso(applied.to) : undefined,
+    action: applied.action || undefined,
+    entityType: applied.entityType || undefined,
+    limit: 50,
+    cursor,
+  })
+
+  const { state, reload } = useApiQuery(
+    () => (allowed ? listAuditEvents(query()) : Promise.reject(new Error('denied'))),
+    [allowed, applied],
+  )
+
+  useEffect(() => {
+    if (state.status === 'ready') setPages([state.data])
+  }, [state])
+
+  if (!allowed) {
+    return (
+      <Panel title="Audit log" sub="Security-sensitive actions across the organisation">
+        <div className="empty-state" role="alert">
+          Your role does not have permission to view the audit trail.
+        </div>
+      </Panel>
+    )
+  }
+
+  const lastPage = pages[pages.length - 1]
+  const items = pages.flatMap((p) => p.items)
+  const loadMore = () => {
+    if (!lastPage?.nextCursor) return
+    setLoadingMore(true)
+    setLoadMoreError(null)
+    listAuditEvents(query(lastPage.nextCursor)).then(
+      (page) => {
+        setPages((prev) => [...prev, page])
+        setLoadingMore(false)
+      },
+      () => {
+        // A fixed, plain-language message rather than the server's own — consistent with
+        // the main load error above, and with not surfacing a technical message to an
+        // end user.
+        setLoadingMore(false)
+        setLoadMoreError('Could not load more audit events. Try again.')
+      },
+    )
+  }
+  const applyFilters = () => setApplied(draft)
+  const resetFilters = () => {
+    setDraft(EMPTY_AUDIT_FILTERS)
+    setApplied(EMPTY_AUDIT_FILTERS)
+  }
+  /**
+   * Design-system seat: DENIED and FAIL are not the same outcome — a permission denial
+   * (the user did something they are not allowed to) is a `warn`, not a `danger`; a
+   * genuine failure (the action itself broke) is the `danger`. Collapsing them both into
+   * "Denied" mislabelled real failures as access-control events.
+   */
+  const outcomeOf = (ev: AuditEvent): { tone: 'good' | 'warn' | 'danger'; label: string } => {
+    const a = ev.action.toUpperCase()
+    if (a.includes('DENIED')) return { tone: 'warn', label: 'Denied' }
+    if (a.includes('FAIL')) return { tone: 'danger', label: 'Failed' }
+    return { tone: 'good', label: 'Success' }
+  }
+
+  return (
+    <Panel title="Audit log" sub="Security-sensitive actions across the organisation, newest first">
+      <div className="form-grid" style={{ marginBottom: 16 }}>
+        <Field label="From" htmlFor="audit-from">
+          <input
+            id="audit-from"
+            className="text-input"
+            type="date"
+            value={draft.from}
+            onChange={(e) => setDraft({ ...draft, from: e.target.value })}
+            max={draft.to || todayIso()}
+          />
+        </Field>
+        <Field label="To" htmlFor="audit-to">
+          <input
+            id="audit-to"
+            className="text-input"
+            type="date"
+            value={draft.to}
+            onChange={(e) => setDraft({ ...draft, to: e.target.value })}
+            max={todayIso()}
+          />
+        </Field>
+        <Field label="Action" htmlFor="audit-action" helper="e.g. CUSTOMER_CREATED">
+          <TextInput
+            id="audit-action"
+            value={draft.action}
+            onChange={(v) => setDraft({ ...draft, action: v })}
+          />
+        </Field>
+        <Field label="Entity type" htmlFor="audit-entity-type" helper="e.g. customer">
+          <TextInput
+            id="audit-entity-type"
+            value={draft.entityType}
+            onChange={(v) => setDraft({ ...draft, entityType: v })}
+          />
+        </Field>
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
+          <Button onClick={applyFilters}>Apply filters</Button>
+          <Button kind="secondary" onClick={resetFilters}>
+            Reset
+          </Button>
+        </div>
+      </div>
+
+      {state.status === 'loading' && <div className="empty-state">Loading audit events…</div>}
+      {state.status === 'error' && (
+        <div className="empty-state" role="alert">
+          We could not load the audit trail.{' '}
+          <button className="linkable" onClick={reload}>
+            Try again
+          </button>
+        </div>
+      )}
+      {state.status === 'ready' && items.length === 0 && (
+        <div className="empty-state">
+          No audit events for {applied.from || 'the start'} to {applied.to || 'today'} with these
+          filters.
+        </div>
+      )}
+      {state.status === 'ready' && items.length > 0 && (
+        <>
+          <Table
+            headers={['Timestamp', 'User', 'Action', 'Entity', 'Detail', 'Outcome']}
+            rows={items.map((ev) => {
+              const outcome = outcomeOf(ev)
+              return [
+                <time dateTime={ev.occurredAt}>
+                  {ev.occurredAt.replace('T', ' ').slice(0, 19)}
+                </time>,
+                // No title/tooltip with the full actor id — Security seat condition 3: it
+                // leaked the raw uuid on hover even though the cell itself shows a short
+                // label.
+                actorLabel(ev.actorUserId, user?.id),
+                humanizeAction(ev.action),
+                `${ev.entityType} · ${entityLabel(ev.entityId)}`,
+                humanizeAction(ev.action),
+                <Badge tone={outcome.tone}>{outcome.label}</Badge>,
+              ]
+            })}
+          />
+          {lastPage?.nextCursor && (
+            <div style={{ textAlign: 'center', margin: '12px 0' }}>
+              {loadMoreError && (
+                <div className="empty-state" role="alert" style={{ marginBottom: 8 }}>
+                  {loadMoreError}
+                </div>
+              )}
+              <Button kind="secondary" onClick={loadMore} busy={loadingMore}>
+                Load more
+              </Button>
+            </div>
+          )}
+        </>
+      )}
+    </Panel>
   )
 }

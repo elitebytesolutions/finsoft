@@ -168,5 +168,6 @@ is now its own offense, with a failing fixture. Migration 018 itself uses none o
 exceptions — it needed no `SECURITY DEFINER` function, having been unable to complete the one that
 coa-standard.md §8.7 R2 asks for (a dedicated `NOLOGIN`/`NOBYPASSRLS` role could not be provisioned
 from within this lane's `ALLOWED` paths — see this lane's report, and
-[TECH_DEBT.md](../TECH_DEBT.md) TD-012). The three exceptions are implemented and fixture-tested
+[TECH_DEBT.md](../TECH_DEBT.md) TD-016, renumbered from TD-012 at the M2-C/M3-P merge). The three
+exceptions are implemented and fixture-tested
 regardless, ready for whichever migration lands R2's seeding function.

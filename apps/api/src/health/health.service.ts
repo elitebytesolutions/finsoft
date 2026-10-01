@@ -29,10 +29,12 @@ import { readSchemaHealth } from '@finsoft/database'
  * 15: 015_create_customers.sql (M3-C). Renumbered from the M3 design pack's
  * original 014 — see that migration's own header for why.
  *
+ * 17: 017_create_customer_receipts.sql (M3-P). 016 is
+ * 016_create_sales_invoices.sql, also M3-P.
+ *
  * 19: 018_accounts_create_and_edit.sql + 019_add_account_manage_permission.sql
- * (M2-C, chart-of-accounts create/edit). Migrations 016 and 017 are M3-P's
- * (feature/M3-P-receivables, not yet merged as of this lane) — gapless
- * numbering means this lane's PR merges after that one.
+ * (M2-C, chart-of-accounts create/edit) — merged after M3-P, per the
+ * gapless-numbering rule.
  */
 export const REQUIRED_SCHEMA_VERSION = 19
 

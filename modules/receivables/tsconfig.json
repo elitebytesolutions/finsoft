@@ -1,0 +1,12 @@
+{
+  // Inherits erasableSyntaxOnly from tsconfig.packages.json: modules/* ship
+  // TypeScript SOURCE and run under Node's native type stripping, exactly
+  // like packages/* (ADR-0028 statement 1). No src/ — the layers sit at the
+  // package root (domain/, application/, infrastructure/, api/, index.ts).
+  "extends": "../../tsconfig.packages.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true
+  },
+  "include": ["**/*.ts"],
+  "exclude": ["node_modules"]
+}

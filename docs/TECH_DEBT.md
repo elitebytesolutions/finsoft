@@ -378,11 +378,157 @@ own query shape, rather than resolving a single role.
 
 **Update, 2026-09-29 (Accounting seat, M2-C).** The Product Owner brought chart create/edit into the MVP. It does **not** force this item: [coa-standard.md](posting-rules/coa-standard.md) §8.1 forbids users from creating control accounts, and §8.7 asks migration 018 for R2 (the create path cannot write `control_kind`) and R7 (at most one `AR` and one `AP` control account per tenant, structurally). Once R7 lands, the divergent configuration cannot be stored, and this item can close on the Database seat's evidence.
 
-**Update, 2026-09-29 (M2-C implementation).** R7 has landed: migration 018 adds `accounts_tenant_ar_ap_control_key`, a unique index on `(tenant_id, control_kind) WHERE control_kind IN ('AR', 'AP')`, binding every role including `finsoft_migration` — a second `AR`- or `AP`-control account cannot be stored by any path. R2 (the application-layer narrowing of the create path's own INSERT privilege) is **not** landed — see TD-012 — but R7 alone already closes the structural gap this item names: the divergent configuration `controlAccountLedger` worries about cannot exist in the database regardless of which path attempted to write it. Recommend closing this item on the Database seat's sign-off of migration 018's `accounts_tenant_ar_ap_control_key`.
+**Update, 2026-09-29 (M2-C implementation).** R7 has landed: migration 018 adds `accounts_tenant_ar_ap_control_key`, a unique index on `(tenant_id, control_kind) WHERE control_kind IN ('AR', 'AP')`, binding every role including `finsoft_migration` — a second `AR`- or `AP`-control account cannot be stored by any path. R2 (the application-layer narrowing of the create path's own INSERT privilege) is **not** landed — see TD-016 — but R7 alone already closes the structural gap this item names: the divergent configuration `controlAccountLedger` worries about cannot exist in the database regardless of which path attempted to write it. Recommend closing this item on the Database seat's sign-off of migration 018's `accounts_tenant_ar_ap_control_key`.
 
 ---
 
-## TD-012 · coa-standard.md §8.7 R2's database-privilege backstop is not built — blocked on a new database role
+## TD-012 · Superseded draft revisions are kept and never read
+
+**What.** `sales_invoice_lines` and `customer_receipt_draft_allocations` are
+insert-only and revisioned (`modules/receivables`, migrations 016-017): every
+draft save inserts a whole new revision and bumps
+`sales_invoices.lines_revision` / `customer_receipts.proposals_revision`.
+Every revision before the current one stays in the table forever, with no
+`DELETE` grant and nothing that ever reads it again.
+
+**Why it is accepted.** Named in
+[docs/design/M3/README.md](design/M3/README.md) §10 as the cost of keeping
+both tables insert-only with no money in `jsonb` (rule 6) and no `DELETE`
+grant (rule 4) — a repository that could delete or overwrite a line revision
+would be the one financial-record code path in the system that can, which is
+a bigger risk than a few stale rows.
+
+**Owner.** Architecture seat.
+
+**What would force it.** Draft storage becoming measurable at real tenant
+volumes — a tenant whose users repeatedly edit large draft invoices or
+receipts before posting or cancelling. At that point a periodic archival job
+(never a delete, per rule 4) for superseded revisions is the fix, not a
+change to the insert-only shape.
+
+---
+
+## TD-013 · Receipt drafts and receipt posting share `payment.receive`
+
+**What.** `POST /api/receipts` (draft), `PATCH /api/receipts/:id`,
+`POST /api/receipts/:id/post` and `POST /api/receipts/:id/cancel`
+(`modules/receivables`, `apps/api/src/receivables/receipts.controller.ts`)
+all require only `payment.receive`. Invoices already split `invoice.create`
+from `invoice.post`; the matching split for receipts (a `payment.post`
+code) does not exist in the MVP catalogue
+(`packages/permissions/src/catalog.ts`).
+
+**Why it is accepted.** Named in
+[docs/design/M3/README.md](design/M3/README.md) §10 and
+[api-contract.md](design/M3/api-contract.md) §2: adding a catalogue code
+needs seeding existing tenants' system roles, a catalogue-wide task, not a
+single lane's addition. Per this lane's own task contract: "If a needed code
+is missing, STOP and report; do not invent one."
+
+**Owner.** Architecture seat / Security seat (catalogue changes are joint).
+
+**What would force it.** The first tenant that wants a clerk to prepare
+receipts that someone else posts (maker-checker), matching PO-Q2's precedent
+from M2 for journal vouchers (`voucher.post` / `voucher.reverse` already
+split that way) — at which point `payment.post` is added to the catalogue,
+seeded into the Accountant role, and `POST /api/receipts/:id/post` switches
+to requiring it instead of `payment.receive`.
+
+---
+
+## TD-014 · `journalEntry` is `null` on a plain GET of an already-posted invoice or receipt
+
+**What.** `GET /api/invoices/:id` and `GET /api/receipts/:id`
+(`modules/receivables/application/get-invoice.ts`,
+`get-receipt.ts`) always return `journalEntry: null`, even for a `POSTED` or
+`REVERSED` document. The field is populated correctly on the **response of
+the mutation itself** — `POST /api/invoices/:id/post`,
+`POST /api/invoices/:id/reverse` and the receipt equivalents pass the entry
+straight through from `postingEngine.post` / `reversalEngine.reverseForSource`'s
+own result (`apps/api/src/receivables/invoices.controller.ts` /
+`receipts.controller.ts`) — but a later plain read has nothing to resolve it
+from.
+
+**Why it is accepted.** `modules.md` §7 is explicit that the journal entry's
+id is deliberately **not** stored a second time on the document ("a second
+pointer would be a copy that can disagree"), and it is found only through
+the kernel's `UNIQUE (tenant_id, source_type, source_id)` — a lookup no K1-K7
+capability exposes to a module for reading (as opposed to posting/reversing).
+Building one (most plausibly by filtering `@finsoft/reporting`'s
+`controlAccountLedger` for the matching `sourceId`, which already returns
+`entryId`/`entryNumber` per line) is a kernel/reporting-surface change, T3
+review, outside this lane's `packages/accounting-kernel/src/**` (K2-K4 and
+the two rules only) boundary.
+
+**Owner.** Accounting seat / Architecture seat.
+
+**What would force it.** M4's invoice/receipt detail screen, which needs
+`journalEntry` linked from a page load, not only from the post/reverse
+response it happened to be on. The fix is a K-numbered kernel or
+`@finsoft/reporting` export ("find the entry for this source"), reviewed the
+same way K5 was, not a second pointer column on the document.
+
+**Partial progress, second follow-up commit (K4, Council review of
+efb7e3f).** The RELATED but narrower gap — the source document's own number
+(not the full `{id, number}` entry) appearing on a customer's LEDGER line —
+is now closed: `journal_entries.reference` is threaded through
+`packages/database`'s ledger query, `packages/reporting`'s
+`AccountLedgerLine.sourceNumber`, and `modules/customers`'
+`CustomerLedgerLine.sourceNumber`, proven by
+`tests/integration/receivables/receivables-api.spec.ts`'s P05 test (a
+posted invoice's `GET /api/customers/:id/ledger` line carries its own INV
+number). This does **not** close TD-014 itself: a plain `GET /api/invoices/
+:id` still returns `journalEntry: null` — the ledger line's `sourceNumber`
+and an invoice's own `journalEntry` object are two different reads, and
+only the first is fixed. TD-014 stays open exactly as stated above.
+
+---
+
+## TD-015 · CLOSED — P04-P06/P08/P09-P12 now execute in the gate, through the real module
+
+**Closed 2026-10-01 (M3-Q, M3-P @2a02731+ merged).** `golden-posting-runner.ts`
+gained the module-routed path ADR-0028 statement 10 asks for: the
+`saveDraft`/`editDraft`/`cancelDraft`/`customer` verbs the golden files
+already used, a `post`/`reverse` path that drives `sales_invoice`/
+`customer_receipt` sources through `modules/receivables`'s own `index.ts`
+(`receivables-real-port.ts`, a `ReceivablesPort` adapter — never a fake, never
+a throwaway merge) instead of `postingEngine.post` directly, an `'ALL'`
+milestone for P08's dual M2/M3 subset, and a `level: "kernel"` escape for the
+handful of kernel-only rejections the module's own command shape cannot
+reproduce (no client-submittable `lineNet`, `kind` or `settlement` field).
+
+P04, P05, P06, P08 (all ten steps), P09, P10, P11 and P12 now run through
+`posting-scenarios-m3.spec.ts` against the REAL `modules/receivables`, and
+are `EXECUTED_IN_M3` in `tests/accounting/golden-posting-registry.ts` — not
+`PENDING`. `PENDING` is empty: every posting golden scenario README §6 lists
+now executes somewhere, for real. Invariant 9 (AR half) and
+`tests/reconciliation/subledger-to-gl-ar.spec.ts` are enforced on real rows
+in the same change (`tests/accounting/invariants.ts`,
+`tests/accounting/pending-baseline.json`); `tests/reconciliation/
+dormant.spec.ts`'s FND-012 tripwire is re-armed on what remains (AP, Wave 6;
+inventory, Wave 5) instead of on AR, which is answered.
+
+**What was the original gap.** `packages/accounting-kernel/src/events.ts`'s
+`IMPLEMENTED_EVENTS` included `SALE_POSTED`/`CUSTOMER_PAYMENT_RECEIVED`, and
+`modules/receivables` posted both for real — proven by its own integration
+suite (`tests/integration/receivables/receivables-api.spec.ts`) — but the
+golden scenario files themselves had no runner path to execute through the
+module (ADR-0028 statement 10), so the SAME reviewable, hand-computed-figures
+mechanism every other posting rule is held to was not yet proving these
+rules in the financial gate. Docs/posting-rules/README.md §3's "golden
+first, same PR" was true of the RULE but not yet of its golden.
+
+**Owner.** M3-Q lane (owned `tests/accounting/**` and the golden runner, per
+docs/design/M3/README.md §3).
+
+---
+
+## TD-016 · coa-standard.md §8.7 R2's database-privilege backstop is not built — blocked on a new database role
+
+**Renumbered from TD-012 at the M2-C / M3-P merge, 2026-10-01** — TD-012 through
+TD-015 above are M3-P/M3-Q's, merged first; this item keeps its content
+unchanged and only its number moves. TD-011's own "M2-C implementation"
+update above has been corrected to point here.
 
 **Also tracked as [GAP-006](COMPLIANCE_GAPS.md#gap-006--chart-of-accounts-create-has-no-database-privilege-backstop-r2)**, a named **production blocker** (Council disposition, M2-C review, 2026-09-29: R2 is option (b), merge now, production stays blocked until R2 is done). GAP-006 is the LEVEL-0-adjacent, sign-off-tracked record; this entry is the implementation-detail record for whoever picks up the fix — read both.
 

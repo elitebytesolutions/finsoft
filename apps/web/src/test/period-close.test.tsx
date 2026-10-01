@@ -3,7 +3,33 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from './harness'
 import { PeriodClose } from '@/screens/trade-pages'
+import { AuthContext, type AuthContextValue } from '@/lib/api/auth-context'
 import { setAccessToken } from '@/lib/api/session'
+
+/*
+ * M4-W: PeriodTable now gates Close/Reopen on `useAuth().can(...)` (GET
+ * /api/me/permissions), so these tests need an AuthContext in the tree — a fake one, same
+ * seam apps/web/src/test/harness.tsx uses, since jsdom cannot answer a real `GET
+ * /api/auth/me`. `can` defaults to true so every EXISTING assertion below (which predates
+ * permission gating and asserts on order, not on who can act) keeps seeing the same
+ * buttons it always did; the one new test at the bottom overrides it to prove the gating
+ * itself.
+ */
+function authValue(can: (code: string) => boolean): AuthContextValue {
+  return {
+    status: 'authenticated',
+    user: { id: 'test-user', fullName: 'Test User', email: 'test.user@example.com' },
+    tenant: { id: 'test-tenant', code: 'TEST', name: 'Test Tenant' },
+    sessionId: 'test-session',
+    permissionVersion: 1,
+    permissions: ['all'],
+    errorMessage: null,
+    retry: () => {},
+    syncAfterLogin: async () => {},
+    signOut: async () => {},
+    can,
+  }
+}
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -54,10 +80,12 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-function renderScreen() {
+function renderScreen(can: (code: string) => boolean = () => true) {
   return render(
     <MemoryRouter initialEntries={['/period-close']}>
-      <PeriodClose />
+      <AuthContext.Provider value={authValue(can)}>
+        <PeriodClose />
+      </AuthContext.Provider>
     </MemoryRouter>,
   )
 }
@@ -206,5 +234,37 @@ describe('PeriodClose', () => {
     )
     renderScreen()
     await waitFor(() => expect(screen.getByText(/access restricted/i)).toBeInTheDocument())
+  })
+
+  it('never offers Reopen to a caller without period.reopen — not even on the latest CLOSED period', async () => {
+    const fetchMock = fetch as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        periods: [
+          { ...PERIODS.periods[0], status: 'CLOSED' },
+          { ...PERIODS.periods[1], status: 'OPEN' },
+        ],
+      }),
+    )
+    // Holds period.close but not period.reopen — an Accountant, not the Owner.
+    renderScreen((code) => code === 'period.close')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: 'Reopen' })).not.toBeInTheDocument()
+  })
+
+  it('offers neither Close nor Reopen to a caller with no period permissions', async () => {
+    const fetchMock = fetch as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        periods: [
+          { ...PERIODS.periods[0], status: 'CLOSED' },
+          { ...PERIODS.periods[1], status: 'OPEN' },
+        ],
+      }),
+    )
+    renderScreen(() => false)
+    await waitFor(() => expect(screen.getByText('2026-07')).toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: 'Close' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reopen' })).not.toBeInTheDocument()
   })
 })

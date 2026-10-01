@@ -8,6 +8,7 @@
  * component already expects. Screen signatures are unchanged on purpose. */
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { actionPermissions, roles, useFinsoftData } from '@/mocks/api'
+import { useAuth } from '@/lib/api/auth-context'
 
 type FinsoftStore = ReturnType<typeof useFinsoftData>
 type FinsoftContext = FinsoftStore & {
@@ -21,14 +22,27 @@ type FinsoftContext = FinsoftStore & {
 
 const Ctx = createContext<FinsoftContext | null>(null)
 
+const DEFAULT_ROLE = 'Owner'
+
 export function FinsoftProvider({ children }: { children: ReactNode }) {
   const store = useFinsoftData()
   // Same SSR reasoning as mocks/store.ts: default on the server, restore on mount.
-  const [role, setRoleState] = useState('Owner')
+  const [role, setRoleState] = useState(DEFAULT_ROLE)
   useEffect(() => {
     const stored = localStorage.getItem('finsoft-role')
     if (stored && roles[stored]) setRoleState(stored)
   }, [])
+
+  // auth-context.tsx's signOut() clears localStorage's `finsoft-role` (Security seat
+  // condition 2) — but a value already in THIS state only re-reads localStorage on
+  // mount, so it would otherwise survive in memory until the page reloaded, which on a
+  // client-side-routed /login never happens. Resetting on any transition to
+  // 'unauthenticated' (sign-out and session expiry alike) is the real fix: nothing in
+  // this tab's memory should outlive the session that chose it.
+  const authStatus = useAuth().status
+  useEffect(() => {
+    if (authStatus === 'unauthenticated') setRoleState(DEFAULT_ROLE)
+  }, [authStatus])
   const setRole = (next: string) => {
     setRoleState(next)
     try {

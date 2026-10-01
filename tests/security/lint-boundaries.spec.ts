@@ -1874,3 +1874,72 @@ describe('C8 / S2 (ADR-0028): modules/customers/infrastructure/** names only its
     expect(results.length).toBeGreaterThan(0)
   })
 })
+
+/*
+ * C8 / S2 (ADR-0028), M3-P: modules/receivables/infrastructure/** — the
+ * multi-table variant (multiTableOwnershipSyntax in eslint.config.mjs).
+ * Security seat, Council review of efb7e3f (S-B): the sql`` tag ban was
+ * dropped from this block in the reviewed commit and is restored here,
+ * proven with the same three escapes as customers' own probes above —
+ * plain import, aliased import, and sql.raw (which is caught by the SAME
+ * import-ban rule as the plain/aliased forms, since it still imports the
+ * `sql` export to reach `.raw`).
+ */
+describe('C8 / S2 (ADR-0028), M3-P: modules/receivables/infrastructure/** names only its own FIVE tables', () => {
+  it('allows a builder call naming one of its own five tables', async () => {
+    const messages = await messagesFor(
+      'modules/receivables/infrastructure/x.ts',
+      "export function r(tx: any) { return tx.selectFrom('sales_invoices').selectAll().execute() }",
+    )
+    expect(matching(messages, 'names only its own tables')).toEqual([])
+  })
+
+  it("catches a builder call naming a table outside the five (e.g. another module's)", async () => {
+    const messages = await messagesFor(
+      'modules/receivables/infrastructure/x.ts',
+      "export function r(tx: any) { return tx.selectFrom('customers').selectAll().execute() }",
+    )
+    expect(matching(messages, 'names only its own tables')).toHaveLength(1)
+  })
+
+  it('the sql`` tag ban: plain `import { sql }` is caught at the import AND the call site', async () => {
+    const messages = await messagesFor(
+      'modules/receivables/infrastructure/x.ts',
+      "import { sql } from 'kysely'\nexport const q = (tx: any) => sql`select * from sales_invoices`.execute(tx)",
+    )
+    expect(matching(messages, "does not import kysely's `sql` tag")).toHaveLength(1)
+    expect(matching(messages, 'does not use the sql`` tag at all')).toHaveLength(1)
+  })
+
+  it('the sql`` tag ban: an aliased import (import { sql as q }) is caught at the import', async () => {
+    const messages = await messagesFor(
+      'modules/receivables/infrastructure/x.ts',
+      "import { sql as q } from 'kysely'\nexport const query = (tx: any) => q`select * from customer_receipts`.execute(tx)",
+    )
+    expect(matching(messages, "does not import kysely's `sql` tag")).toHaveLength(1)
+  })
+
+  it('the sql`` tag ban: sql.raw is caught at the same import, since it still imports the `sql` export', async () => {
+    const messages = await messagesFor(
+      'modules/receivables/infrastructure/x.ts',
+      "import { sql } from 'kysely'\nexport const q = (tx: any) => sql.raw('select * from sales_invoice_lines').execute(tx)",
+    )
+    expect(matching(messages, "does not import kysely's `sql` tag")).toHaveLength(1)
+  })
+
+  it('leaves the real invoices/receipts repositories clean', async () => {
+    const results = await eslint.lintFiles(['modules/receivables/infrastructure/**/*.ts'])
+    const hits = results.flatMap((r) =>
+      r.messages
+        .filter(
+          (m) =>
+            m.message.includes('names only its own tables') ||
+            m.message.includes("does not import kysely's `sql` tag") ||
+            m.message.includes('does not use the sql`` tag at all'),
+        )
+        .map((m) => `${r.filePath}:${m.line}: ${m.message}`),
+    )
+    expect(hits).toEqual([])
+    expect(results.length).toBeGreaterThan(0)
+  })
+})

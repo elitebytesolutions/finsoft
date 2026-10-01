@@ -64,3 +64,26 @@ export function onForbidden(listener: ForbiddenListener): () => void {
 export function notifyForbidden(): void {
   for (const listener of forbiddenListeners) listener()
 }
+
+type RefreshedListener = () => void
+const refreshedListeners = new Set<RefreshedListener>()
+
+/**
+ * Fires whenever `client.ts`'s `performRefresh` rotates the access token successfully —
+ * the silent refresh on load, or the automatic retry after a 401. `auth-context.tsx` is
+ * the one subscriber today, reloading `GET /api/me/permissions` so a permission revoked
+ * server-side (which bumps `permissionVersion` and rejects the old token at the guard,
+ * ADR-0009) disappears from the UI the moment the new token lands, not only on the next
+ * hard reload. Never fires on a FAILED refresh — that path already clears the session via
+ * `setAccessToken(null)`.
+ */
+export function onRefreshed(listener: RefreshedListener): () => void {
+  refreshedListeners.add(listener)
+  return () => {
+    refreshedListeners.delete(listener)
+  }
+}
+
+export function notifyRefreshed(): void {
+  for (const listener of refreshedListeners) listener()
+}

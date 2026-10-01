@@ -100,8 +100,17 @@ export const INVARIANTS: readonly Invariant[] = [
   {
     id: 9,
     statement: 'Subledger totals reconcile to their GL control accounts (AR, AP, Inventory)',
-    status: 'pending',
-    note: 'Needs subledgers and control accounts. Wave 4.',
+    status: 'enforced',
+    note:
+      'AR half: M3-Q, 2026-10-01 (M3-P @2a02731+ merged). docs/posting-rules/customer-receipt.md §8: ' +
+      'GL(C,D) = SUB(C,D) exactly, for every customer of every tenant with subledger activity, plus ' +
+      'the structural Σ GL(C,D) = AR_CONTROL balance — tests/accounting/ar-invariant-9.ts, checked live ' +
+      'in financial-invariant-suite.spec.ts and tests/reconciliation/subledger-to-gl-ar.spec.ts, against ' +
+      'real sales_invoices/customer_receipts rows, not fixtures. Inventory half: Wave 5 (ADR-0015, id ' +
+      '10 below, same gap). AP half: Wave 6 (vendors) — docs/reconciliation/dormant.spec.ts re-arms the ' +
+      "moment a posting rule reaches an AP control account; enforced is this invariant's AR coverage, " +
+      'not yet its AP coverage, exactly as id 6 is enforced for its GL-only scope ahead of subledger ' +
+      'and stock legs.',
   },
   {
     id: 10,

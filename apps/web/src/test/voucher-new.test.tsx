@@ -3,7 +3,26 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from './harness'
 import { VoucherForm } from '@/screens/vouchers'
+import { AuthContext, type AuthContextValue } from '@/lib/api/auth-context'
 import { setAccessToken } from '@/lib/api/session'
+
+/* M4-W: VoucherFormReady now gates Post on `useAuth().can('voucher.post')`, so these tests
+ * need an AuthContext in the tree — same fake seam as period-close.test.tsx and
+ * voucher-detail.test.tsx, with `can` defaulting to true so every existing assertion below
+ * (which predates permission gating) keeps seeing Post exactly as it always did. */
+const fakeAuth: AuthContextValue = {
+  status: 'authenticated',
+  user: { id: 'test-user', fullName: 'Test User', email: 'test.user@example.com' },
+  tenant: { id: 'test-tenant', code: 'TEST', name: 'Test Tenant' },
+  sessionId: 'test-session',
+  permissionVersion: 1,
+  permissions: ['all'],
+  errorMessage: null,
+  retry: () => {},
+  syncAfterLogin: async () => {},
+  signOut: async () => {},
+  can: () => true,
+}
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -80,10 +99,12 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-function renderScreen() {
+function renderScreen(can: (code: string) => boolean = () => true) {
   return render(
     <MemoryRouter initialEntries={['/vouchers/new']}>
-      <VoucherForm />
+      <AuthContext.Provider value={{ ...fakeAuth, can }}>
+        <VoucherForm />
+      </AuthContext.Provider>
     </MemoryRouter>,
   )
 }
@@ -274,5 +295,17 @@ describe('VoucherForm (New Voucher)', () => {
 
     renderScreen()
     await waitFor(() => expect(screen.getByText(/access restricted/i)).toBeInTheDocument())
+  })
+
+  it('keeps Post disabled for a balanced voucher when the caller lacks voucher.post', async () => {
+    const fetchMock = fetch as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, ACCOUNTS))
+
+    renderScreen(() => false)
+    await fillBalancedVoucher()
+
+    expect(screen.getByText('Balanced')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /post voucher/i })).toBeDisabled()
+    expect(fetchMock.mock.calls.some(([url]) => url === '/api/journals')).toBe(false)
   })
 })

@@ -12,6 +12,7 @@ import {
   accountLedgerLines,
   accountOpeningBalance,
   findEntryById,
+  findLinesByEntryId,
   findPeriodById,
   findPeriodForDate,
   listAllAccounts,
@@ -22,7 +23,7 @@ import {
   type TenantTx,
 } from '@finsoft/database'
 import { createFiscalYear, seedChartOfAccounts } from '@finsoft/database/provisioning'
-import { periodEngine, PostingError, type FinancialEventName } from '@finsoft/accounting-kernel'
+import { periodEngine, type FinancialEventName } from '@finsoft/accounting-kernel'
 // Clock injection is test-only: these are deliberately not on the package's public surface.
 import { fixedClock } from '../../packages/accounting-kernel/src/clock.ts'
 import {
@@ -31,14 +32,27 @@ import {
 } from '../../packages/accounting-kernel/src/posting-engine.ts'
 import { createReversalEngine } from '../../packages/accounting-kernel/src/reversal.ts'
 import { Money } from '@finsoft/validation'
-import { trialBalance } from '@finsoft/reporting'
+import { controlAccountLedger, trialBalance } from '@finsoft/reporting'
 import {
   accountMovement,
   countAuditRecords,
   countJournalEntries,
+  entryNumbersInSeries,
   reversalPairResidualByAccount,
+  reversalPairResidualByParty,
   reversalResiduals,
 } from './golden-support.ts'
+import { checkInvariant9, invariant9Available } from './ar-invariant-9.ts'
+import type { InvoiceLine, ReceivablesPort } from './receivables-port.ts'
+// modules/customers exists (M3-C, merged): the real, shipped use cases —
+// each opens its own withTenant internally, so these are called under
+// `runAs`, never inside `act`/`withTenant`.
+import {
+  createCustomer,
+  deactivateCustomer,
+  getCustomer,
+  reactivateCustomer,
+} from '../../modules/customers/index.ts'
 
 /*
  * The posting-scenario/v1 runner. docs/posting-rules/README.md §6.
@@ -78,12 +92,40 @@ export function loadScenario(filename: string): PostingScenario {
   return JSON.parse(readFileSync(join(GOLDEN_DIR, filename), 'utf8')) as PostingScenario
 }
 
-/** The steps this milestone can execute: all of an M2 scenario, or its stepsExecutableFrom.M2 subset. */
-export function executableSteps(scenario: PostingScenario): readonly Record<string, unknown>[] {
-  const subset = scenario.stepsExecutableFrom?.M2
+/**
+ * The steps this milestone can execute: all of a `milestone`-executable
+ * scenario, or its `stepsExecutableFrom[milestone]` subset (P08: M2 steps
+ * 1-5, M3 steps 6-9). Defaults to M2 — every existing M2 caller
+ * (`posting-scenarios.spec.ts`, `golden-posting-registry.spec.ts`) is
+ * unchanged by this parameter's addition.
+ *
+ * `'ALL'` (Accounting seat ruling 4, 2026-09-29 — "run it IN FULL against
+ * the real module... and keep the M2 subset running too"): the UNION of
+ * every `stepsExecutableFrom` subset, in step order — P08's own 1-10, not
+ * just 6-9. `entriesAfter` on P08's invoice steps (6-9) counts the THREE
+ * JOURNAL_VOUCHER_POSTED entries steps 1-3 already wrote; running the M3
+ * subset alone (found in the M3-P throwaway verify) leaves those counts
+ * unreconcilable, because they never happened in that run. `runPosting-
+ * Scenario` selects `'ALL'` only when a scenario carries BOTH an `M2` and
+ * an `M3` subset AND a receivables port was given — every other scenario's
+ * behaviour (M2-only, M3-only, no subset at all) is unchanged.
+ */
+export function executableSteps(
+  scenario: PostingScenario,
+  milestone: 'M2' | 'M3' | 'ALL' = 'M2',
+): readonly Record<string, unknown>[] {
+  if (milestone === 'ALL') {
+    const subsets = scenario.stepsExecutableFrom
+    if (!subsets) return scenario.steps
+    const allowed = new Set(Object.values(subsets).flat())
+    return scenario.steps.filter((step) => allowed.has(step.step as number))
+  }
+  const subset = scenario.stepsExecutableFrom?.[milestone]
   if (subset) return scenario.steps.filter((step) => subset.includes(step.step as number))
-  if (scenario.executableFrom !== 'M2') {
-    throw new Error(`${scenario.id} is executable from ${scenario.executableFrom}, not M2.`)
+  if (scenario.executableFrom !== milestone) {
+    throw new Error(
+      `${scenario.id} is executable from ${scenario.executableFrom}, not ${milestone}.`,
+    )
   }
   return scenario.steps
 }
@@ -101,6 +143,7 @@ const STEP_INPUT_KEYS = new Set([
   'step',
   'do',
   '$comment',
+  'tenant',
   'event',
   'idempotencyKey',
   'occurredAt',
@@ -110,6 +153,15 @@ const STEP_INPUT_KEYS = new Set([
   'action',
   'period',
   'expect',
+  /*
+   * `level: "kernel"` (P04 steps 1-2, P10 step 1 — Accounting seat ruling,
+   * 2026-09-29): routes a `SALE_POSTED`/`CUSTOMER_PAYMENT_RECEIVED` `post`
+   * step to `postingEngine` directly instead of through the receivables
+   * port, for a rejection the module's command shape cannot even submit
+   * (SALE_AMOUNT_MISMATCH — the real command has no lineNet for a client to
+   * get wrong). Absent, a document event still routes through the port.
+   */
+  'level',
 ])
 
 function assertOnlyKnownKeys(
@@ -169,11 +221,39 @@ async function setUpTenants(scenario: PostingScenario): Promise<Map<string, Tena
   return byAlias
 }
 
-/** Runs the scenario's M2-executable steps against the real kernel and database, asserting every figure. */
-export async function runPostingScenario(scenario: PostingScenario): Promise<void> {
+export interface RunPostingScenarioOptions {
+  /**
+   * Provides `SALE_POSTED` / `CUSTOMER_PAYMENT_RECEIVED` posting, document
+   * lifecycle (drafts, reversal-by-document) and document-owned reads
+   * (outstanding, status, numbers) through `modules/receivables`. Omitted
+   * (the default) on every branch where that module does not exist — any
+   * step needing it then throws a clear "no receivables port" error rather
+   * than silently doing nothing, so a scenario wired in without one fails
+   * loudly instead of passing vacuously.
+   */
+  readonly receivables?: ReceivablesPort
+}
+
+/** Runs the scenario's executable steps against the real kernel and database, asserting every figure. */
+export async function runPostingScenario(
+  scenario: PostingScenario,
+  options: RunPostingScenarioOptions = {},
+): Promise<void> {
   const byAlias = await setUpTenants(scenario)
-  const acting = byAlias.get(scenario.fixture.actingTenant ?? scenario.fixture.tenants[0]!)!
-  const tenantId = acting.fixture.tenantId
+  /*
+   * `let`, not `const` (P09 finding, running against the real
+   * modules/receivables, M3-P @efb7e3f): P09 is the one golden file with a
+   * per-step `tenant` field (GOLDEN_A / GOLDEN_B), proving tenant
+   * isolation inside ONE scenario run. Every function below that reads
+   * `acting`/`tenantId` — `act`, `asActing`, `checkTrialBalance`,
+   * `checkAfterCounts`, the whole step loop — is defined ONCE, outside the
+   * loop, but reads these by CLOSURE: a `let` reassigned at the top of
+   * each iteration (below, "a step may name its own tenant") is visible to
+   * all of them at CALL time, which is what makes this a small change
+   * rather than threading a tenant parameter through every function here.
+   */
+  let acting = byAlias.get(scenario.fixture.actingTenant ?? scenario.fixture.tenants[0]!)!
+  let tenantId = acting.fixture.tenantId
 
   // The fixture's `today`, at noon UTC — 17:00 in Asia/Karachi, the same calendar day.
   const clock = fixedClock(`${scenario.fixture.today}T12:00:00.000Z`)
@@ -194,6 +274,74 @@ export async function runPostingScenario(scenario: PostingScenario): Promise<voi
       withTenant(fn),
     )
   const act = <T>(fn: (tx: TenantTx) => Promise<T>): Promise<T> => inTenant(acting, fn)
+  /**
+   * The ambient-TenantContext form `act` cannot provide: for calls into a
+   * `ReceivablesPort` (real or fake), which open their OWN transaction —
+   * see receivables-port.ts's own header on why there is no `tx` parameter.
+   */
+  const asActing = <T>(fn: () => Promise<T>): Promise<T> =>
+    runAs({ tenantId: acting.fixture.tenantId, userId: acting.fixture.ownerId }, fn)
+
+  /*
+   * P04–P12's `fixture.customers`: `{ ref, tenant, status }`. Registered
+   * through the REAL `modules/customers` `createCustomer` use case — one
+   * transaction, `registerParty` (ADR-0026) then the `customers` row — not
+   * a bare `registerParty` call, because the `customer` verb (P12) needs a
+   * real `customers` table row to deactivate/reactivate (getCustomer reads
+   * that table, not `parties`). `fields` are throwaway; the golden files
+   * assert no field of a customer's master data, only its id/status/AR
+   * balance. `createCustomer` opens its own `withTenant` internally
+   * (modules/customers's own rule — never called inside `act`).
+   */
+  const customerIdByRef = new Map<string, string>()
+  for (const [index, raw] of (scenario.fixture.customers ?? []).entries()) {
+    const entry = raw as { readonly ref: string; readonly tenant: string }
+    const handle = byAlias.get(entry.tenant)
+    if (!handle)
+      throw new Error(
+        `golden runner: customer "${entry.ref}" names unknown tenant "${entry.tenant}".`,
+      )
+    const { customer } = await runAs(
+      { tenantId: handle.fixture.tenantId, userId: handle.fixture.ownerId },
+      () =>
+        createCustomer({
+          fields: {
+            name: `Golden fixture ${entry.ref}`,
+            phone: null,
+            email: null,
+            address: null,
+            city: null,
+            ntn: null,
+            creditDays: 0,
+          },
+          idempotencyKey: `golden-customer-${scenario.id}-${index}`,
+          actor: { userId: handle.fixture.ownerId },
+        }),
+    )
+    customerIdByRef.set(entry.ref, customer.id)
+  }
+  const customerId = (ref: string): string => {
+    const found = customerIdByRef.get(ref)
+    if (!found) throw new Error(`golden runner: unknown customer reference "${ref}".`)
+    return found
+  }
+  const customerRefById = new Map<string, string>()
+  for (const [ref, id] of customerIdByRef) customerRefById.set(id, ref)
+
+  /** entryNumber (JE-.../RV-...) -> the document's own number (INV-.../RCT-...), for `customerLedger`'s `document` column. */
+  const documentNumberByEntryNumber = new Map<string, string>()
+
+  function requireReceivables(where: string): ReceivablesPort {
+    if (!options.receivables) {
+      throw new Error(
+        `golden runner: ${where} needs modules/receivables (a ReceivablesPort), and none was ` +
+          'provided. This scenario/step is not executable without it — it belongs in ' +
+          'golden-posting-registry.ts PENDING, not in a spec that calls runPostingScenario ' +
+          'unconditionally.',
+      )
+    }
+    return options.receivables
+  }
 
   const accountId = (ref: string): string => {
     const [alias, code] = ref.includes(':') ? (ref.split(':') as [string, string]) : [null, ref]
@@ -208,22 +356,34 @@ export async function runPostingScenario(scenario: PostingScenario): Promise<voi
     return found
   }
 
-  /** debits before credits, then account code — README §6's canonical order. */
-  const canonicalLines = (lines: readonly { account: string; debit: string; credit: string }[]) =>
+  /** debits before credits, then account code, then party ref — README §6's canonical order. */
+  const canonicalLines = (
+    lines: readonly { account: string; debit: string; credit: string; party?: string }[],
+  ) =>
     [...lines].sort((a, b) => {
       const aDebit = Money.isZero(Money.from(a.debit)) ? 1 : 0
       const bDebit = Money.isZero(Money.from(b.debit)) ? 1 : 0
-      return aDebit - bDebit || a.account.localeCompare(b.account)
+      return (
+        aDebit - bDebit ||
+        a.account.localeCompare(b.account) ||
+        (a.party ?? '').localeCompare(b.party ?? '')
+      )
     })
+  /** A party_id (uuid) back to the fixture's customer ref (README §6: "the party id of fixture customer CUST-A"). */
+  const partyRef = (partyId: string | null): string | undefined =>
+    partyId === null ? undefined : customerRefById.get(partyId)
   const linesOf = (lines: readonly JournalLineRow[]) =>
     canonicalLines(
-      lines.map((line) => ({
-        account: code(line.accountId),
-        debit: line.debit,
-        credit: line.credit,
-      })),
+      lines.map((line) => {
+        const party = partyRef(line.partyId)
+        return {
+          account: code(line.accountId),
+          ...(party !== undefined ? { party } : {}),
+          debit: line.debit,
+          credit: line.credit,
+        }
+      }),
     )
-
   /*
    * The SHIPPED report, not a parallel computation: @finsoft/reporting's
    * trialBalance() — its rows, its column presentation, its totals — is what
@@ -274,17 +434,49 @@ export async function runPostingScenario(scenario: PostingScenario): Promise<voi
     }
   }
 
+  /** A `PostingError`, or a duck-typed equivalent (`CustomerError` — modules/customers/domain/errors.ts — carries the same `.code`/`.details` shape but is a different class). */
+  /**
+   * `PostingError`/`CustomerError`/`ReceivablesError` all carry `.details`
+   * (defaulted to `{}`); `CustomerDirectoryError`
+   * (modules/customers/application/published.ts) carries ONLY `.code` —
+   * found running P12 against the real modules/receivables (M3-P
+   * @efb7e3f): a bare rethrow here for that class was an uncaught crash,
+   * not a REJECTED outcome. `.details` is therefore OPTIONAL on the duck
+   * type, defaulted to `{}` by `checkRejection` below, not required by it.
+   */
+  function isDomainError(
+    error: unknown,
+  ): error is { code: string; message: string; details?: Record<string, unknown> } {
+    if (!(error instanceof Error)) return false
+    if (typeof (error as { code?: unknown }).code !== 'string') return false
+    const details = (error as { details?: unknown }).details
+    return details === undefined || (typeof details === 'object' && details !== null)
+  }
+
   function checkRejection(where: string, error: unknown, exp: Expect): void {
-    if (!(error instanceof PostingError)) throw error
+    if (!isDomainError(error)) throw error
     expect(exp.outcome, `${where}: the kernel rejected (${error.code}: ${error.message})`).toBe(
       'REJECTED',
     )
     expect(error.code, `${where}: error code`).toBe(exp.error)
     if (exp.errorDetail) {
-      for (const [key, value] of Object.entries(exp.errorDetail as Record<string, unknown>)) {
-        expect(key in error.details, `${where}: error carries detail "${key}"`).toBe(true)
-        expect(error.details[key], `${where}: errorDetail.${key}`).toEqual(value)
-      }
+      /*
+       * A SUBSET match (toMatchObject), not a full deep-equal — Accounting
+       * seat ruling, 2026-09-29 (review of the M3-Q throwaway verify
+       * against M3-P @efb7e3f): some real error details carry an opaque
+       * runtime id alongside a real, hand-computable business number
+       * (`INVOICE_HAS_LIVE_ALLOCATIONS`'s `receipts: [{ id, number }]`,
+       * `ALLOCATION_EXCEEDS_OUTSTANDING`'s `invoiceId`/`invoiceNumber`
+       * pair) — a golden file can and must pin the number, and cannot
+       * pin an id nothing hand-computes. `toMatchObject` still requires
+       * every NAMED key (and, inside an array, every array ELEMENT) to be
+       * present and correct; it only stops requiring the golden file to
+       * spell out keys it does not name.
+       */
+      const details = error.details ?? {}
+      expect(details, `${where}: errorDetail`).toMatchObject(
+        exp.errorDetail as Record<string, unknown>,
+      )
     }
   }
 
@@ -305,7 +497,9 @@ export async function runPostingScenario(scenario: PostingScenario): Promise<voi
     }
     if (exp.lines !== undefined) {
       expect(linesOf(result.lines), `${where}: lines`).toEqual(
-        canonicalLines(exp.lines as { account: string; debit: string; credit: string }[]),
+        canonicalLines(
+          exp.lines as { account: string; debit: string; credit: string; party?: string }[],
+        ),
       )
     }
     if (exp.totals !== undefined)
@@ -326,9 +520,363 @@ export async function runPostingScenario(scenario: PostingScenario): Promise<voi
     }
   }
 
-  for (const step of executableSteps(scenario)) {
+  const DOCUMENT_EVENTS = new Set(['SALE_POSTED', 'CUSTOMER_PAYMENT_RECEIVED'])
+
+  /** exp keys `checkPosted` does not know, specific to a module document. */
+  const DOCUMENT_EXPECT_KEYS = [
+    'documentNumber',
+    'documentStatus',
+    'allocations',
+    'invoiceOutstanding',
+    'inventoryMovementsWritten',
+    'invoiceLines',
+  ]
+
+  /** Re-reads the entry `checkPosted` needs from `entryId`, so the SAME checks run for a module post as for a kernel one. */
+  async function documentEntryAsPostResult(
+    outcome: 'POSTED' | 'REPLAYED',
+    documentNumber: string,
+    entryId: string,
+  ): Promise<PostResult> {
+    const [entry, lines] = await act((tx) =>
+      Promise.all([
+        findEntryById(tx, tenantId, entryId),
+        findLinesByEntryId(tx, tenantId, entryId),
+      ]),
+    )
+    if (!entry)
+      throw new Error(`golden runner: receivables port returned unknown entryId ${entryId}.`)
+    return { outcome, journalEntryId: entry.id, documentNumber, entry, lines }
+  }
+
+  function checkDocumentExtras(
+    where: string,
+    documentRef: string,
+    result: { documentNumber: string; documentStatus: string; lines?: readonly InvoiceLine[] },
+    exp: Expect,
+  ): void {
+    if (exp.documentNumber !== undefined)
+      expect(result.documentNumber, `${where}: documentNumber`).toBe(exp.documentNumber)
+    if (exp.invoiceLines !== undefined) {
+      /*
+       * P10 step 2 (Accounting seat ruling, 2026-09-29): the module
+       * independently computes the SAME half-up tie the kernel enforces —
+       * 3086.4193, not the half-even/truncated 3086.4192. `result.lines` is
+       * the module's own read-back, not a value this runner derived, so
+       * this proves the module's arithmetic, not just the kernel's.
+       */
+      if (!result.lines) {
+        throw new Error(
+          `${where}: invoiceLines asserted but the receivables port returned no lines for ` +
+            `${documentRef}.`,
+        )
+      }
+      expect(result.lines, `${where}: invoiceLines`).toEqual(exp.invoiceLines)
+    }
+    if (exp.documentStatus !== undefined) {
+      /*
+       * Two shapes, both written verbatim by golden files: a `post` step's
+       * own expect.documentStatus is a bare string (the document just
+       * posted). A `reverseDocument` step's is `{ ref: status }` (P06, P09)
+       * — this lane does not know why the author chose that shape there and
+       * not here, only that both are real, so both are checked.
+       */
+      const spec = exp.documentStatus
+      const expected =
+        typeof spec === 'string' ? spec : (spec as Record<string, string>)[documentRef]
+      expect(result.documentStatus, `${where}: documentStatus`).toBe(expected)
+    }
+    if (exp.inventoryMovementsWritten !== undefined) {
+      // MVP service-only invoices move no stock, ever (README §1 "Out").
+      expect(exp.inventoryMovementsWritten, `${where}: inventoryMovementsWritten`).toBe(0)
+    }
+  }
+
+  /*
+   * Derived from the scenario itself, not from whether a receivables port
+   * was passed: P11's `customer` verb (and R4 in golden-posting-runner-m3.
+   * spec.ts) is `executableFrom: "M3"` but needs no port at all. P08 is the
+   * one case with BOTH: `executableFrom: "M2"` overall, but
+   * `stepsExecutableFrom.M3` names its invoice steps (6-9) — those only run
+   * when a receivables port is actually given, matching golden-posting-
+   * registry.ts's own PENDING/M3 entry for exactly that subset.
+   */
+  const runsAsM3 =
+    scenario.executableFrom === 'M3' ||
+    (options.receivables !== undefined && scenario.stepsExecutableFrom?.M3 !== undefined)
+  /*
+   * P08 (Accounting seat ruling 4, 2026-09-29): the ONLY scenario with
+   * BOTH an `M2` and an `M3` `stepsExecutableFrom` subset. Once a
+   * receivables port is available, it runs 'ALL' ten steps together — the
+   * M2 JV steps (1-5) and the M3 invoice steps (6-9) in ONE session — so
+   * `entriesAfter` on the invoice steps counts what the golden file
+   * actually assumes: the three JV entries already posted earlier in the
+   * SAME run. `posting-scenarios.spec.ts` (M2-only, no receivables option)
+   * is untouched: `runsAsM3` is false there, so this branch never runs.
+   */
+  const hasBothSubsets =
+    scenario.stepsExecutableFrom?.M2 !== undefined && scenario.stepsExecutableFrom?.M3 !== undefined
+  const milestone: 'M2' | 'M3' | 'ALL' = runsAsM3 ? (hasBothSubsets ? 'ALL' : 'M3') : 'M2'
+  for (const step of executableSteps(scenario, milestone)) {
     const where = `${scenario.id} step ${String(step.step)}`
     const verb = step.do as string
+    /*
+     * `level: "kernel"` (see STEP_INPUT_KEYS above) takes a document event
+     * OUT of the module-routed path below and into the generic
+     * `verb === 'post'` kernel path further down — P04 steps 1-2, P10 step
+     * 1, all SALE_AMOUNT_MISMATCH rejections the module's own command
+     * shape cannot reproduce (no client-submitted lineNet to get wrong).
+     */
+    const isDocumentPost =
+      verb === 'post' && DOCUMENT_EVENTS.has(step.event as string) && step.level !== 'kernel'
+
+    // P09: a step may name its own tenant (`"tenant": "GOLDEN_B"`),
+    // proving isolation inside one scenario run. See the `let acting`
+    // comment above for why reassigning here is enough.
+    if (step.tenant !== undefined) {
+      const handle = byAlias.get(step.tenant as string)
+      if (!handle) throw new Error(`${where}: unknown tenant "${String(step.tenant)}".`)
+      acting = handle
+      tenantId = handle.fixture.tenantId
+    }
+
+    if (isDocumentPost) {
+      const exp = step.expect as Expect
+      assertOnlyKnownKeys(`${where}.expect`, exp, [
+        'outcome',
+        'entryNumber',
+        'period',
+        'postingRule',
+        'status',
+        'lines',
+        'totals',
+        'occurredAt',
+        'error',
+        'errorDetail',
+        'entriesAfter',
+        'auditRecordsWritten',
+        ...DOCUMENT_EXPECT_KEYS,
+      ])
+      assertOnlyKnownKeys(where, step, [...STEP_INPUT_KEYS, 'referenceType', 'referenceId'])
+      const auditBefore = await act((tx) => countAuditRecords(tx, tenantId))
+      const port = requireReceivables(where)
+      const documentRef = step.referenceId as string
+      const rawPayload = step.payload as Record<string, unknown>
+
+      try {
+        const docResult =
+          step.event === 'SALE_POSTED'
+            ? await asActing(() =>
+                port.postInvoice({
+                  documentRef,
+                  customerId: customerId(rawPayload.customer as string),
+                  idempotencyKey: step.idempotencyKey as string,
+                  occurredAt: step.occurredAt as string,
+                  payload: rawPayload,
+                }),
+              )
+            : await asActing(() =>
+                port.postReceipt({
+                  documentRef,
+                  customerId: customerId(rawPayload.customer as string),
+                  idempotencyKey: step.idempotencyKey as string,
+                  occurredAt: step.occurredAt as string,
+                  payload: rawPayload,
+                }),
+              )
+        const result = await documentEntryAsPostResult(
+          docResult.outcome,
+          docResult.entryNumber,
+          docResult.entryId,
+        )
+        await checkPosted(where, result, exp)
+        checkDocumentExtras(where, documentRef, docResult, exp)
+        documentNumberByEntryNumber.set(docResult.entryNumber, docResult.documentNumber)
+      } catch (error) {
+        checkRejection(where, error, exp)
+      }
+
+      if (typeof exp.auditRecordsWritten === 'number') {
+        const auditAfter = await act((tx) => countAuditRecords(tx, tenantId))
+        expect(auditAfter - auditBefore, `${where}: auditRecordsWritten`).toBe(
+          exp.auditRecordsWritten,
+        )
+      }
+      await checkAfterCounts(where, exp)
+      continue
+    }
+
+    if (verb === 'reverseDocument') {
+      const exp = step.expect as Expect
+      assertOnlyKnownKeys(`${where}.expect`, exp, [
+        'outcome',
+        'entryNumber',
+        'occurredAt',
+        'period',
+        'postingRule',
+        'reversalOf',
+        'lines',
+        'totals',
+        'originalAfter',
+        'error',
+        'errorDetail',
+        'entriesAfter',
+        ...DOCUMENT_EXPECT_KEYS,
+      ])
+      assertOnlyKnownKeys(where, step, [...STEP_INPUT_KEYS, 'document'])
+      const port = requireReceivables(where)
+      const documentRef = step.document as string
+
+      try {
+        const docResult = await asActing(() =>
+          port.reverseDocument({
+            documentRef,
+            reason: step.reason as string,
+            idempotencyKey: step.idempotencyKey as string,
+          }),
+        )
+        const result = await documentEntryAsPostResult(
+          docResult.outcome,
+          docResult.entryNumber,
+          docResult.entryId,
+        )
+        await checkPosted(where, result, exp)
+        checkDocumentExtras(where, documentRef, docResult, exp)
+        documentNumberByEntryNumber.set(docResult.entryNumber, docResult.documentNumber)
+      } catch (error) {
+        checkRejection(where, error, exp)
+      }
+      await checkAfterCounts(where, exp)
+      continue
+    }
+
+    if (verb === 'saveDraft' || verb === 'editDraft' || verb === 'cancelDraft') {
+      const exp = step.expect as Expect
+      assertOnlyKnownKeys(`${where}.expect`, exp, [
+        'outcome',
+        'documentStatus',
+        'documentNumber',
+        'allocations',
+        'journalEntriesWritten',
+        'auditRecordsWritten',
+        'entriesAfter',
+        'error',
+        'errorDetail',
+      ])
+      assertOnlyKnownKeys(where, step, [...STEP_INPUT_KEYS, 'documentType', 'document', 'fields'])
+      const port = requireReceivables(where)
+      const documentType = step.documentType as 'sales_invoice' | 'customer_receipt'
+      const documentRef = step.document as string
+      const entriesBefore = await act((tx) => countJournalEntries(tx, tenantId))
+
+      try {
+        const draft = await asActing(() => {
+          if (verb === 'saveDraft') {
+            const fields = step.fields as Record<string, unknown>
+            return port.saveDraft({
+              documentType,
+              documentRef,
+              customerId: customerId(fields.customer as string),
+              fields,
+            })
+          }
+          if (verb === 'editDraft') {
+            return port.editDraft({
+              documentType,
+              documentRef,
+              fields: step.fields as Record<string, unknown>,
+            })
+          }
+          return port.cancelDraft({
+            documentType,
+            documentRef,
+            reason: step.reason as string | undefined,
+          })
+        })
+        if (exp.documentStatus !== undefined)
+          expect(draft.documentStatus, `${where}: documentStatus`).toBe(exp.documentStatus)
+        expect(draft.documentNumber, `${where}: a draft never carries a document number`).toBe(
+          exp.documentNumber ?? null,
+        )
+        if (verb === 'cancelDraft') expect(exp.outcome, `${where}: outcome`).toBe('TRANSITIONED')
+      } catch (error) {
+        checkRejection(where, error, exp)
+      }
+
+      if (typeof exp.journalEntriesWritten === 'number') {
+        const after = await act((tx) => countJournalEntries(tx, tenantId))
+        expect(after - entriesBefore, `${where}: journalEntriesWritten`).toBe(
+          exp.journalEntriesWritten,
+        )
+      }
+      await checkAfterCounts(where, exp)
+      continue
+    }
+
+    if (verb === 'customer') {
+      const exp = step.expect as Expect
+      assertOnlyKnownKeys(`${where}.expect`, exp, [
+        'outcome',
+        'customerStatus',
+        'journalEntriesWritten',
+        'entriesAfter',
+        'error',
+        'errorDetail',
+      ])
+      assertOnlyKnownKeys(where, step, [...STEP_INPUT_KEYS, 'customer'])
+      /*
+       * modules/customers ALREADY EXISTS (M3-C, merged) — this verb needs no
+       * receivables port. deactivateCustomer/reactivateCustomer are the
+       * real, shipped use cases, called exactly as the API controller calls
+       * them (apps/api/src/customers/customers.controller.ts), including
+       * their own business rules (CUSTOMER_HAS_BALANCE — P12 step 2, per
+       * Accounting seat ruling 2, 2026-09-29) — a rejection here is
+       * `CustomerError`, not `PostingError`; `checkRejection` handles both
+       * (isDomainError, duck-typed on `.code`/`.details`).
+       */
+      const entriesBefore = await act((tx) => countJournalEntries(tx, tenantId))
+      const id = customerId(step.customer as string)
+
+      const before = await asActing(() => getCustomer(id))
+      try {
+        if (step.action === 'deactivate') {
+          await asActing(() =>
+            deactivateCustomer({
+              id,
+              expectedVersion: before.customer.version,
+              actor: { userId: acting.fixture.ownerId },
+            }),
+          )
+        } else {
+          await asActing(() =>
+            reactivateCustomer({
+              id,
+              expectedVersion: before.customer.version,
+              actor: { userId: acting.fixture.ownerId },
+            }),
+          )
+        }
+        expect(exp.outcome, `${where}: outcome`).toBe('TRANSITIONED')
+      } catch (error) {
+        checkRejection(where, error, exp)
+      }
+      if (exp.customerStatus !== undefined) {
+        // The `customer` verb's own expect.customerStatus is a bare string —
+        // this step's own target, unlike the `assert` verb's
+        // `customerStatus`, a { ref: status } map over possibly several
+        // customers (P12 step 6).
+        const after = await asActing(() => getCustomer(id))
+        expect(after.customer.status, `${where}: customerStatus`).toBe(exp.customerStatus)
+      }
+      if (typeof exp.journalEntriesWritten === 'number') {
+        const after = await act((tx) => countJournalEntries(tx, tenantId))
+        expect(after - entriesBefore, `${where}: journalEntriesWritten`).toBe(
+          exp.journalEntriesWritten,
+        )
+      }
+      await checkAfterCounts(where, exp)
+      continue
+    }
 
     if (verb === 'post' || verb === 'reverse') {
       const exp = step.expect as Expect
@@ -351,24 +899,49 @@ export async function runPostingScenario(scenario: PostingScenario): Promise<voi
         'auditRecordsWritten',
         'postingAuditRecordsAfter',
       ])
-      assertOnlyKnownKeys(where, step, [...STEP_INPUT_KEYS])
+      assertOnlyKnownKeys(where, step, [...STEP_INPUT_KEYS, 'referenceType', 'referenceId'])
       const auditBefore = await act((tx) => countAuditRecords(tx, tenantId))
 
       try {
         if (verb === 'post') {
           const raw = step.payload as Record<string, unknown>
-          const payload = {
-            ...raw,
-            lines: (raw.lines as Record<string, unknown>[]).map((line) => {
-              const { account, ...rest } = line
-              return { accountId: accountId(account as string), ...rest }
-            }),
-          }
+          /*
+           * `referenceType` defaults to journal_voucher (every M2 kernel-post
+           * scenario predates this field and carries none). A kernel-level
+           * SALE_POSTED step (`level: "kernel"`) names its own
+           * ("sales_invoice", matching the kernel's SALE_SOURCE_TYPE — see
+           * posting-engine.ts's rule.sourceType check) — but its `referenceId`
+           * is still a fixture REF ("INV-X1"), not a uuid, because that field
+           * was written for the module-routed path this step no longer takes;
+           * the kernel requires a real uuid, so it is ignored here in favour
+           * of the SAME per-idempotency-key uuid journal-voucher steps use.
+           */
+          const referenceType = (step.referenceType as string | undefined) ?? 'journal_voucher'
+          const payload =
+            step.event === 'SALE_POSTED'
+              ? (() => {
+                  // customer (a fixture ref) -> customerId (a uuid): the
+                  // kernel's own ServiceSalePayload shape (service-sale.ts
+                  // PAYLOAD_KEYS) has no room for "customer" — it must be
+                  // DELETED, not left `undefined` (requireKnownKeys reads
+                  // Object.keys, which includes an own key set to undefined).
+                  const { customer, ...rest } = raw as Record<string, unknown> & {
+                    customer?: string
+                  }
+                  return { ...rest, customerId: customerId(customer as string) }
+                })()
+              : {
+                  ...raw,
+                  lines: (raw.lines as Record<string, unknown>[]).map((line) => {
+                    const { account, ...rest } = line
+                    return { accountId: accountId(account as string), ...rest }
+                  }),
+                }
           const result = await act((tx) =>
             engine.post(
               {
                 event: step.event as FinancialEventName,
-                referenceType: 'journal_voucher',
+                referenceType,
                 referenceId: referenceIdFor(step.idempotencyKey as string),
                 occurredAt: step.occurredAt as string,
                 idempotencyKey: step.idempotencyKey as string,
@@ -472,12 +1045,23 @@ export async function runPostingScenario(scenario: PostingScenario): Promise<voi
         'step',
         'do',
         '$comment',
+        'tenant',
         'trialBalance',
         'trialBalanceAfter',
+        'trialBalanceMidRange',
+        'trialBalances',
         'periodMovement',
         'invariant6',
         'accountLedger',
+        'customerLedger',
+        'invoiceOutstanding',
+        'invariant9',
+        'documentStatuses',
+        'documentNumbersIssued',
+        'customerStatus',
+        'entryStatuses',
         'journalEntryCount',
+        'postingAuditRecordCount',
         'roundingAccountBalance',
         'suspenseAccountBalance',
         'periodStatus',
@@ -486,6 +1070,16 @@ export async function runPostingScenario(scenario: PostingScenario): Promise<voi
         await checkTrialBalance(`${where} trialBalance`, step.trialBalance as Expect)
       if (step.trialBalanceAfter)
         await checkTrialBalance(`${where} trialBalanceAfter`, step.trialBalanceAfter as Expect)
+      if (step.trialBalanceMidRange)
+        await checkTrialBalance(
+          `${where} trialBalanceMidRange`,
+          step.trialBalanceMidRange as Expect,
+        )
+      if (step.trialBalances) {
+        for (const [i, tb] of (step.trialBalances as Expect[]).entries()) {
+          await checkTrialBalance(`${where} trialBalances[${i}]`, tb)
+        }
+      }
       if (step.periodMovement) {
         for (const [label, spec] of Object.entries(step.periodMovement as Record<string, Expect>)) {
           assertOnlyKnownKeys(`${where} periodMovement.${label}`, spec, ['rows', 'totals'])
@@ -505,7 +1099,11 @@ export async function runPostingScenario(scenario: PostingScenario): Promise<voi
       }
       if (step.invariant6) {
         const spec = step.invariant6 as Expect
-        assertOnlyKnownKeys(`${where} invariant6`, spec, ['perAccountResidual'])
+        assertOnlyKnownKeys(`${where} invariant6`, spec, [
+          'perAccountResidual',
+          'perCustomerResidual',
+          '$comment',
+        ])
         // The WHOLE map (T3 Council, Acct F5/R5): every account any reversal
         // pair touches must appear in the golden file with its residual, and
         // nothing the golden file names may be missing. Comparing only the
@@ -522,13 +1120,122 @@ export async function runPostingScenario(scenario: PostingScenario): Promise<voi
           await act((tx) => reversalResiduals(tx, tenantId)),
           `${where}: invariant6 per (pair, account, party)`,
         ).toEqual([])
+        if (spec.perCustomerResidual !== undefined) {
+          const byId = await act((tx) => reversalPairResidualByParty(tx, tenantId))
+          const byRef = Object.fromEntries(
+            [...byId].map(([id, residual]) => [customerRefById.get(id) ?? id, residual]),
+          )
+          expect(byRef, `${where}: invariant6 per-customer residual map`).toEqual(
+            spec.perCustomerResidual,
+          )
+        }
       }
       if (step.accountLedger) await checkAccountLedger(where, step.accountLedger as Expect)
+      if (step.customerLedger) await checkCustomerLedger(where, step.customerLedger as Expect)
+      if (step.invoiceOutstanding) {
+        const port = requireReceivables(`${where}.invoiceOutstanding`)
+        for (const [ref, expected] of Object.entries(
+          step.invoiceOutstanding as Record<string, string>,
+        )) {
+          const actual = await asActing(() => port.invoiceOutstanding(ref))
+          expect(actual, `${where}: invoiceOutstanding.${ref}`).toBe(expected)
+        }
+      }
+      if (step.invariant9) {
+        const spec = step.invariant9 as {
+          customer: string
+          gl: string
+          subledger: string
+          difference: string
+        }
+        assertOnlyKnownKeys(`${where} invariant9`, spec, [
+          'customer',
+          'gl',
+          'subledger',
+          'difference',
+        ])
+        const available = await act((tx) => invariant9Available(tx))
+        if (!available) {
+          throw new Error(
+            `${where}: invariant9 asserted but sales_invoices/customer_receipts do not exist ` +
+              'yet, or SALE_POSTED/CUSTOMER_PAYMENT_RECEIVED are not IMPLEMENTED_EVENTS. This ' +
+              "step's scenario belongs in golden-posting-registry.ts PENDING.",
+          )
+        }
+        const asOf = scenario.fixture.today
+        const id = customerId(spec.customer)
+        const result = await act((tx) => checkInvariant9(tx, tenantId, asOf))
+        const row = result.rows.find((r) => r.customerId === id) ?? {
+          customerId: id,
+          gl: '0.0000',
+          sub: '0.0000',
+          difference: '0.0000',
+        }
+        expect(
+          { customer: spec.customer, gl: row.gl, subledger: row.sub, difference: row.difference },
+          `${where}: invariant9`,
+        ).toEqual(spec)
+      }
+      if (step.documentStatuses) {
+        const port = requireReceivables(`${where}.documentStatuses`)
+        for (const [ref, expected] of Object.entries(
+          step.documentStatuses as Record<string, string>,
+        )) {
+          const documentType = ref.startsWith('INV') ? 'sales_invoice' : 'customer_receipt'
+          const actual = await asActing(() => port.documentStatus(documentType, ref))
+          expect(actual, `${where}: documentStatuses.${ref}`).toBe(expected)
+        }
+      }
+      if (step.documentNumbersIssued) {
+        const spec = step.documentNumbersIssued as Record<string, readonly string[]>
+        for (const [series, expected] of Object.entries(spec)) {
+          const actual =
+            series === 'INV' || series === 'RCT'
+              ? await asActing(() =>
+                  requireReceivables(`${where}.documentNumbersIssued`).documentNumbersIssued(
+                    series,
+                  ),
+                )
+              : await act((tx) => entryNumbersInSeries(tx, tenantId, series))
+          expect([...actual], `${where}: documentNumbersIssued.${series}`).toEqual([...expected])
+        }
+      }
+      if (step.customerStatus) {
+        for (const [ref, expected] of Object.entries(
+          step.customerStatus as Record<string, string>,
+        )) {
+          const id = customerId(ref)
+          const current = await runAs(
+            { tenantId: acting.fixture.tenantId, userId: acting.fixture.ownerId },
+            () => getCustomer(id),
+          )
+          expect(current.customer.status, `${where}: customerStatus.${ref}`).toBe(expected)
+        }
+      }
+      if (step.entryStatuses) {
+        for (const [entryNumber, expected] of Object.entries(
+          step.entryStatuses as Record<string, string>,
+        )) {
+          const id = entryIdByNumber.get(entryNumber)
+          if (!id) throw new Error(`${where}: entryStatuses names unknown entry "${entryNumber}".`)
+          const entry = await act((tx) => findEntryById(tx, tenantId, id))
+          expect(entry?.status, `${where}: entryStatuses.${entryNumber}`).toBe(expected)
+        }
+      }
       if (typeof step.journalEntryCount === 'number') {
         expect(
           await act((tx) => countJournalEntries(tx, tenantId)),
           `${where}: journalEntryCount`,
         ).toBe(step.journalEntryCount)
+      }
+      if (typeof step.postingAuditRecordCount === 'number') {
+        // P08 step 10: the aggregate form of a post step's own
+        // `postingAuditRecordsAfter` (checkAfterCounts) — same audit kind
+        // ('JOURNAL_ENTRY_POSTED'), read as a total instead of a delta.
+        expect(
+          await act((tx) => countAuditRecords(tx, tenantId, 'JOURNAL_ENTRY_POSTED')),
+          `${where}: postingAuditRecordCount`,
+        ).toBe(step.postingAuditRecordCount)
       }
       if (typeof step.roundingAccountBalance === 'string') {
         expect(await roleBalance('ROUNDING'), `${where}: rounding account`).toBe(
@@ -610,5 +1317,59 @@ export async function runPostingScenario(scenario: PostingScenario): Promise<voi
     })
     expect(actual, `${where}: ledger lines`).toEqual(spec.lines)
     expect(Money.serialize(running, 4), `${where}: ledger closing`).toBe(spec.closingBalance)
+  }
+
+  /**
+   * The customer ledger — K5's `controlAccountLedger`, AR_CONTROL filtered
+   * to one customer party (ledger-and-trial-balance.md §2: "not a separate
+   * store"). The `document` column (`INV-…` / `RCT-…`) is not a K5 field —
+   * K4 (the entry's own `referenceNumber`) is an M3-P kernel addition
+   * (README §4) — so it is resolved from `documentNumberByEntryNumber`,
+   * populated as THIS RUN posts and reverses documents. That is sound for a
+   * run that posts everything itself (every golden scenario does), and
+   * would be wrong for a ledger read against pre-existing data — which is
+   * exactly the gap K4 exists to close, left here as a comment rather than
+   * silently worked around.
+   */
+  async function checkCustomerLedger(where: string, spec: Expect): Promise<void> {
+    assertOnlyKnownKeys(`${where} customerLedger`, spec, [
+      'customer',
+      'from',
+      'to',
+      'openingBalance',
+      'lines',
+      'closingBalance',
+    ])
+    const id = customerId(spec.customer as string)
+    const result = await act((tx) =>
+      controlAccountLedger(tx, tenantId, 'AR', id, {
+        from: spec.from as string,
+        to: spec.to as string,
+        limit: 500,
+        after: null,
+      }),
+    )
+    expect(result.next, `${where}: customer ledger fits one page`).toBeNull()
+    expect(result.openingBalance, `${where}: customer ledger opening`).toBe(spec.openingBalance)
+    const actual = result.lines.map((line) => {
+      const document = documentNumberByEntryNumber.get(line.entryNumber)
+      if (!document) {
+        throw new Error(
+          `${where}: no document number recorded for entry ${line.entryNumber} — every ` +
+            'customerLedger line in a golden file is a document posted or reversed earlier ' +
+            'in the SAME run.',
+        )
+      }
+      return {
+        entryNumber: line.entryNumber,
+        document,
+        date: line.occurredAt,
+        debit: line.debit,
+        credit: line.credit,
+        runningBalance: line.runningBalance,
+      }
+    })
+    expect(actual, `${where}: customer ledger lines`).toEqual(spec.lines)
+    expect(result.closingBalance, `${where}: customer ledger closing`).toBe(spec.closingBalance)
   }
 }

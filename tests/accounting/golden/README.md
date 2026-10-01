@@ -34,16 +34,30 @@ belongs in the commit.
 | [P01](posting-p01-jv-simple.json) | Manual JV, two lines; trial balance | Specified — runner: M2 QA lane |
 | [P02](posting-p02-jv-multi-line.json) | Manual JV, four lines, fractional amounts; account ledger | Specified — runner: M2 QA lane |
 | [P03](posting-p03-jv-rejections.json) | Every JV rejection; no number consumed by a rejection | Specified — runner: M2 QA lane |
-| [P04](posting-p04-service-invoice.json) | Service invoice 10,000.0000; per-line half-up boundary; MVP variant fences | Specified — executable from M3 |
-| [P05](posting-p05-customer-receipt.json) | Partial receipt 6,000.0000; customer ledger 4,000.0000; allocation rejections | Specified — executable from M3 |
-| [P06](posting-p06-reversal.json) | Receipt and invoice reversal; reversal-of-reversal and double reversal rejected; everything to zero | Specified — executable from M3 |
+| [P04](posting-p04-service-invoice.json) | Service invoice 10,000.0000; per-line half-up boundary; MVP variant fences | Specified — **executed** |
+| [P05](posting-p05-customer-receipt.json) | Partial receipt 6,000.0000; customer ledger 4,000.0000; allocation rejections | Specified — **executed** |
+| [P06](posting-p06-reversal.json) | Receipt and invoice reversal; reversal-of-reversal and double reversal rejected; everything to zero | Specified — **executed** |
 | [P07](posting-p07-closed-period.json) | Closed / locked period rejection; reversal of a closed-period entry into today's period; replay after close | Specified — runner: M2 QA lane |
-| [P08](posting-p08-idempotent-retry.json) | Three identical requests → one entry; key reuse; source uniqueness | Specified — M2 (JV steps), M3 (invoice steps) |
-| [P09](posting-p09-mvp-journey.json) | The MVP journey across two tenants; trial balance at each checkpoint | Specified — executable from M3; M4 asserts the same figures through the API |
-| [P10](posting-p10-service-line-rounding.json) | A true half-way tie at the service-line boundary: half-up only | Specified — executable from M3 |
-| [P11](posting-p11-receipt-draft-lifecycle.json) | Receipt drafts: no GL, allocation or numbering effect; a draft in a since-closed period rejected, re-dated, posted; a stale proposal rejected at post; draft → cancel | Specified — executable from M3 |
-| [P12](posting-p12-inactive-customer.json) | An inactive customer cannot be invoiced but is paid in full | Specified — executable from M3 |
-| [P13](posting-p13-coa-create-and-rename.json) | A user-created account: create, six create rejections, post, TB and ledger, rename alters no history, code/parent frozen after posting, protected accounts, pre-posting re-code and re-parent ([coa-standard.md](../../../docs/posting-rules/coa-standard.md) §8) | **PENDING** — specified 2026-09-29 (M2-C); executable once migration 018 and the kernel's account create/edit exist |
+| [P08](posting-p08-idempotent-retry.json) | Three identical requests → one entry; key reuse; source uniqueness | Specified — M2 (JV steps) **executed**; M3 (invoice steps 6-9) **executed** against the real `modules/receivables` |
+| [P09](posting-p09-mvp-journey.json) | The MVP journey across two tenants; trial balance at each checkpoint | Specified — **executed**; M4 asserts the same figures through the API |
+| [P10](posting-p10-service-line-rounding.json) | A true half-way tie at the service-line boundary: half-up only | Specified — **executed** |
+| [P11](posting-p11-receipt-draft-lifecycle.json) | Receipt drafts: no GL, allocation or numbering effect; a draft in a since-closed period rejected, re-dated, posted; a stale proposal rejected at post; draft → cancel | Specified — **executed** |
+| [P12](posting-p12-inactive-customer.json) | A customer with a balance cannot be deactivated (`CUSTOMER_HAS_BALANCE`); once settled it can be; an inactive customer cannot be invoiced but is still paid in full; a receipt reversal never checks customer status | Specified — **executed**. **Rewritten 2026-09-29, Accounting seat ruling 2 (review of M3-Q @ 43be499): the original version had a customer with a 10,000.0000 balance deactivate successfully, contradicting `modules/customers`' own merged rule** |
+| [P13](posting-p13-coa-create-and-rename.json) | A user-created account: create, six create rejections, post, TB and ledger, rename alters no history, code/parent frozen after posting, protected accounts, pre-posting re-code and re-parent ([coa-standard.md](../../../docs/posting-rules/coa-standard.md) §8) | **PENDING** — specified 2026-09-29 (M2-C). Migration 018 and the kernel's account create/edit (`chartOfAccounts.create/update`) exist; what remains is the runner learning the `'account'` step verb — out of the M2-C lane's own scope, and untouched by M3-Q (P04-P12 only) |
+
+**M3-Q status (2026-10-01, closing [TD-015](../../../docs/TECH_DEBT.md)).** P04-P06 and P09-P12
+run wholly through `posting-scenarios-m3.spec.ts`; P08 runs its JV steps (1-5) through M2's own
+`posting-scenarios.spec.ts` and its invoice steps (6-10) through the M3 file — all against the
+REAL `modules/receivables` (`tests/accounting/receivables-real-port.ts`'s `ReceivablesPort`
+adapter), not a fake. `tests/accounting/golden-posting-runner.ts` executes every verb and
+expectation key P04-P12 use (`saveDraft`/`editDraft`/`cancelDraft`, `reverseDocument`, `customer`,
+`invoiceOutstanding`, `customerLedger`, `invariant9`, `documentStatuses`,
+`documentNumbersIssued`, a line's `party`, `invariant6.perCustomerResidual`); it was first proved
+against a FAKE `ReceivablesPort` in `tests/accounting/golden-posting-runner-m3.spec.ts` before the
+real module existed, which stays as a runner-logic test and is not itself evidence these
+scenarios pass against the real system — that evidence is `posting-scenarios-m3.spec.ts`, which is
+what the gate runs. `tests/accounting/golden-posting-registry.ts`'s own `PENDING` list is empty for
+the M3 scenarios and carries exactly one entry, P13, above.
 
 Fourteen of the promised 50–100. The rest arrive with the waves that make them
 expressible — there is no value in writing a scenario for a posting engine

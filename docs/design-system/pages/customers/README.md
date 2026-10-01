@@ -9,6 +9,40 @@
 | **Reference frame** | `ui-prototype/design/customer listings page .png` |
 | **Posts to the ledger** | no — creating a customer creates its control-account sub-ledger |
 
+## API note — M4-W (2026-09-29)
+
+Wired to the real customers API (`docs/design/M3/api-contract.md` §2, §4.1: C1 list, C2 create).
+Per the M4-W course correction (binding on this lane), the ported screen's markup, columns and
+wizard **stay** — only the data source changed, via an adapter
+(`apps/web/src/lib/adapters/customers.ts`) that maps the real `Customer`/`CustomerListItem` DTOs
+into the mock's `Master` shape `PartyList`/`CustomerTable` already read. `ui-plan.md` §3's plan to
+**remove** Type, Dealing Person, NTN #, Area and Salesman is **not** what shipped: those columns
+and filter controls stay in place, showing `—` (or disabled, for the two filters with no real
+field to filter by — Customer Type, Area) rather than being deleted. `ui-plan.md`'s column removal
+plan is superseded by this note for the columns; its two structural rulings still hold: the create
+wizard's Code field is **read-only, server-assigned** (§5, first step), and there is no opening-
+balance field (§7 — `OPENING_BALANCE_LOADED` has no posting rule).
+
+**Balance (Rs) column added** to the list view (`CustomerTable`) — the real `balance`/`balanceAsOf`
+from C1, Dr/Cr formatted server-side-signed, never summed in the browser. The KpiRow's "Total
+outstanding" and "Over limit / on hold" tiles are **not buildable** (no total-outstanding or
+credit-limit endpoint exists) and are not shown; the four remaining tiles (Customers / Active /
+Inactive / Shops) show real counts with no invented trend percentage (C1 has no "vs last month"
+endpoint — a KPI tile shows a number or nothing, never a fabricated delta).
+
+**Listing is bounded, not server-paginated.** C1 is cursor-paginated with no total count
+(contract §1). Rather than rebuild `PartyList`'s in-memory filter/sort/pager against a paged API —
+the screen rewrite the M4-W correction forbids — `useCustomersList`
+(`apps/web/src/lib/adapters/use-customers-list.ts`) follows C1's cursor automatically up to 1,000
+customers, then stops; the existing client-side filter/sort/pager continues to operate on that
+real (never fabricated), bounded array exactly as it did on the mock array. A tenant past that
+bound needs this rebuilt server-side — flagged as debt, not silently truncated.
+
+**Actions:** New customer needs `customer.create` (`GET /api/me/permissions`); Edit and
+Deactivate/Reactivate (C4, C5, C6) need it too and are hidden — not merely disabled — for a caller
+without it. Deactivate confirms and is refused with `409 CUSTOMER_HAS_BALANCE`, quoting the
+server's balance verbatim.
+
 ## 1. Purpose
 
 The customer directory: who they are, where they are, what they owe, and whether we should keep
