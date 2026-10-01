@@ -10,6 +10,16 @@
 | **Posts to the ledger** | no — read surface only |
 | **Owner** | Accounting |
 
+## API note — M2-UI (visual-language alignment)
+
+No prototype ancestor for this screen (genuinely new in M2), so there was nothing to restore —
+but the M2-UI brief asked for it to share "the same page header, table, and totals styling as
+the original ledger and cash book," which the M2-S version (generic kit `PageHead`) did not.
+Restyled to the `al-head`/`al-crumbs` header and `al-table` (Dr/Cr-toned cells, `vou-total`
+footer row) the restored Account Ledger and Voucher Detail screens use, with no behavioural or
+data change — same `GET /api/reports/trial-balance` call, same states, same text, so
+`trial-balance.test.tsx` needed zero changes.
+
 ## API note — M2-S (2026-09-29)
 
 Written directly from `REPORT/trial-balance@1`

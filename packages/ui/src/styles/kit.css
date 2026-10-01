@@ -1120,6 +1120,11 @@ main{min-width:0;padding-bottom:72px}.topbar{margin:14px 22px 0;height:72px;back
 .vn-types small{font-size:12px;color:#556B60}
 .vn-types button.active{background:#E8F5EC;border-color:#3FA46B;box-shadow:0 0 0 2px rgba(63,164,107,.18)}
 .vn-types button.active svg,.vn-types button.active b{color:#12833F}.vn-types button.active small{color:#2E7D4E}
+/* Only Journal posts in M2 (journal-voucher.md §1) — the other five preset cards stay visible
+ * (never deleted) but disabled; this is the only one of the pre-existing "coming soon" controls
+ * in this file that had no :disabled treatment at all, so a disabled preset card looked exactly
+ * like a clickable one. M2-UI restoration, coordinator review. */
+.vn-types button:disabled{opacity:.45;cursor:not-allowed}
 
 .vn-card{background:#fff;border:1px solid #E1E9E4;border-radius:12px;padding:16px 20px 20px;margin-bottom:16px}
 .vn-card-head{display:flex;align-items:center;gap:14px;margin-bottom:16px}
@@ -1155,6 +1160,10 @@ main{min-width:0;padding-bottom:72px}.topbar{margin:14px 22px 0;height:72px;back
 .vn-btn svg{width:16px;height:16px}
 .vn-btn.ghost{background:#fff;border-color:#D5DED8;color:#1F2A24}
 .vn-btn.ghost:hover{background:#F5F8F6}
+/* Save Draft (M2 has no draft state) had no :disabled treatment at all — same dim-on-disabled
+ * as the voucher-type preset tabs (.vn-types button:disabled, above). Coordinator review. */
+.vn-btn:disabled{opacity:.45;cursor:not-allowed}
+.vn-btn.ghost:disabled:hover{background:#fff}
 .vn-btn.solid{background:#12833F;color:#fff}
 .vn-btn.solid:hover{background:#0F7237}
 .vn-btn.text{background:transparent;color:#1F2A24;padding:0 10px}
@@ -2966,6 +2975,12 @@ output.sav-num{display:inline-flex;align-items:center;justify-content:center;bac
 .coa2-kind{display:inline-block;padding:5px 10px;border-radius:6px;font-size:11.5px;font-weight:600;background:#EEF2F5;color:#3D5166}.coa2-kind.header{background:#EEF2F5;color:#3D5166}.coa2-kind.group{background:#E3F0FF;color:#1B74E4}.coa2-kind.postable{background:#E3F6EA;color:#0A8A47}.coa2-kind.sm{padding:3px 7px;font-size:9.5px;border-radius:5px;line-height:1.4;flex:none;white-space:nowrap}
 .coa2-count{display:inline-block;min-width:32px;text-align:center;padding:4px 9px;border-radius:6px;font-size:11.5px;font-weight:600;background:#EEF2F5;color:#5B6B80}.coa2-count.on{background:#E3F0FF;color:#1B74E4}
 .c-balance{font-weight:800;color:var(--c-green);font-size:13.5px}.coa2-tr.depth-4 .c-balance{font-weight:700}
+/* A real amount ("Rs 12,184,251.00 Dr") is longer than the demo data's undecimalled number
+ * ("Rs 12,184,251") this column was sized for — stacked amount-then-side (like .c-mod already
+ * does for its own two-line cell) instead of one inline string that wraps unpredictably and
+ * overflows into the row below it. M2-UI restoration, chart-of-accounts.tsx. */
+.coa2-tr>span.c-balance{flex-direction:column;align-items:flex-end!important;gap:0;line-height:1.25}
+.c-balance small{font-size:11px;font-weight:600;color:var(--c-mute)}
 .c-change em{font-style:normal;font-size:12px;font-weight:600;min-width:52px}.c-change.up em{color:var(--c-green)}.c-change.down em{color:#E0323F}.c-change.flat em{color:#8A98A8}.c-change .coa2-spark{width:44px;height:20px}.coa2-flat{width:44px;border-top:1.5px solid #C4CFDA}
 .c-mod{flex-direction:column;align-items:flex-start!important;gap:1px!important;line-height:1.3}.c-mod b{font-weight:500;font-size:12px}.c-mod small{font-size:11px;color:var(--c-mute)}
 .coa2-status{display:inline-block;padding:5px 10px;border-radius:6px;font-size:11.5px;font-weight:600}.coa2-status.on{background:#E3F6EA;color:#0A8A47}.coa2-status.off{background:#FDECEE;color:#E0323F}
@@ -3069,7 +3084,9 @@ output.sav-num{display:inline-flex;align-items:center;justify-content:center;bac
 .al-crumbs{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--a-mute);margin-bottom:8px}.al-crumbs button{border:0;background:transparent;color:var(--a-mute);font:inherit;padding:0}.al-crumbs svg{width:14px;height:14px}
 .al-head h1{margin:0;font-size:28px;font-weight:800;letter-spacing:-.7px}.al-head p{margin:6px 0 0;font-size:13.5px;color:var(--a-mute)}
 .al-head-actions{display:flex;gap:10px;flex-wrap:wrap}
-.al-btn{height:40px;padding:0 14px;border:1px solid var(--a-line);border-radius:10px;background:#fff;font-size:12.5px;font-weight:600;color:var(--a-ink);display:inline-flex;align-items:center;gap:8px;white-space:nowrap;transition:background .15s,border-color .15s}.al-btn svg{width:16px;height:16px;color:#3D5166}.al-btn:hover{background:#F5F8FA;border-color:#D5DEE6}.al-btn i{font-style:normal;color:var(--a-mute)}
+.al-btn{height:40px;padding:0 14px;border:1px solid var(--a-line);border-radius:10px;background:#fff;font-size:12.5px;font-weight:600;color:var(--a-ink);display:inline-flex;align-items:center;gap:8px;white-space:nowrap;transition:background .15s,border-color .15s}.al-btn svg{width:16px;height:16px;color:#3D5166}.al-btn:hover{background:#F5F8FA;border-color:#D5DEE6}.al-btn i{font-style:normal;color:var(--a-mute)}.al-btn:disabled{opacity:.5;cursor:not-allowed}.al-btn:disabled:hover{background:#fff;border-color:var(--a-line)}.al-btn.primary:disabled:hover{background:var(--a-green);border-color:var(--a-green)}
+.al-filter select:disabled{cursor:not-allowed}.al-filter:has(select:disabled){opacity:.55;cursor:not-allowed}
+.al-link:disabled{opacity:.5;cursor:not-allowed}
 .al-btn.primary{background:var(--a-green);border-color:var(--a-green);color:#fff;font-weight:700}.al-btn.primary svg{color:#fff}.al-btn.primary:hover{background:#0B7A3C}.al-btn.icon{width:40px;padding:0;justify-content:center}.al-btn.wide{width:100%;justify-content:center;margin-top:auto;flex:none}
 .al-pill{background:#fff;color:var(--a-green);font-size:10.5px;font-weight:800;min-width:18px;height:18px;border-radius:9px;display:grid;place-items:center;padding:0 5px}
 .al-card{background:#fff;border:1px solid var(--a-line);border-radius:16px}
@@ -3219,7 +3236,7 @@ output.sav-num{display:inline-flex;align-items:center;justify-content:center;bac
 .coa2-head{flex-wrap:nowrap}
 .coa2-head .coa2-tools{margin-left:0;flex:1 1 auto;min-width:0;justify-content:flex-end}
 .coa2-add{margin-left:0;flex:none}
-@media(max-width:1100px){
+@media(max-width:1366px){
  .coa2-tools{flex-wrap:wrap}
  .coa2-io{flex-wrap:nowrap}
 }
@@ -4029,3 +4046,46 @@ output.sav-num{display:inline-flex;align-items:center;justify-content:center;bac
  * design-system seat's own `LedgerTable`/`DebitCreditCell` component. */
 .money-debit{color:var(--money-debit)}
 .money-credit{color:var(--money-credit)}
+
+/*
+ * .coa2-tr2 — Chart of Accounts table rows, a fully explicit grid of its own. NOT a reuse of
+ * .coa2-tr's own grid-template-columns/media-query rules above (11 tracks, three overlapping
+ * `@media(max-width:1600px)` blocks) — coordinator review, M2-UI: matching computed
+ * `gridTemplateColumns` between a header row and a body row does not by itself prove each cell
+ * lands in its own track, and visually it did not. `.coa2-tr` is still applied alongside this
+ * class (border-bottom, min-height, font-size, the `>span` reset) — only grid-template-columns
+ * is overridden here, at higher specificity (two classes) so source order cannot matter.
+ *
+ * Ten columns, in this fixed order, one header cell and one body cell per track, every cell on
+ * every row carrying the per-column class the row below names: check / name / code / type /
+ * subaccounts / balance / change / status / mod ("Last Modified") / actions. Parent Account is
+ * dropped (not in the coordinator's required column list).
+ */
+/*
+ * Column widths sized to fit the CONTENT area next to the sidebar (~1110px at a 1440 viewport,
+ * ~976px at 1280 — not the full viewport width), with `--name-w` at its real default (420px,
+ * set as an inline custom property by the section wrapper below, resizable by the user and
+ * persisted to localStorage) — not the `minmax()` fallback, which only applies if `--name-w` is
+ * ever unset. A first attempt sized against the fallback and overflowed the row by ~150px at
+ * 1440, pushing Last Modified and Actions off the visible, captured viewport entirely.
+ */
+.coa2-table .coa2-tr.coa2-tr2{grid-template-columns:36px var(--name-w,minmax(200px,1.4fr)) 64px 84px 84px 126px 64px 84px 100px 44px!important}
+/*
+ * kit.css's OLDER `.coa2-tr` system still carries `@media(max-width:1600px){.c-parent,.c-mod{
+ * display:none!important}}` above — a single-class `!important` selector that matched this
+ * table's `.c-mod` cells too (the class name is reused) at every width from 1366 up to 1600,
+ * including 1440, and hid "Last Modified" outright with no track left behind for it at all
+ * (not a sizing issue — `display:none` removes the element from layout). `.c-parent` is no
+ * longer used by this table (that column was dropped), so only `.c-mod` collides. A two-class
+ * selector beats that rule's specificity regardless of which rule is later in the file, so this
+ * does not depend on source order the way the first attempt at this fix implicitly did.
+ */
+.coa2-tr2 .c-change,.coa2-tr2 .c-mod{display:flex!important}
+@media(max-width:1366px){
+  /* Change and Last Modified hide — on the head row exactly as the body, via the same class,
+   * so nothing can hide one row's cell and not the other's. Eight tracks remain, matching the
+   * eight cells still in DOM flow (display:none removes a grid item from auto-placement
+   * entirely, so the template itself must shrink to match, not just visually hide a track). */
+  .coa2-table .coa2-tr.coa2-tr2{grid-template-columns:36px var(--name-w,minmax(180px,1.2fr)) 64px 84px 84px 126px 84px 44px!important}
+  .coa2-tr2 .c-change,.coa2-tr2 .c-mod{display:none!important}
+}

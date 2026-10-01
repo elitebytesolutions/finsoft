@@ -9,6 +9,26 @@
 | **Reference frames** | `design/voucher register improved page .png`, `voucher register.png`, `voucher register 2.png` |
 | **Posts to the ledger** | **yes** — a draft can be posted from the inspector |
 
+## API note — M2-UI (restoration)
+
+The PO rejected the M2-S rewrite of this screen for abandoning the original design. It is
+restored to the prototype's markup/layout (KPI row, tabs, timeline list grouped by date, split
+inspector panel) via `apps/web/src/lib/adapters/vouchers.ts`, on top of the real
+`GET /api/journals` (list) + `GET /api/journals/:id` (inspector, fetched on selection) +
+`GET /api/accounts` M2-S already wired. What could not be a literal restore, because the real
+posting model does not have it:
+
+- **Status tabs are All / Posted / Reversed**, not All/Posted/Draft/Pending — `JournalEntryStatus`
+  is `POSTED | REVERSED` only (no draft/pending workflow, journal-voucher.md §1). The status
+  filter is sent to the server (`listJournals({status})`), not applied client-side.
+- **Every voucher tag reads "JV"** — the real posting model has no CRV/CPV/BRV/BPV/CV/SINV/PINV
+  distinction (see the note below); the type filter is present but inert.
+- **Total Debit/Total Credit KPIs are gone** — `GET /api/journals` doesn't carry line amounts, and
+  fetching every entry's lines to sum a KPI would violate "do not fetch a whole ledger to show a
+  total." The KPI row shows real counts (vouchers shown / posted / reversed) instead.
+- Free-text search and the newest/oldest sort toggle are visible but disabled — no server search
+  param, and no browser-side re-sort of server-returned order.
+
 ## API note — M2-S (2026-09-29)
 
 M2 posts only Journal Vouchers ([voucher-new](../voucher-new/#api-note--m2-s-2026-09-29)), so in
