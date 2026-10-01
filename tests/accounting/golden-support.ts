@@ -180,6 +180,28 @@ export async function reversalPairResidualByAccount(
   return new Map(result.rows.map((row) => [row.code, row.residual]))
 }
 
+/**
+ * Per-party residual of every reversal pair (P06/P09's `invariant6.
+ * perCustomerResidual`) — the same query as `reversalPairResidualByAccount`,
+ * grouped by `party_id` instead of account code. Keyed by the raw party
+ * uuid; the caller (golden-posting-runner.ts) maps back to the fixture's
+ * customer ref, which is what the golden file actually names.
+ */
+export async function reversalPairResidualByParty(
+  tx: TenantTx,
+  tenantId: string,
+): Promise<ReadonlyMap<string, string>> {
+  assertIssuedTenantTx(tx)
+  const result = await sql<{ party_id: string; residual: string }>`
+    SELECT jl.party_id::text AS party_id, sum(jl.debit - jl.credit)::text AS residual
+      FROM journal_entries r
+      JOIN journal_lines jl ON jl.tenant_id = r.tenant_id AND jl.entry_id IN (r.id, r.reversal_of)
+     WHERE r.tenant_id = ${tenantId} AND r.reversal_of IS NOT NULL AND jl.party_id IS NOT NULL
+     GROUP BY jl.party_id
+  `.execute(tx)
+  return new Map(result.rows.map((row) => [row.party_id, row.residual]))
+}
+
 /** Entry numbers issued to the tenant in one series, in order. */
 export async function entryNumbersInSeries(
   tx: TenantTx,

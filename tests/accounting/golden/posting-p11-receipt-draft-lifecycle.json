@@ -17,7 +17,7 @@
     "customer-receipt.md §1.1 and ruling R-1"
   ],
   "executableFrom": "M3",
-  "status": "Specified, hand-computed by the Accounting seat, 2026-09-28 (M3-000c). Not yet executed: needs customers, invoices, receipts and period close (M3).",
+  "status": "Specified, hand-computed by the Accounting seat, 2026-09-28 (M3-000c). Not yet executed: needs customers, invoices, receipts and period close (M3). Step 12's errorDetail keys corrected to the contract's real shape (Accounting seat ruling, 2026-09-29, review of the M3-Q throwaway verify against M3-P @efb7e3f): `invoice` -> `invoiceNumber` (`invoiceId` omitted — an opaque runtime uuid). outstanding/requested unchanged.",
   "description": [
     "Today is 2026-10-05 (Asia/Karachi). FY2027 = 2026-07-01 … 2027-06-30, all periods OPEN at the start.",
     "",
@@ -333,7 +333,7 @@
         "outcome": "REJECTED",
         "error": "ALLOCATION_EXCEEDS_OUTSTANDING",
         "errorDetail": {
-          "invoice": "INV-A1",
+          "invoiceNumber": "INV-2027-000001",
           "outstanding": "4000.0000",
           "requested": "5000.0000"
         },
