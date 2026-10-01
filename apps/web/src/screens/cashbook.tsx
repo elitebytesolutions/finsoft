@@ -272,7 +272,10 @@ function CashEntryPanels({
           <span className="cb-ph-icon">{out ? <ArrowUpFromLine /> : <ArrowDownToLine />}</span>
           <div>
             <h2>{out ? 'Cash Out' : 'Cash In'}</h2>
-            <p>{out ? `From ${cashAccount.name}` : `Into ${cashAccount.name}`}</p>
+            <p>
+              {out ? `From ${cashAccount.name}` : `Into ${cashAccount.name}`} · posts as a
+              Journal Voucher
+            </p>
           </div>
         </div>
         <div className="cb-grid">
@@ -286,11 +289,17 @@ function CashEntryPanels({
             />
           </Field>
           <GroupLabel label="Who" />
-          <Field label={out ? 'Paid To / Party' : 'Received From / Party'} icon={<User />} full>
+          <Field
+            label={out ? 'Paid To / Party' : 'Received From / Party'}
+            icon={<User />}
+            full
+          >
             <input
               value={f.party}
               onChange={(e) => set({ party: e.target.value })}
               placeholder={out ? 'Office Mart Sdn Bhd' : 'Walk-in Customer'}
+              disabled
+              title="Not saved with this entry — for your own reference only"
             />
           </Field>
           <Field label="Customer / Vendor" icon={<Users />} full>
@@ -299,13 +308,15 @@ function CashEntryPanels({
             </select>
           </Field>
           <GroupLabel label="What" />
-          <Field
-            label={out ? 'Expense / Payable account' : 'Income / Receivable account'}
-            required
-            icon={<Tag />}
-          >
+          {/* "Income account" / "Expense account", not "...Receivable"/"...Payable" — AR/AP are
+           * control accounts, and the server rejects a manual JV against one with
+           * ACCOUNT_CONTROL_MANUAL_FORBIDDEN. Customer/vendor money goes through a customer
+           * receipt, not this form. The picker itself already only offers postable, non-control
+           * accounts (`postableJournalAccounts`, CashScreen below) — AR/AP cannot appear here
+           * regardless of label. */}
+          <Field label={out ? 'Expense account' : 'Income account'} required icon={<Tag />}>
             <select
-              aria-label={out ? 'Expense or payable account' : 'Income or receivable account'}
+              aria-label={out ? 'Expense account' : 'Income account'}
               value={f.counterAccountId}
               onChange={(e) => set({ counterAccountId: e.target.value })}
             >
@@ -318,7 +329,12 @@ function CashEntryPanels({
             </select>
           </Field>
           <Field label="Payment Mode" icon={<CreditCard />}>
-            <select value={f.mode} onChange={(e) => set({ mode: e.target.value })}>
+            <select
+              value={f.mode}
+              onChange={(e) => set({ mode: e.target.value })}
+              disabled
+              title="Not saved with this entry — for your own reference only"
+            >
               {['Cash', 'Cheque', 'Bank transfer', 'Card'].map((m) => (
                 <option key={m}>{m}</option>
               ))}
@@ -412,11 +428,43 @@ function CashEntryPanels({
           onClose={() => setConfirmKind(null)}
         >
           <p>
-            Post {confirmKind === 'In' ? 'Dr' : 'Cr'} {cashAccount.name} /{' '}
-            {confirmKind === 'In' ? 'Cr' : 'Dr'} {confirmAccount?.name ?? '—'} for{' '}
-            <b>{confirmAmountDisplay}</b> on <b>{confirmForm.date}</b>? This posts a journal voucher
-            — posted entries cannot be edited, only reversed.
+            This posts a Journal Voucher on <b>{confirmForm.date}</b> — the same double-entry
+            posting as any other voucher. Posted entries cannot be edited, only reversed.
           </p>
+          {/* The real Dr/Cr lines, not a prose paraphrase of them — the Accounting seat's
+           * condition for allowing this form to post: the mapping from Cash In/Out to journal
+           * lines must be visible to the user before they confirm, not hidden in React. */}
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Account</th>
+                  <th className="num">Debit (PKR)</th>
+                  <th className="num">Credit (PKR)</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>{cashAccount.name}</td>
+                  <td className="num money-debit">
+                    {confirmKind === 'In' ? confirmAmountDisplay : '—'}
+                  </td>
+                  <td className="num money-credit">
+                    {confirmKind === 'Out' ? confirmAmountDisplay : '—'}
+                  </td>
+                </tr>
+                <tr>
+                  <td>{confirmAccount?.name ?? '—'}</td>
+                  <td className="num money-debit">
+                    {confirmKind === 'Out' ? confirmAmountDisplay : '—'}
+                  </td>
+                  <td className="num money-credit">
+                    {confirmKind === 'In' ? confirmAmountDisplay : '—'}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
           <div className="modal-foot">
             <Button kind="secondary" onClick={() => setConfirmKind(null)}>
               Cancel
