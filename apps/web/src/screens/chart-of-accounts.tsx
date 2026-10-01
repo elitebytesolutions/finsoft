@@ -681,7 +681,20 @@ function ChartReady({ data }: { data: Awaited<ReturnType<typeof loadChart>> }) {
           className={`coa2-table density-${density}`}
           style={{ '--name-w': `${nameWidth}px` } as React.CSSProperties}
         >
-          <div className="coa2-tr head">
+          {/*
+           * coa2-tr2 — a SEPARATE, fully explicit grid, not a reuse of kit.css's own `.coa2-tr`
+           * (11 fixed tracks, three overlapping `@media(max-width:1600px)` blocks, and a prior
+           * attempt at this same fix that matched `gridTemplateColumns` between head and body
+           * without proving every cell actually lands in its OWN track). Every header cell and
+           * every body cell below carries the SAME ten per-column classes, in the SAME order:
+           * check / name / code / type / subaccounts / balance / change / status / mod /
+           * actions — Parent Account is dropped (coordinator review: not in the required
+           * column list). `.coa2-tr2`'s own CSS (packages/ui/src/styles/kit.css) is the only
+           * thing that sets its grid-template-columns, at both 1440 and the <=1366px step that
+           * hides Change/Last Modified — on the head row exactly as the body, via the same
+           * class, so there is nothing left that can hide one row's cell and not the other's.
+           */}
+          <div className="coa2-tr coa2-tr2 head">
             <span className="c-check">
               <label className="coa2-check">
                 <input
@@ -705,36 +718,26 @@ function ChartReady({ data }: { data: Awaited<ReturnType<typeof loadChart>> }) {
                 onPointerDown={startResize}
               />
             </span>
-            <span>
+            <span className="c-code-h">
               <Tag /> Code <ChevronsUpDown />
             </span>
-            <span>
+            <span className="c-type-h">
               <Filter /> Type <Filter className="f" />
             </span>
-            {/* c-parent/c-mod on the HEADER cells too, not just the body's — kit.css hides both
-             * classes at <=1600px width via `.c-parent,.c-mod{display:none!important}` on the
-             * SAME media query that zeroes their grid track. Without the class here, only the
-             * body cell collapsed; the header cell kept its text in a 0-width track with no
-             * overflow control, which is what actually produced the misaligned/overlapping
-             * header labels — every column from here on read one slot off between header and
-             * body. */}
-            <span className="c-parent">
-              <FolderTree /> Parent Account <Filter className="f" />
-            </span>
-            <span>
+            <span className="c-subaccounts">
               <Network /> Sub-accounts
             </span>
-            <span className="num">
+            <span className="num c-balance">
               <Coins /> Balance (PKR) <ChevronsUpDown />
             </span>
             <span className="c-change">
               <TrendingUp /> Change
             </span>
+            <span className="c-status">
+              <Activity /> Status
+            </span>
             <span className="c-mod">
               <CalendarDays /> Last Modified
-            </span>
-            <span>
-              <Activity /> Status
             </span>
             <span className="c-actions">Actions</span>
           </div>
@@ -746,7 +749,7 @@ function ChartReady({ data }: { data: Awaited<ReturnType<typeof loadChart>> }) {
             return (
               <div
                 key={m.code}
-                className={`coa2-tr depth-${depth} ${selected.has(m.code) ? 'sel' : ''} ${m.level === 1 ? 'root' : ''}`}
+                className={`coa2-tr coa2-tr2 depth-${depth} ${selected.has(m.code) ? 'sel' : ''} ${m.level === 1 ? 'root' : ''}`}
               >
                 <span className="c-check">
                   <label className="coa2-check">
