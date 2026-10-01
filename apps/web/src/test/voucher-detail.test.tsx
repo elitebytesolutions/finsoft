@@ -3,7 +3,27 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from './harness'
 import { VoucherDetail } from '@/screens/vouchers'
+import { AuthContext, type AuthContextValue } from '@/lib/api/auth-context'
 import { setAccessToken } from '@/lib/api/session'
+
+/* M4-W: VoucherDetailReady now gates Reverse on `useAuth().can('voucher.reverse')`, so
+ * these tests need an AuthContext in the tree — same fake seam as
+ * apps/web/src/test/period-close.test.tsx, with `can` defaulting to true so every existing
+ * assertion below (which predates permission gating) keeps seeing Reverse exactly as it
+ * always did. */
+const fakeAuth: AuthContextValue = {
+  status: 'authenticated',
+  user: { id: 'test-user', fullName: 'Test User', email: 'test.user@example.com' },
+  tenant: { id: 'test-tenant', code: 'TEST', name: 'Test Tenant' },
+  sessionId: 'test-session',
+  permissionVersion: 1,
+  permissions: ['all'],
+  errorMessage: null,
+  retry: () => {},
+  syncAfterLogin: async () => {},
+  signOut: async () => {},
+  can: () => true,
+}
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -89,10 +109,12 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-function renderScreen(path = '/vouchers/e1') {
+function renderScreen(path = '/vouchers/e1', can: (code: string) => boolean = () => true) {
   return render(
     <MemoryRouter initialEntries={[path]}>
-      <VoucherDetail />
+      <AuthContext.Provider value={{ ...fakeAuth, can }}>
+        <VoucherDetail />
+      </AuthContext.Provider>
     </MemoryRouter>,
   )
 }
@@ -198,5 +220,21 @@ describe('VoucherDetail', () => {
 
     renderScreen()
     await waitFor(() => expect(screen.getByText('Record not found')).toBeInTheDocument())
+  })
+
+  it('never offers Reverse to a caller without voucher.reverse, even on a posted entry', async () => {
+    const fetchMock = fetch as ReturnType<typeof vi.fn>
+    fetchMock.mockImplementation((url: string) => {
+      if (url.startsWith('/api/journals/')) return Promise.resolve(jsonResponse(200, detail()))
+      if (url.startsWith('/api/accounts')) return Promise.resolve(jsonResponse(200, ACCOUNTS))
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+
+    renderScreen('/vouchers/e1', () => false)
+
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: 'JV-2027-000001' })).toBeInTheDocument(),
+    )
+    expect(screen.queryByRole('button', { name: 'Reverse' })).not.toBeInTheDocument()
   })
 })

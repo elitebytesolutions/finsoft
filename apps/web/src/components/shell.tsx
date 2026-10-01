@@ -87,6 +87,7 @@ import {
 import { nav, roles, type NavChild, type NavItem } from '@/mocks/api'
 import { Badge, Banner } from '@finsoft/ui'
 import { useAuth } from '@/lib/api/auth-context'
+import { roleLabel } from '@/lib/adapters/role-label'
 
 const iconMap: Record<string, LucideIcon> = {
   Printer,
@@ -175,6 +176,10 @@ const API_BACKED_ROUTES: string[] = [
   '/vouchers',
   '/vouchers/*',
   '/period-close',
+  // M4-W
+  '/customers',
+  '/customers/*',
+  '/admin-audit',
 ]
 
 function isApiBackedRoute(path: string): boolean {
@@ -243,7 +248,10 @@ function renderNodes(
 export function Shell({
   children,
   role,
-  setRole,
+  // Prop kept (app-frame.tsx still passes it) for whichever mock screen down the tree
+  // still reads FinsoftContext's setRole — the topbar's own role switcher that used to
+  // call it directly was removed (M4-W: the header shows the real role now).
+  setRole: _setRole,
 }: {
   children: ReactNode
   role: string
@@ -252,7 +260,7 @@ export function Shell({
   const pathname = usePathname(),
     navigate = useNavigate()
   const path = pathname.split('?')[0]
-  const { user, tenant, signOut } = useAuth()
+  const { user, tenant, signOut, permissions } = useAuth()
   const isApiBacked = isApiBackedRoute(path)
   const [collapsed, setCollapsed] = useState(false),
     [mobileOpen, setMobileOpen] = useState(false),
@@ -720,30 +728,13 @@ export function Shell({
               </span>
               <div>
                 <b>{user?.fullName ?? 'Signed in'}</b>
-                <small>
-                  {process.env.NODE_ENV !== 'production'
-                    ? `${role} (prototype role)`
-                    : (tenant?.name ?? '')}
-                </small>
+                {/* M4-W: the real role, derived from GET /api/me/permissions — never the
+                    mock role switcher. A screen not yet wired to real permissions still
+                    reads the mock `role`/`can(module)` below for its own gating; only the
+                    header display and the switcher control itself changed. */}
+                <small>{roleLabel(permissions)}</small>
               </div>
               <ChevronDown />
-              {/* The mock permission switch that drives the prototype screens' `can()`/
-                  `act()` (docs/briefs/M1-W-web-infra.md — that mock stays; only the
-                  identity shown above is real now). docs/design-system/pages/app-shell
-                  §10: "role switching exists only in non-production builds" — gated
-                  here rather than removed, since prototype screens still need a way
-                  to exercise every role without a real RBAC backend yet. */}
-              {process.env.NODE_ENV !== 'production' && (
-                <select
-                  aria-label="View as role (prototype only)"
-                  value={role}
-                  onChange={(e) => setRole(e.target.value)}
-                >
-                  {Object.keys(roles).map((r) => (
-                    <option key={r}>{r}</option>
-                  ))}
-                </select>
-              )}
             </label>
             <button
               type="button"

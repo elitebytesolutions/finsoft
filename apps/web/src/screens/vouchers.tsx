@@ -17,6 +17,7 @@ import {
 } from '@finsoft/ui'
 import { useNavigate, useParams } from '@/lib/router'
 import { getJournal, listAccounts, postJournal, reverseJournal } from '@/lib/api/accounting-client'
+import { useAuth } from '@/lib/api/auth-context'
 import { useApiQuery } from '@/lib/api/use-api-query'
 import { useIdempotencyKey } from '@/lib/api/idempotency-key'
 import { postableJournalAccounts } from '@/lib/accounting/account-tree'
@@ -109,13 +110,17 @@ function VoucherDetailReady({
   onReversed: () => void
 }) {
   const navigate = useNavigate()
+  const { can } = useAuth()
   const [reverseOpen, setReverseOpen] = useState(false)
   const nameOf = (accountId: string) => {
     const a = accounts.find((x) => x.id === accountId)
     return a ? `${a.name} (${a.code})` : accountId
   }
   const isReversal = entry.reversalOf !== null
-  const canReverse = entry.status === 'POSTED' && !isReversal
+  // M4-W: `voucher.reverse` is a privileged permission (catalog.ts) — offered only to a
+  // holder, same UI-affordance-only reasoning as PeriodTable's Close/Reopen. The route's
+  // own 403 on POST /journals/:id/reverse is still the real gate.
+  const canReverse = entry.status === 'POSTED' && !isReversal && can('voucher.reverse')
 
   return (
     <>
@@ -323,6 +328,7 @@ export function VoucherForm() {
 
 function VoucherFormReady({ accounts }: { accounts: AccountDto[] }) {
   const navigate = useNavigate()
+  const { can } = useAuth()
   const [date, setDate] = useState(todayIso())
   const [reference, setReference] = useState('')
   const [narration, setNarration] = useState('')
@@ -352,7 +358,11 @@ function VoucherFormReady({ accounts }: { accounts: AccountDto[] }) {
   const addLine = () => setLines((list) => [...list, emptyLine()])
   const removeLine = (i: number) => setLines((list) => list.filter((_, j) => j !== i))
 
-  const canSubmit = totals.balanced && narration.trim().length > 0 && !submitting
+  // M4-W: `voucher.post` gates the button, same UI-affordance-only reasoning as
+  // PeriodTable's Close/Reopen and VoucherDetailReady's Reverse — the server's own
+  // @RequirePermission on POST /api/journals is the real gate regardless.
+  const canSubmit =
+    totals.balanced && narration.trim().length > 0 && !submitting && can('voucher.post')
 
   // Opens the confirm dialog — posting itself happens only from there, in doPost below.
   const requestSubmit = (e: FormEvent) => {

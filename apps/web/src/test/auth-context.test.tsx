@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from './harness'
 import { useRouterState } from './router-store'
 import { AuthProvider, useAuth } from '@/lib/api/auth-context'
-import { apiFetch } from '@/lib/api/client'
+import { apiFetch, refresh } from '@/lib/api/client'
 import { setAccessToken } from '@/lib/api/session'
 
 /*
@@ -44,12 +44,20 @@ function ProtectedWithRetry() {
   )
 }
 
+/** Renders the live answer of `can('customer.view')` — used to prove permissions actually
+ * reload (not just `permissionVersion`) after a refresh, without a page reload. */
+function CanMarker() {
+  const { can } = useAuth()
+  return <span data-testid="can-marker">{can('customer.view') ? 'yes' : 'no'}</span>
+}
+
 function renderAt(path: string) {
   return render(
     <MemoryRouter initialEntries={[path]}>
       <AuthProvider>
         <CurrentPath />
         <Protected />
+        <CanMarker />
       </AuthProvider>
     </MemoryRouter>,
   )
@@ -126,24 +134,80 @@ describe('AuthProvider', () => {
   })
 
   it('redirects to /unauthorized when any apiFetch call gets a 403', async () => {
-    fetchMock.mockResolvedValueOnce(
-      jsonResponse(200, {
-        user: { id: 'u1', fullName: 'Ada', email: 'a@b.com' },
-        tenant: { id: 't1', code: 'ACME', name: 'Acme' },
-        sessionId: 's1',
-        permissionVersion: 1,
-      }),
-    )
+    // Keyed by URL, not call order: the permissions-reload effect (auth-context.tsx) now
+    // makes its own GET /api/me/permissions call right after /auth/me succeeds, and a
+    // plain mockResolvedValueOnce chain would let that extra call silently consume the
+    // 403 this test means for the explicit apiFetch('/api/reports/export') below.
+    fetchMock.mockImplementation((url: string) => {
+      if (url === '/api/auth/me') {
+        return Promise.resolve(
+          jsonResponse(200, {
+            user: { id: 'u1', fullName: 'Ada', email: 'a@b.com' },
+            tenant: { id: 't1', code: 'ACME', name: 'Acme' },
+            sessionId: 's1',
+            permissionVersion: 1,
+          }),
+        )
+      }
+      if (url === '/api/me/permissions') {
+        return Promise.resolve(jsonResponse(200, { permissionVersion: 1, permissions: [] }))
+      }
+      return Promise.resolve(jsonResponse(403, { error: 'forbidden' }))
+    })
 
     renderAt('/dashboard')
     await screen.findByText('Protected content for Ada')
 
-    fetchMock.mockResolvedValueOnce(jsonResponse(403, { error: 'forbidden' }))
     await expect(apiFetch('/api/reports/export')).rejects.toThrow()
 
     await waitFor(() =>
       expect(screen.getByTestId('current-path')).toHaveTextContent('/unauthorized'),
     )
+  })
+
+  it('reloads permissions after a token refresh, so a revoked permission disappears without a reload', async () => {
+    let grantedPermissions = ['customer.view']
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (url === '/api/auth/me') {
+        return Promise.resolve(
+          jsonResponse(200, {
+            user: { id: 'u1', fullName: 'Ada', email: 'a@b.com' },
+            tenant: { id: 't1', code: 'ACME', name: 'Acme' },
+            sessionId: 's1',
+            permissionVersion: 1,
+          }),
+        )
+      }
+      if (url === '/api/me/permissions') {
+        return Promise.resolve(
+          jsonResponse(200, { permissionVersion: 1, permissions: grantedPermissions }),
+        )
+      }
+      if (url === '/api/auth/refresh' && init?.method === 'POST') {
+        // The rotation that follows a permission change server-side (ADR-0009): the new
+        // token reflects it; this tab learns the new grant only once it reloads S1.
+        grantedPermissions = []
+        return Promise.resolve(
+          jsonResponse(200, {
+            accessToken: 'rotated-token',
+            expiresIn: 900,
+            user: { id: 'u1', fullName: 'Ada', email: 'a@b.com' },
+            tenant: { id: 't1', code: 'ACME', name: 'Acme' },
+          }),
+        )
+      }
+      return Promise.resolve(jsonResponse(404, {}))
+    })
+
+    renderAt('/dashboard')
+    await screen.findByText('Protected content for Ada')
+    await waitFor(() => expect(screen.getByTestId('can-marker')).toHaveTextContent('yes'))
+
+    await act(async () => {
+      await refresh()
+    })
+
+    await waitFor(() => expect(screen.getByTestId('can-marker')).toHaveTextContent('no'))
   })
 
   it('sends an already-authenticated visitor away from /login, honouring ?next=', async () => {
