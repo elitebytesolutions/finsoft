@@ -305,15 +305,23 @@ function assertAccountingTestTarget(url: string): void {
 }
 
 /** The database-name half of `assertTestTarget`/`assertAccountingTestTarget`, shared by both. */
-function assertTestDatabaseName(url: string, envVarName: string): void {
+/**
+ * Security seat review, 2026-10-01: `.includes('_test')` accepted
+ * "finsoft_test_prod" and "prod_test_x" — a database name that merely
+ * contains the substring proves nothing about what it actually is. Must
+ * END in '_test' (the schema suite's own name) or '_test_accounting' (the
+ * accounting suite's — see `accountingDatabaseName` above), exactly like
+ * `assertTestTarget`'s own `endsWith('_test')` check.
+ */
+export function assertTestDatabaseName(url: string, envVarName: string): void {
   const parsed = new URL(url)
   const database = parsed.pathname.replace(/^\//, '')
-  if (!database.includes('_test')) {
+  if (!database.endsWith('_test') && !database.endsWith('_test_accounting')) {
     throw new Error(
       `Refusing to run: ${envVarName} points at "${database}" (${describeTarget(url)}), which is ` +
-        'not a test database name. Accounting seat ruling, 2026-10-01: this guard exists so the ' +
-        'Invariant 9 allowlist can never quietly start meaning something against staging or ' +
-        'production.',
+        'not a test database name — it must end in "_test" or "_test_accounting". Accounting seat ' +
+        'ruling, 2026-10-01: this guard exists so the Invariant 9 allowlist can never quietly start ' +
+        'meaning something against staging or production.',
     )
   }
 }
@@ -332,6 +340,38 @@ function isDuplicateDatabaseError(error: unknown): boolean {
 const SAFE_DATABASE_NAME = /^[a-z][a-z0-9_]*$/
 
 /**
+ * The only hosts the cluster's bootstrap role may ever be used against.
+ * Security seat review, 2026-10-01: `ensureAccountingDatabaseExists` did
+ * not check the host at all — it logged in with finsoft_bootstrap (the
+ * cluster's actual superuser-equivalent) against whatever host
+ * TEST_ACCOUNTING_MIGRATION_DATABASE_URL named, including one from a
+ * misconfigured or hostile environment. There is no legitimate reason for
+ * that login to ever leave the local test cluster.
+ */
+const LOCAL_DATABASE_HOSTS: ReadonlySet<string> = new Set(['localhost', '127.0.0.1', '::1'])
+
+/**
+ * Refuse to proceed if `url`'s host is not one of `LOCAL_DATABASE_HOSTS`.
+ * Checked BEFORE any connection is attempted — including the cheap,
+ * non-bootstrap probe connection `ensureAccountingDatabaseExists` makes
+ * first, so a bad host is refused even on the fast path that never touches
+ * finsoft_bootstrap.
+ */
+export function assertLocalDatabaseHost(url: string): void {
+  const parsed = new URL(url)
+  // WHATWG URL keeps IPv6 hosts bracketed ("[::1]"); normalise before
+  // comparing against the literal "::1" in LOCAL_DATABASE_HOSTS.
+  const host = parsed.hostname.replace(/^\[|\]$/g, '')
+  if (!LOCAL_DATABASE_HOSTS.has(host)) {
+    throw new Error(
+      `Refusing to connect to "${host}" (${describeTarget(url)}). The accounting test database's ` +
+        'bootstrap connection may only ever target localhost, 127.0.0.1 or ::1 — Security seat ' +
+        'review, 2026-10-01.',
+    )
+  }
+}
+
+/**
  * Create the accounting database and grant it exactly like
  * infrastructure/docker/postgres/init/00-bootstrap.sh grants the main test
  * database, the first time anything asks for it on this cluster. A no-op,
@@ -347,6 +387,8 @@ const SAFE_DATABASE_NAME = /^[a-z][a-z0-9_]*$/
  * needs no new infrastructure or .env entry.
  */
 async function ensureAccountingDatabaseExists(migrationUrl: string): Promise<void> {
+  assertLocalDatabaseHost(migrationUrl)
+
   const dbName = new URL(migrationUrl).pathname.replace(/^\//, '')
   if (!SAFE_DATABASE_NAME.test(dbName)) {
     throw new Error(
