@@ -4,11 +4,11 @@ import { randomUUID } from 'node:crypto'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { closeDatabase, openDatabase, withGlobal, withTenant } from '@finsoft/database'
 import {
+  ACCOUNTING_TEST_TARGET,
   REPO_ROOT,
-  TEST_TARGET,
   createTenantFixture,
-  migrateTestDatabase,
-  prepareTestDatabase,
+  migrateAccountingTestDatabase,
+  prepareAccountingTestDatabase,
   runAs,
 } from '@finsoft/database/testing'
 import { createFiscalYear, seedChartOfAccounts } from '@finsoft/database/provisioning'
@@ -22,6 +22,7 @@ import { GLOBAL_TABLES } from '@finsoft/database'
 import { INVARIANTS, enforcedIds, pendingIds } from './invariants.ts'
 import { registerPostingInvariantChecks } from './posting-invariants.ts'
 import {
+  assertInvariant9SweepIsIsolated,
   checkInvariant9,
   invariant9Available,
   isTestOnlyKernelPostingTenant,
@@ -59,11 +60,11 @@ const BASELINE = join(REPO_ROOT, 'tests', 'accounting', 'pending-baseline.json')
  * connections for this file, restore the deterministic default afterwards.
  */
 beforeAll(async () => {
-  await prepareTestDatabase()
-  await migrateTestDatabase()
+  await prepareAccountingTestDatabase()
+  await migrateAccountingTestDatabase()
   await closeDatabase()
   process.env['DATABASE_POOL_MAX'] = '4'
-  await openDatabase(TEST_TARGET)
+  await openDatabase(ACCOUNTING_TEST_TARGET)
 }, 120_000)
 
 afterAll(async () => {
@@ -226,6 +227,15 @@ describe('Invariant 9, AR half (M3-Q) — gated on M3-P', () => {
     const asOf = new Date().toISOString().slice(0, 10)
     const tenants = await withGlobal((tx) =>
       tx.selectFrom('tenants').select(['id', 'code']).execute(),
+    )
+
+    // QA-001 tripwire: proves, not assumes, that this sweep is isolated
+    // from database/tests' own database before trusting anything below.
+    await withGlobal((tx) =>
+      assertInvariant9SweepIsIsolated(
+        tx,
+        tenants.map((t) => t.code),
+      ),
     )
 
     let tenantsChecked = 0

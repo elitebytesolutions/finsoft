@@ -484,6 +484,19 @@ async function runGate(sha) {
       MIGRATION_DATABASE_URL: `postgresql://finsoft_migration:local-dev-only-migration@localhost:${ports.postgres}/finsoft`,
       TEST_DATABASE_URL: `postgresql://finsoft_app:local-dev-only-app@localhost:${ports.postgresTest}/finsoft_test`,
       TEST_MIGRATION_DATABASE_URL: `postgresql://finsoft_migration:local-dev-only-migration@localhost:${ports.postgresTest}/finsoft_test`,
+      // QA-001, Accounting seat ruling 2026-10-01 (option c): test:accounting
+      // and test:reconciliation (and the standalone
+      // test:financial-invariant-suite step below) get their own database on
+      // this SAME throwaway cluster, never the one test:schema uses — see
+      // packages/database/src/testing/harness.ts's ACCOUNTING_TEST_TARGET.
+      // Explicit here, like every other URL in this block, rather than
+      // relying on the harness's own fallback derivation — this file already
+      // assembles every connection string by hand, so one more is the
+      // smaller surprise. finsoft_bootstrap (above, for POSTGRES_BOOTSTRAP_*)
+      // creates it on first use; nothing here needs to migrate it ahead of
+      // time, exactly as nothing here pre-migrates TEST_DATABASE_URL either.
+      TEST_ACCOUNTING_DATABASE_URL: `postgresql://finsoft_app:local-dev-only-app@localhost:${ports.postgresTest}/finsoft_test_accounting`,
+      TEST_ACCOUNTING_MIGRATION_DATABASE_URL: `postgresql://finsoft_migration:local-dev-only-migration@localhost:${ports.postgresTest}/finsoft_test_accounting`,
       REDIS_URL: `redis://localhost:${ports.redis}`,
       TEST_REDIS_URL: `redis://localhost:${ports.redisTest}`,
     }

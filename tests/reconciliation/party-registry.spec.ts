@@ -1,8 +1,9 @@
 import { Client } from 'pg'
 import {
+  accountingMigrationDatabaseUrl,
   createTenantFixture,
-  prepareTestDatabase,
-  teardownTestDatabase,
+  prepareAccountingTestDatabase,
+  teardownAccountingTestDatabase,
 } from '@finsoft/database/testing'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
@@ -37,9 +38,11 @@ const DETAIL_TABLE_BY_PARTY_TYPE: Readonly<Record<string, string>> = {
 }
 
 function migrationClient(): Client {
-  const url = process.env['TEST_MIGRATION_DATABASE_URL']
-  if (!url) throw new Error('TEST_MIGRATION_DATABASE_URL is not set')
-  return new Client({ connectionString: url })
+  // QA-001: this file's fixture tenants live in the accounting suite's OWN
+  // database (prepareAccountingTestDatabase below), so this raw connection
+  // must follow them there rather than read TEST_MIGRATION_DATABASE_URL
+  // (the schema suite's database) directly.
+  return new Client({ connectionString: accountingMigrationDatabaseUrl() })
 }
 
 interface PartyRow {
@@ -106,7 +109,7 @@ let clean: { tenantId: string; ownerId: string }
 let withOrphan: { tenantId: string; ownerId: string; orphanId: string }
 
 beforeAll(async () => {
-  await prepareTestDatabase()
+  await prepareAccountingTestDatabase()
 
   const cleanTenant = await createTenantFixture('PRC')
   const orphanTenant = await createTenantFixture('PRO')
@@ -130,7 +133,7 @@ beforeAll(async () => {
   }
 }, 60_000)
 
-afterAll(teardownTestDatabase)
+afterAll(teardownAccountingTestDatabase)
 
 describe('party registry reconciliation (ADR-0026 Compliance 6)', () => {
   it('a tenant created only through the real path (registerParty + customers, one transaction) has no orphans', async () => {
