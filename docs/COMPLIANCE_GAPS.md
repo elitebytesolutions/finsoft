@@ -284,6 +284,8 @@ Product Owner (billing decision) / DevOps Guardian (restoring the workflow).
 | **Status** | **Not enforced. Deferred by decision (R2 option (b): merge now, close later)** |
 | **Raised** | 2026-09-29, M2-C Council review (Security seat) |
 
+**Also tracked as [TD-016](TECH_DEBT.md#td-016--coa-standardmd-87-r2s-database-privilege-backstop-is-not-built--blocked-on-a-new-database-role)** (renumbered from TD-012 at the M2-C/M3-P merge, 2026-10-01) — the implementation-detail record for whoever picks up the fix; this entry is the LEVEL-0-adjacent, sign-off-tracked one. Read both.
+
 ### Council disposition, 2026-09-29
 
 > **R2 is option (b): merge now.** Production stays blocked until R2 is done.

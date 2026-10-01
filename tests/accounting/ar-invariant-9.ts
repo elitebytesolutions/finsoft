@@ -316,38 +316,19 @@ export async function arControlAccountBalance(
  * through any real path, where `modules/receivables` always creates the
  * document first.
  *
- * M2-C merge addendum, 2026-10-01: two more, found when this sweep first
- * ran for real against the FULL `npm run test:gate` (`database/tests`
- * shares the same test database with this file within one gate run, and
- * runs first). Both predate M3-P/M3-Q and this lane equally — pre-existing
- * `database/tests` coverage of migration 012's own CHECK/FK shape, posting
- * directly to the `AR_CONTROL` account (code `1200`) by raw SQL with a
- * real, registered `CUSTOMER` party but never a `sales_invoices` row, the
- * same structural pattern as `'TKR'` above:
- *
- *   'TJLP' — database/tests/journal-lines.spec.ts, label 'JLP'
- *            ("journal_lines: party / control pairing (ADR-0026)"). Its
- *            one committed AR line (10.0000 Dr, "accepts the positive
- *            controls") is what this addendum closes; every OTHER posting
- *            attempt in that describe block is rejected (23503/23514) and
- *            so never commits.
- *   'TJLK' — database/tests/journal-lines.spec.ts, label 'JLK'
- *            ("accounts.control_kind is pinned once posted to"). One
- *            committed AR line (25.0000 Dr), `beforeAll`, used only to
- *            give the account a journal line before testing that
- *            `control_kind` cannot then change.
- *   'TSUB' — database/tests/reporting.integration.spec.ts, label 'SUB'
- *            ("customerSubledgerBalance > nets AR-control lines for one
- *            party") — proves `customerSubledgerBalance`'s own query
- *            logic (packages/reporting) against hand-posted AR lines
- *            (800.0000 Dr, 300.0000 Cr), a unit-level test of a query,
- *            not a posting-rule or module behaviour.
- *
- * Grepped the same way as 'TKR'/'TM3RUNNER' above
- * (`accountControl: 'AR'` across tests/, database/, modules/) to confirm
- * no other file shares these label prefixes.
+ * Accounting seat ruling, 2026-10-01 (M2-C merge re-check, option (c),
+ * REJECTING this lane's 'TJLP'/'TJLK'/'TSUB' addendum): widening this
+ * allowlist for `database/tests`' own synthetic AR postings
+ * (journal-lines.spec.ts labels 'JLP'/'JLK', reporting.integration.spec.ts
+ * label 'SUB') is the wrong fix. Invariant 9 must sweep a database that
+ * `database/tests` never touches — `database/tests` and `tests/accounting`
+ * sharing one test database within a single `npm run test:gate` run is
+ * the actual defect, and allowlisting around it would have let that
+ * sharing stay wrong indefinitely. The QA-001 lane
+ * (`fix/QA-001-harness-flakes`) is separating the databases; this
+ * allowlist stays exactly `'TKR'`/`'TM3RUNNER'` until that lands.
  */
-const TEST_ONLY_TENANT_CODE_PREFIXES = ['TKR', 'TM3RUNNER', 'TJLP', 'TJLK', 'TSUB'] as const
+const TEST_ONLY_TENANT_CODE_PREFIXES = ['TKR', 'TM3RUNNER'] as const
 
 export function isTestOnlyKernelPostingTenant(code: string): boolean {
   return TEST_ONLY_TENANT_CODE_PREFIXES.some((prefix) => code.startsWith(prefix))
