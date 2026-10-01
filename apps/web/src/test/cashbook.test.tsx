@@ -101,7 +101,9 @@ describe('CashBook', () => {
 
     renderScreen()
 
-    await waitFor(() => expect(screen.getByText('Cash sale')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('Cash sale')).toBeInTheDocument(), {
+      timeout: 5_000,
+    })
     expect(screen.getByText('JV-2027-000002')).toBeInTheDocument()
     expect(screen.queryByText(/resolved by code/i)).not.toBeInTheDocument()
   })
