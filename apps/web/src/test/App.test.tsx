@@ -75,8 +75,20 @@ describe('Finsoft application', () => {
 
   it('enforces role-aware routes', () => {
     localStorage.setItem('finsoft-role', 'Salesman')
+    // Was /finance, which only redirects (<Navigate to="/accounts">) and carries no
+    // content of its own — M4-W removed <Guard> from the redirect TARGET, /accounts,
+    // since it is real, API-backed and server-protected now (Security seat condition 2).
+    // That broke this test for an unrelated reason: FinsoftProvider's mock `role` starts
+    // at its SSR-safe default ('Owner') and only becomes 'Salesman' once its
+    // localStorage-reading effect runs, which (by React's child-before-parent effect
+    // order) fires AFTER /finance's own Guard has already evaluated and queued the
+    // redirect — so /finance's Guard let it through on the stale default role, and
+    // only the TARGET's Guard, now gone, used to catch the mistake one hop later.
+    // /bank-accounts is still mock-only and still <Guard module="Cash, Bank & GL">,
+    // with no redirect hop to race against, so it tests the same thing the original
+    // test meant to: a role-restricted module shows "Access restricted".
     render(
-      <MemoryRouter initialEntries={['/finance']}>
+      <MemoryRouter initialEntries={['/bank-accounts']}>
         <App />
       </MemoryRouter>,
     )
