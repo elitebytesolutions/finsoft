@@ -34,7 +34,14 @@ export interface AccountLedgerLine {
   readonly narration: string
   readonly sourceType: string
   readonly sourceId: string
-  /** K4: the source document's own number (INV-…/RCT-…). Null for a JV, which has no separate document number of its own. */
+  /**
+   * K4: the source document's own number (INV-…/RCT-…) — null for a JV
+   * (whose `reference` is the user's own free text, not a document number)
+   * and for any other `sourceType` not on `packages/database`'s
+   * `REFERENCE_IS_A_DOCUMENT_NUMBER_FOR` allow-list. Already gated by
+   * `mapLedgerLine` before this file ever sees `row.reference` — this is a
+   * straight pass-through, not a second filter.
+   */
   readonly sourceNumber: string | null
   /** Set when this entry is itself a reversal of another. */
   readonly reversalOf: string | null

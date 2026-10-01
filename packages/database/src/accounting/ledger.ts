@@ -92,7 +92,7 @@ function mapLedgerLine(row: {
     narration: row.narration,
     sourceType: row.source_type,
     sourceId: row.source_id,
-    reference: row.reference,
+    reference: REFERENCE_IS_A_DOCUMENT_NUMBER_FOR.has(row.source_type) ? row.reference : null,
     reversalOf: row.reversal_of,
     reversedBy: row.reversed_by,
     debit: row.debit,
