@@ -1,5 +1,16 @@
 import { sql } from 'kysely'
-import { assertIssuedTenantTx, resolveAccountsByRole, type TenantTx } from '@finsoft/database'
+import {
+  assertIssuedGlobalTx,
+  assertIssuedTenantTx,
+  resolveAccountsByRole,
+  type GlobalTx,
+  type TenantTx,
+} from '@finsoft/database'
+import {
+  scalarOn,
+  schemaSuiteDatabaseName,
+  schemaSuiteTenantCodes,
+} from '@finsoft/database/testing'
 import { Money } from '@finsoft/validation'
 
 /*
@@ -320,6 +331,76 @@ const TEST_ONLY_TENANT_CODE_PREFIXES = ['TKR', 'TM3RUNNER'] as const
 
 export function isTestOnlyKernelPostingTenant(code: string): boolean {
   return TEST_ONLY_TENANT_CODE_PREFIXES.some((prefix) => code.startsWith(prefix))
+}
+
+/**
+ * QA-001 defence-in-depth, Accounting seat ruling 2026-10-01 (option c).
+ * Physical isolation (packages/database/src/testing/harness.ts's
+ * ACCOUNTING_TEST_TARGET, a dedicated database) is the actual fix for
+ * tenants from database/tests appearing in this sweep — tenants in one
+ * PostgreSQL database are categorically invisible to a connection against
+ * another. This function exists only to PROVE that isolation is really in
+ * effect for this run, not assume it. It fails loudly, never silently
+ * skips — a sweep that quietly stops checking anything is exactly the
+ * failure mode Invariant 9 itself exists to rule out.
+ *
+ * Deliberately NOT a hardcoded list of database/tests' fixture label
+ * prefixes (there are over ninety of them as of 2026-10-01, growing every
+ * time that directory adds a test — grep
+ * `createTenantFixture\('[A-Za-z0-9_]+'\)` across database/tests to see).
+ * A list like that is exactly what was rejected: M2-C's own
+ * 'TJLP'/'TJLK'/'TSUB' allowlist addition covered journal-lines.spec.ts's
+ * CURRENT labels and nothing else, forever one step behind whatever gets
+ * added next. Two checks instead, both dynamic:
+ *
+ *   1. STRUCTURAL — `current_database()` must not be the schema suite's
+ *      own database by name. Cheap, and catches directly the
+ *      misconfiguration that would actually cause contamination:
+ *      TEST_ACCOUNTING_DATABASE_URL never set (or set wrong), so the
+ *      fallback in harness.ts silently pointed both suites at the same
+ *      place.
+ *
+ *   2. CONTENT — every code this sweep is about to check is compared
+ *      against the ACTUAL tenant codes sitting in the schema suite's own
+ *      database right now (read fresh, not a fixed list). A tenant code is
+ *      a random string, unique by construction only WITHIN one database
+ *      (packages/database/src/testing/harness.ts's buildTenantCode) — so
+ *      the same code existing in both databases is possible only if they
+ *      are not genuinely isolated, or (astronomically unlikely) a true
+ *      random collision. Either way, never silently true.
+ */
+export async function assertInvariant9SweepIsIsolated(
+  tx: GlobalTx,
+  sweptCodes: readonly string[],
+): Promise<void> {
+  assertIssuedGlobalTx(tx)
+
+  const [current, schemaDatabaseName] = await Promise.all([
+    scalarOn<string>(tx, 'SELECT current_database()'),
+    Promise.resolve(schemaSuiteDatabaseName()),
+  ])
+
+  if (current !== undefined && current === schemaDatabaseName) {
+    throw new Error(
+      `Invariant 9 is sweeping "${current}" — the SAME database database/tests (and ` +
+        'tests/security, tests/integration, tests/performance) use. TEST_ACCOUNTING_DATABASE_URL ' +
+        'is not configured, or is pointed at the schema database by mistake. Accounting seat ' +
+        'ruling, 2026-10-01: this sweep must run against a database database/tests has never ' +
+        "touched — see packages/database/src/testing/harness.ts's prepareAccountingTestDatabase.",
+    )
+  }
+
+  const schemaCodes = new Set(await schemaSuiteTenantCodes())
+  const contaminated = sweptCodes.filter((code) => schemaCodes.has(code))
+  if (contaminated.length > 0) {
+    throw new Error(
+      `Invariant 9 swept ${contaminated.length} tenant(s) that ALSO exist in the schema suite's ` +
+        `own database: ${contaminated.join(', ')}. These codes were not created by this sweep's ` +
+        'own fixtures (packages/database/src/testing/harness.ts generates tenant codes unique by ' +
+        'construction within one database, never across two) — the accounting database and the ' +
+        'schema database are not actually isolated for this run.',
+    )
+  }
 }
 
 /**

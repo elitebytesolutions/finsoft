@@ -12,7 +12,13 @@ import {
   type JournalEntryRow,
   type TenantTx,
 } from '@finsoft/database'
-import { createTenantFixture, runAs, sqlstate, type TenantFixture } from '@finsoft/database/testing'
+import {
+  accountingMigrationDatabaseUrl,
+  createTenantFixture,
+  runAs,
+  sqlstate,
+  type TenantFixture,
+} from '@finsoft/database/testing'
 import { createFiscalYear, seedChartOfAccounts } from '@finsoft/database/provisioning'
 import { KernelInvariantError, periodEngine, PostingError } from '@finsoft/accounting-kernel'
 import { Money } from '@finsoft/validation'
@@ -182,8 +188,11 @@ const CLOSED_PERIOD_REFUSAL = /cannot post into a CLOSED period/
  * inactive account (finsoft_app has no UPDATE on accounts, migration 010).
  */
 async function asMigrationRole<T>(fn: (client: Client) => Promise<T>): Promise<T> {
-  const url = process.env['TEST_MIGRATION_DATABASE_URL']
-  if (!url) throw new Error('TEST_MIGRATION_DATABASE_URL is not set')
+  // QA-001: this file's tenants/accounts/entries now live in the accounting
+  // suite's OWN database (financial-invariant-suite.spec.ts's beforeAll),
+  // so this raw connection must follow it there rather than read
+  // TEST_MIGRATION_DATABASE_URL (the schema suite's database) directly.
+  const url = accountingMigrationDatabaseUrl()
   const client = new Client({ connectionString: url })
   await client.connect()
   try {

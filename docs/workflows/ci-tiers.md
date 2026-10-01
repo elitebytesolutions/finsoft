@@ -31,6 +31,25 @@ make CI faster": don't. That is exactly the change rule 3 forbids, and
 `classify.mjs` is written so it cannot express it — `runInvariants` is a
 constant `true`, not a function of tier.
 
+**QA-001, Accounting seat ruling 2026-10-01 (option c):** `invariants` runs
+`test:financial-invariant-suite`, and `financial` runs `test:accounting` /
+`test:reconciliation` — both include Invariant 9's AR sweep
+(`ar-invariant-9.ts`), which reads every tenant in its database except a
+named allowlist. That database must never be the one `test:schema`
+(`db-suites`) uses, or a leftover `database/tests` tenant (a direct
+`journal_lines` posting with no document behind it, same shape as the
+allowlisted ones, just not on the list) trips it. **Confirmed**: `db-suites`
+and `financial` are separate jobs here, each `docker compose up -d --wait`
+on its own fresh `ubuntu-latest` runner, so this never shares a database
+with `test:schema` in the first place — the failure mode is local
+(`npm run test:gate` against one persistent cluster) and laptop-gate
+(`tools/ship/staging.mjs`, one throwaway cluster reused across every suite)
+only, not CI. The actual fix —
+`packages/database/src/testing/harness.ts`'s `ACCOUNTING_TEST_TARGET`, a
+database of its own for `test:accounting`/`test:reconciliation` — applies
+here too and does not depend on this job separation continuing to hold; see
+[ship-from-laptop.md](ship-from-laptop.md)'s note on the same mechanism.
+
 ---
 
 ## How classification works

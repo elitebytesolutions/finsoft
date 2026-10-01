@@ -1,5 +1,8 @@
 import { closeDatabase } from '@finsoft/database'
-import { migrateTestDatabase, prepareTestDatabase } from '@finsoft/database/testing'
+import {
+  migrateAccountingTestDatabase,
+  prepareAccountingTestDatabase,
+} from '@finsoft/database/testing'
 import { afterAll, beforeAll, describe, it } from 'vitest'
 import { loadScenario, runPostingScenario } from './golden-posting-runner.ts'
 import { EXECUTED_IN_M2 } from './golden-posting-registry.ts'
@@ -14,8 +17,8 @@ import { EXECUTED_IN_M2 } from './golden-posting-registry.ts'
  */
 
 beforeAll(async () => {
-  await prepareTestDatabase()
-  await migrateTestDatabase()
+  await prepareAccountingTestDatabase()
+  await migrateAccountingTestDatabase()
 }, 120_000)
 
 afterAll(async () => {

@@ -1,6 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { withGlobal } from '@finsoft/database'
-import { prepareTestDatabase, scalarOn, teardownTestDatabase } from '@finsoft/database/testing'
+import {
+  prepareAccountingTestDatabase,
+  scalarOn,
+  teardownAccountingTestDatabase,
+} from '@finsoft/database/testing'
 import { FinDecimal, Money, Quantity, Rounding, UnitCost } from '@finsoft/validation'
 
 /*
@@ -49,8 +53,8 @@ const BOUNDARY: ReadonlyArray<readonly [value: string, scale: number]> = [
 ]
 
 describe('Money.round agrees with PostgreSQL numeric', () => {
-  beforeAll(prepareTestDatabase, 120_000)
-  afterAll(teardownTestDatabase)
+  beforeAll(prepareAccountingTestDatabase, 120_000)
+  afterAll(teardownAccountingTestDatabase)
 
   it.each(BOUNDARY)('round(%s, %i) matches SQL round()', async (value, scale) => {
     const ours = new FinDecimal(value).toDecimalPlaces(scale, Rounding.HALF_UP).toFixed(scale)

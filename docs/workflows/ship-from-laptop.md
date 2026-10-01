@@ -66,7 +66,18 @@ unmerged branch.
      ([NON_NEGOTIABLES.md](../NON_NEGOTIABLES.md) §3), mirrors the
      always-on `invariants` job
    - the rest of the financial gate: `test:accounting`, `test:reconciliation`
-     (mirrors `financial`)
+     (mirrors `financial`). These run against **their own database**
+     (`TEST_ACCOUNTING_DATABASE_URL`, `finsoft_test_accounting` on this same
+     throwaway cluster) — never `test:schema`'s `finsoft_test` — so
+     Invariant 9's sweep (every tenant in that database, `ar-invariant-9.ts`)
+     can never see a tenant `test:schema` created. QA-001, Accounting seat
+     ruling 2026-10-01: this tool runs every phase-3 suite against **one**
+     data plane brought up once, in whatever order they're listed above —
+     before this fix, `test:accounting`/`test:reconciliation` running after
+     `test:schema` (as `test:gate` does) would intermittently fail on a
+     leftover `database/tests` tenant with no document behind its AR
+     posting. See `packages/database/src/testing/harness.ts`'s
+     `ACCOUNTING_TEST_TARGET` for the mechanism.
    - db suites: schema, security (tenant isolation, RBAC), integration,
      performance (mirrors `db-suites`)
    - e2e (Playwright, against a built API and a real browser — mirrors `e2e`)

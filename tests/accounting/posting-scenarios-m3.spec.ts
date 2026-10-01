@@ -1,6 +1,9 @@
 import { IMPLEMENTED_EVENTS } from '@finsoft/accounting-kernel'
 import { closeDatabase } from '@finsoft/database'
-import { migrateTestDatabase, prepareTestDatabase } from '@finsoft/database/testing'
+import {
+  migrateAccountingTestDatabase,
+  prepareAccountingTestDatabase,
+} from '@finsoft/database/testing'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { loadScenario, runPostingScenario, type PostingScenario } from './golden-posting-runner.ts'
 import { loadReceivablesRealPort, receivablesModuleFileExists } from './receivables-real-port.ts'
@@ -30,8 +33,8 @@ import { loadReceivablesRealPort, receivablesModuleFileExists } from './receivab
  */
 
 beforeAll(async () => {
-  await prepareTestDatabase()
-  await migrateTestDatabase()
+  await prepareAccountingTestDatabase()
+  await migrateAccountingTestDatabase()
 }, 120_000)
 
 afterAll(async () => {

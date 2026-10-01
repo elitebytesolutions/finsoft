@@ -10,8 +10,8 @@ import {
 } from '@finsoft/database'
 import {
   createTenantFixture,
-  migrateTestDatabase,
-  prepareTestDatabase,
+  migrateAccountingTestDatabase,
+  prepareAccountingTestDatabase,
   runAs,
   type TenantFixture,
 } from '@finsoft/database/testing'
@@ -75,8 +75,8 @@ const saleLine = (quantity: string, unitPrice: string, lineNet: string) => ({
 })
 
 beforeAll(async () => {
-  await prepareTestDatabase()
-  await migrateTestDatabase()
+  await prepareAccountingTestDatabase()
+  await migrateAccountingTestDatabase()
   tenant = await createTenantFixture('KR')
   const accounts = await asOwner(async (tx) => {
     await seedChartOfAccounts(tx, tenant.tenantId)
