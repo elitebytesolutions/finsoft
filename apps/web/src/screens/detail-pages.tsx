@@ -36,12 +36,25 @@ import {
 import { AccountSelect, LedgerBook, LedgerKpis } from './ledger'
 import { exportLedgerCsv, netOf } from './ledger-data'
 import { money, moneyFromString, movementTone } from '@finsoft/ui'
+import { UnitCost } from '@finsoft/validation'
 import { useAuth } from '@/lib/api/auth-context'
 import { useApiQuery } from '@/lib/api/use-api-query'
 import { useIdempotencyKey } from '@/lib/api/idempotency-key'
 import { getInvoice, reverseInvoice } from '@/lib/api/invoices-client'
 import { getReceipt, reverseReceipt } from '@/lib/api/receipts-client'
 import { receivablesErrorMessage } from '@/lib/adapters/receivables-errors'
+
+/*
+ * A service line's `unitPrice` is a 6dp UnitCost string (numeric(19,6) — packages/shared-types/
+ * src/receivables.ts), not a 4dp Money string. `moneyFromString` parses with `Money.from`,
+ * which REFUSES anything carrying more than 4 decimal places (AmountError) — found by the
+ * m4-invoices.spec.ts e2e run crashing on a real posted invoice ("10000.000000"). Round once,
+ * explicitly, through the correct Amount kind first, then format for display through the same
+ * Rs-prefixed, comma-grouped presentation every other money figure on this screen uses.
+ */
+function unitPriceDisplay(value: string): string {
+  return moneyFromString(UnitCost.serialize(UnitCost.from(value), 2))
+}
 
 function DetailField({ label, value }: { label: string; value: ReactNode }) {
   return (
@@ -562,7 +575,7 @@ function SaleDetail(_props: { data: AppData }) {
                     line.lineNo,
                     line.description,
                     line.quantity,
-                    moneyFromString(line.unitPrice),
+                    unitPriceDisplay(line.unitPrice),
                     <b key="net">{moneyFromString(line.lineNet)}</b>,
                   ])
                 : [[<EmptyState key="e">No lines</EmptyState>]]

@@ -49,6 +49,7 @@ import {
 } from '@/lib/api/invoices-client'
 import type { InvoiceCalculation, InvoiceStatus } from '@/lib/api/invoices-types'
 import { receivablesErrorMessage } from '@/lib/adapters/receivables-errors'
+import { searchTermFor } from '@/lib/adapters/party-search'
 
 type Line = { key: number; description: string; quantity: string; unitPrice: string }
 
@@ -177,7 +178,7 @@ export function SalesVoucher() {
     }
     let active = true
     const t = setTimeout(() => {
-      listCustomers({ q, status: 'ACTIVE', limit: 8 })
+      listCustomers({ q: searchTermFor(q), status: 'ACTIVE', limit: 8 })
         .then((page) => {
           if (!active) return
           setCustomerOptions([...page.items])

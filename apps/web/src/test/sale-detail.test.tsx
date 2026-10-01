@@ -44,7 +44,10 @@ function invoice(overrides: Partial<Invoice> = {}): Invoice {
         kind: 'SERVICE',
         description: 'Consulting',
         quantity: '2.000000',
-        unitPrice: '5000.0000',
+        // 6dp UnitCost, as the real API sends it — NOT 4dp Money (regression: moneyFromString
+        // would throw AmountError on this via Money.from's scale-4 check; caught by
+        // tests/e2e/m4-invoices.spec.ts against a real posted invoice, "10000.000000").
+        unitPrice: '5000.000000',
         lineNet: '10000.0000',
       },
     ],
@@ -96,6 +99,9 @@ describe('SaleDetail', () => {
     )
     expect(screen.getByText('Shifa Medical Centre (CUST-000001)')).toBeInTheDocument()
     expect(screen.getByText('Consulting')).toBeInTheDocument()
+    // Regression: unitPrice is a 6dp UnitCost string, not 4dp Money — this must round through
+    // UnitCost, not crash moneyFromString's Money.from scale-4 check.
+    expect(screen.getByText('Rs 5,000.00')).toBeInTheDocument()
     expect(screen.getAllByText('Rs 10,000.00').length).toBeGreaterThan(0)
     expect(screen.getByText('JE-2027-000001')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Reverse' })).toBeInTheDocument()

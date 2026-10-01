@@ -18,7 +18,7 @@
  * Allocated/unallocated totals, suggested allocation and openInvoices come ONLY from R2
  * (POST /api/receipts/preview) — never summed from the rows in this file.
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   ArrowDown,
   BarChart3,
@@ -49,6 +49,7 @@ import {
 } from '@/lib/api/receipts-client'
 import type { ReceiptListItem, ReceiptMethod, ReceiptPreview } from '@/lib/api/receipts-types'
 import { receivablesErrorMessage } from '@/lib/adapters/receivables-errors'
+import { searchTermFor } from '@/lib/adapters/party-search'
 
 export function PaymentsCentre() {
   const { can } = useAuth()
@@ -354,6 +355,15 @@ function NewReceiptDialog({ onClose, onDone }: { onClose: () => void; onDone: ()
   const [submitting, setSubmitting] = useState(false)
   const { key: createKey, reset: resetCreateKey } = useIdempotencyKey()
   const { key: postKey, reset: resetPostKey } = useIdempotencyKey()
+  /*
+   * R2's own rule (modules/receivables/application/preview-receipt.ts): it only computes the
+   * oldest-first suggestion when `allocations` is OMITTED from the request entirely (null or
+   * undefined) — an explicit `[]` (meaning "the caller has an allocation plan, and it is
+   * empty") turns the suggestion off. Before the user has touched a row, send no `allocations`
+   * key at all so the first preview can suggest one; once they have (an edit, or accepting the
+   * suggestion), send their own rows from then on, even if they clear everything back to zero.
+   */
+  const touchedRef = useRef(false)
 
   // Debounced customer search (C1).
   useEffect(() => {
@@ -364,7 +374,7 @@ function NewReceiptDialog({ onClose, onDone }: { onClose: () => void; onDone: ()
     }
     let active = true
     const t = setTimeout(() => {
-      listCustomers({ q, status: 'ACTIVE', limit: 8 })
+      listCustomers({ q: searchTermFor(q), status: 'ACTIVE', limit: 8 })
         .then((page) => {
           if (!active) return
           setCustomerOptions([...page.items])
@@ -387,6 +397,7 @@ function NewReceiptDialog({ onClose, onDone }: { onClose: () => void; onDone: ()
     setCustomerId(match ? match.id : null)
     setRows([])
     setPreview(null)
+    touchedRef.current = false
   }
 
   // R2 — debounced preview: the only sanctioned source of openInvoices, allocatedTotal,
@@ -404,9 +415,11 @@ function NewReceiptDialog({ onClose, onDone }: { onClose: () => void; onDone: ()
         receiptId: receiptId ?? undefined,
         receiptDate,
         amount: amount || undefined,
-        allocations: rows
-          .filter((r) => r.amount.trim() !== '' && r.amount.trim() !== '0')
-          .map((r) => ({ invoiceId: r.invoiceId, amount: r.amount })),
+        allocations: touchedRef.current
+          ? rows
+              .filter((r) => r.amount.trim() !== '' && r.amount.trim() !== '0')
+              .map((r) => ({ invoiceId: r.invoiceId, amount: r.amount }))
+          : undefined,
       })
         .then((p) => {
           if (!active) return
@@ -435,11 +448,14 @@ function NewReceiptDialog({ onClose, onDone }: { onClose: () => void; onDone: ()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customerId, receiptDate, amount])
 
-  const setRowAmount = (invoiceId: string, value: string) =>
+  const setRowAmount = (invoiceId: string, value: string) => {
+    touchedRef.current = true
     setRows((rs) => rs.map((r) => (r.invoiceId === invoiceId ? { ...r, amount: value } : r)))
+  }
 
   const applySuggested = () => {
     if (!preview) return
+    touchedRef.current = true
     setRows((rs) =>
       rs.map((r) => {
         const s = preview.allocations.find((a) => a.invoiceId === r.invoiceId)

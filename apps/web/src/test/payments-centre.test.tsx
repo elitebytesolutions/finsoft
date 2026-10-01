@@ -175,6 +175,15 @@ describe('PaymentsCentre', () => {
     await waitFor(() => expect(within(dialog).getByText('INV-000001')).toBeInTheDocument())
     expect(within(dialog).getByDisplayValue('6000.0000')).toBeInTheDocument()
     expect(within(dialog).getByText('Rs 6,000.00')).toBeInTheDocument() // Allocated
+
+    // Regression: before the user has touched a row, `allocations` must be OMITTED from the
+    // preview request, not sent as `[]` — modules/receivables/application/preview-receipt.ts
+    // only computes the oldest-first suggestion when `allocations` is absent entirely; an
+    // explicit empty array turns the suggestion off (found by tests/e2e/m4-invoices.spec.ts).
+    const previewCall = fetchMock.mock.calls.find((c) => c[0] === '/api/receipts/preview')
+    expect(previewCall).toBeTruthy()
+    const previewBody = JSON.parse((previewCall![1] as RequestInit).body as string)
+    expect(previewBody).not.toHaveProperty('allocations')
   })
 
   it('Save draft posts to /api/receipts with the current allocation', async () => {
