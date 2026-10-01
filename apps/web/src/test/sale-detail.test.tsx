@@ -102,6 +102,10 @@ describe('SaleDetail', () => {
     // Regression: unitPrice is a 6dp UnitCost string, not 4dp Money — this must round through
     // UnitCost, not crash moneyFromString's Money.from scale-4 check.
     expect(screen.getByText('Rs 5,000.00')).toBeInTheDocument()
+    // Regression (design-system review, 66019c0): quantity is a 6dp string ("2.000000") —
+    // trailing zeros trimmed for display, never parsed into a JS number to do it.
+    expect(screen.getByText('2')).toBeInTheDocument()
+    expect(screen.queryByText('2.000000')).not.toBeInTheDocument()
     expect(screen.getAllByText('Rs 10,000.00').length).toBeGreaterThan(0)
     expect(screen.getByText('JE-2027-000001')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Reverse' })).toBeInTheDocument()

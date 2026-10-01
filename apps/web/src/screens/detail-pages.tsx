@@ -56,6 +56,22 @@ function unitPriceDisplay(value: string): string {
   return moneyFromString(UnitCost.serialize(UnitCost.from(value), 2))
 }
 
+/*
+ * A service line's `quantity` arrives fixed at 6dp ("1.000000", design-system review of
+ * 66019c0) — formatted here by trimming trailing zeros straight off the string, never by
+ * parsing it into a JS number (CLAUDE.md: money and quantities are never arithmetic in the
+ * browser; a 6dp decimal is well within float precision, but the rule is the rule regardless
+ * of whether a given value happens to survive the round trip).
+ */
+function quantityDisplay(value: string): string {
+  const trimmed = value.trim()
+  if (!trimmed.includes('.')) return trimmed
+  const withoutTrailingZeros = trimmed.replace(/0+$/, '')
+  return withoutTrailingZeros.endsWith('.')
+    ? withoutTrailingZeros.slice(0, -1)
+    : withoutTrailingZeros
+}
+
 function DetailField({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div>
@@ -574,7 +590,7 @@ function SaleDetail(_props: { data: AppData }) {
                 ? invoice.lines.map((line) => [
                     line.lineNo,
                     line.description,
-                    line.quantity,
+                    quantityDisplay(line.quantity),
                     unitPriceDisplay(line.unitPrice),
                     <b key="net">{moneyFromString(line.lineNet)}</b>,
                   ])
