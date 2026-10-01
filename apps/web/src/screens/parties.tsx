@@ -1755,7 +1755,7 @@ export function CustomerDetail() {
                   ? moneyFromString(ledgerState.data.totals.debit, { zeroAsDash: true })
                   : '—'}
               </b>
-              <small>Total Sales</small>
+              <small>Total debits</small>
               <small className="right">
                 {ledgerState.status === 'ready'
                   ? `${ledgerState.data.from} – ${ledgerState.data.to}`
@@ -1770,7 +1770,7 @@ export function CustomerDetail() {
                   ? moneyFromString(ledgerState.data.totals.credit, { zeroAsDash: true })
                   : '—'}
               </b>
-              <small>Total Payments</small>
+              <small>Total credits</small>
               <small className="right">
                 {ledgerState.status === 'ready'
                   ? `${ledgerState.data.from} – ${ledgerState.data.to}`
