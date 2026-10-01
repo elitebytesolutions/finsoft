@@ -27,8 +27,21 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 const SERVICE = 'postgres-test'
 const SCRATCH_DB = `finsoft_audit_restore_probe_${Date.now().toString(36)}`
 
+/*
+ * QA-001: with many containers running (parallel worktree stacks on the
+ * same machine — see the brief), the default 1 MB `maxBuffer` for
+ * `execFileSync`/`spawnSync` is not always enough for `pg_dump`'s output or
+ * for `docker compose` CLI chatter, and Node throws `ENOBUFS` rather than
+ * truncating. The audit_log/tenants/users tables this test dumps also only
+ * ever grow across a run (rule 4: no role holds DELETE — see `unique()`'s
+ * own comment in harness.ts), so the dump gets larger the later this file
+ * runs in a suite. 64 MB is comfortably above any dump this test produces
+ * today, with headroom for the table to keep growing.
+ */
+const MAX_BUFFER = 64 * 1024 * 1024
+
 function sh(args: string[]): string {
-  return execFileSync('docker', args, { encoding: 'utf8' })
+  return execFileSync('docker', args, { encoding: 'utf8', maxBuffer: MAX_BUFFER })
 }
 
 function bootstrapPsql(db: string, sql: string): string {
@@ -113,7 +126,7 @@ describe('audit_log survives a real pg_dump / pg_restore round trip', () => {
       execFileSync(
         'docker',
         ['compose', 'exec', '-T', SERVICE, 'psql', '-U', 'finsoft_bootstrap', '-d', SCRATCH_DB],
-        { input: dump, encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] },
+        { input: dump, encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'], maxBuffer: MAX_BUFFER },
       )
 
       const afterCount = bootstrapPsql(

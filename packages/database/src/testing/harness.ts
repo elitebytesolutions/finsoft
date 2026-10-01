@@ -246,6 +246,75 @@ export interface TenantFixture {
 }
 
 /**
+ * QA-001: fixed-width uniqueness suffix for `createTenantFixture`'s tenant
+ * code, reserved by construction rather than whatever happens to survive a
+ * blind `.slice(0, 16)`.
+ *
+ * `tenants.code` is `CHECK (code ~ '^[A-Z][A-Z0-9_]{1,15}$')`
+ * (database/migrations/001_create_tenants.sql) — 2 to 16 characters total.
+ * The old code built `T${label}${unique()}`.slice(0, 16)`: for a short label
+ * that left most of `unique()` intact, but for a label as long as
+ * 'GOLDEN_A'/'GOLDEN_B' (tests/accounting/golden-posting-runner.ts) or
+ * 'M3RUNNER' (tests/accounting/golden-posting-runner-m3.spec.ts, via the
+ * 'TM3RUNNER' alias override) — 8 characters — the slice cut INTO the random
+ * suffix instead of the label, so parallel runs collided on
+ * `tenants_code_key`. Worse under a frozen clock: when a spec file fakes
+ * `Date` to a fixed instant (tests/accounting/posting-scenarios-m3.spec.ts's
+ * `runAtScenarioClock`, documented there as a harness.ts finding this lane
+ * could not fix because it is outside that lane's ALLOWED paths),
+ * `unique()`'s `Date.now()` component stops varying at all and every bit of
+ * uniqueness has to come from whatever of `Math.random()`'s slice survived
+ * the truncation.
+ *
+ * The fix: a fixed budget, split so the label is truncated, never the
+ * suffix.
+ *
+ *   1 ('T') + TENANT_CODE_LABEL_LIMIT + TENANT_CODE_SUFFIX_LENGTH === 16
+ *
+ * TENANT_CODE_SUFFIX_LENGTH is 7, which makes TENANT_CODE_LABEL_LIMIT 8 —
+ * deliberately sized to be exactly long enough that 'GOLDEN_A', 'GOLDEN_B'
+ * and 'M3RUNNER' (each 8 characters) survive WHOLE, unmodified, in the first
+ * `1 + label.length` characters of the code. That is load-bearing: the
+ * accounting-seat allowlist in tests/accounting/ar-invariant-9.ts
+ * (`TEST_ONLY_TENANT_CODE_PREFIXES = ['TKR', 'TM3RUNNER']`) matches tenant
+ * codes by literal prefix, and 'TM3RUNNER' is 9 characters — it would stop
+ * matching if this budget ever truncated 'M3RUNNER' itself. 'KR'/'KR2'
+ * (kernel-rules.spec.ts) are short enough that no budget here could touch
+ * them. A unit test next to this file (`harness-tenant-code.spec.ts`) pins
+ * both the 10,000-code uniqueness property and this exact prefix behaviour.
+ *
+ * The suffix itself is never silently shortened again: `tenantCodeSuffix()`
+ * always returns exactly 7 characters, built from a per-process monotonic
+ * counter (unique BY CONSTRUCTION for the first 46,656 calls in one process
+ * — vastly more than any suite creates, and certainly more than the 10,000
+ * the unit test demands, so that test cannot pass by luck) plus 4 random
+ * characters for distinctness ACROSS processes (parallel vitest workers,
+ * repeated `npm run test:*` invocations against the same disposable
+ * cluster).
+ */
+const TENANT_CODE_SUFFIX_LENGTH = 7
+const TENANT_CODE_LABEL_LIMIT = 16 - 1 - TENANT_CODE_SUFFIX_LENGTH
+
+let tenantCodeSequence = 0
+
+/** Exactly `TENANT_CODE_SUFFIX_LENGTH` characters, unique by construction. */
+function tenantCodeSuffix(): string {
+  tenantCodeSequence = (tenantCodeSequence + 1) % 36 ** 3
+  const sequence = tenantCodeSequence.toString(36).toUpperCase().padStart(3, '0')
+  const random = Math.random().toString(36).slice(2, 6).toUpperCase().padEnd(4, '0')
+  return `${sequence}${random}`
+}
+
+/**
+ * The pure half of `createTenantFixture`'s code construction — no database,
+ * so `harness-tenant-code.spec.ts` can call this 10,000 times directly
+ * instead of provisioning 10,000 real tenants.
+ */
+export function buildTenantCode(label: string): string {
+  return `T${label.slice(0, TENANT_CODE_LABEL_LIMIT)}${tenantCodeSuffix()}`
+}
+
+/**
  * Create a tenant and its provisioned owner, through the real API surface.
  *
  * The two steps are deliberately different shapes, because they are different
@@ -260,7 +329,7 @@ export interface TenantFixture {
  *   author it; migration 002 permits exactly one such row per tenant.
  */
 export async function createTenantFixture(label: string): Promise<TenantFixture> {
-  const code = `T${label}${unique()}`.slice(0, 16)
+  const code = buildTenantCode(label)
 
   const tenantId = await withGlobal(async (tx) => {
     const row = await tx
