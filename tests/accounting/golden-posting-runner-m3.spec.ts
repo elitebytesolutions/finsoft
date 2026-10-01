@@ -1,5 +1,8 @@
 import { closeDatabase } from '@finsoft/database'
-import { migrateTestDatabase, prepareTestDatabase } from '@finsoft/database/testing'
+import {
+  migrateAccountingTestDatabase,
+  prepareAccountingTestDatabase,
+} from '@finsoft/database/testing'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { loadScenario, runPostingScenario, type PostingScenario } from './golden-posting-runner.ts'
 import { createFakeReceivablesPort } from './fixtures/fake-receivables-port.ts'
@@ -41,8 +44,8 @@ import { createFakeReceivablesPort } from './fixtures/fake-receivables-port.ts'
  */
 
 beforeAll(async () => {
-  await prepareTestDatabase()
-  await migrateTestDatabase()
+  await prepareAccountingTestDatabase()
+  await migrateAccountingTestDatabase()
 }, 120_000)
 
 afterAll(async () => {

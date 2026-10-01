@@ -8,11 +8,11 @@ import {
   type TenantTx,
 } from '@finsoft/database'
 import {
+  ACCOUNTING_TEST_TARGET,
   createTenantFixture,
-  migrateTestDatabase,
-  prepareTestDatabase,
+  migrateAccountingTestDatabase,
+  prepareAccountingTestDatabase,
   runAs,
-  TEST_TARGET,
   type TenantFixture,
 } from '@finsoft/database/testing'
 import { createFiscalYear } from '@finsoft/database/provisioning'
@@ -76,12 +76,12 @@ const reopen = (t: TenantFixture, label: string, reason = 'correction') =>
   as(t, (tx) => periodEngine.reopen(label, reason, tx))
 
 beforeAll(async () => {
-  await prepareTestDatabase()
-  await migrateTestDatabase()
+  await prepareAccountingTestDatabase()
+  await migrateAccountingTestDatabase()
   // The race below needs two real backends (see financial-invariant-suite.spec.ts).
   await closeDatabase()
   process.env['DATABASE_POOL_MAX'] = '4'
-  await openDatabase(TEST_TARGET)
+  await openDatabase(ACCOUNTING_TEST_TARGET)
 }, 120_000)
 
 afterAll(async () => {
