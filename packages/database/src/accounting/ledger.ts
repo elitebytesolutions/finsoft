@@ -17,6 +17,27 @@ import { calendarDate, sqlDate } from './calendar-date.ts'
  * — this file's job is the SQL, not the arithmetic.
  */
 
+/**
+ * `source_type` values whose `journal_entries.reference` column holds an
+ * actual DOCUMENT NUMBER (`INV-…`, `RCT-…`) rather than user-typed free
+ * text. K4 (second Council re-check of 2a02731, Architecture+Accounting
+ * seats): a manual journal voucher (`source_type = 'journal_voucher'`)
+ * stores whatever reference text its author typed in the SAME column —
+ * without this allow-list, that free text would surface in a ledger row's
+ * `reference` exactly where a real reader expects a document number, and
+ * nothing distinguishes the two at read time by shape alone (a user could
+ * type "INV-2024-1" as a JV's reference). This package cannot import
+ * `packages/accounting-kernel`'s own `referenceType` allow-list (A3,
+ * `reversal.ts`) — dependencies point the other way (ARCHITECTURE §5) — so
+ * this is a SEPARATE, deliberately narrow list, grown only when a new
+ * module's document type is added here on purpose, never widened by
+ * inverting it into a deny-list.
+ */
+const REFERENCE_IS_A_DOCUMENT_NUMBER_FOR: ReadonlySet<string> = new Set([
+  'sales_invoice',
+  'customer_receipt',
+])
+
 export interface LedgerLineRow {
   readonly lineId: string
   readonly lineNumber: number
@@ -28,7 +49,12 @@ export interface LedgerLineRow {
   readonly narration: string
   readonly sourceType: string
   readonly sourceId: string
-  /** K4: the source document's own number (INV-…/RCT-…), null for a JV (which has none of its own). */
+  /**
+   * K4: the source document's own number (INV-…/RCT-…) — null for a JV
+   * (whose `journal_entries.reference` is the user's own free text, not a
+   * document number; see `REFERENCE_IS_A_DOCUMENT_NUMBER_FOR` above) and
+   * null for anything else not on that allow-list.
+   */
   readonly reference: string | null
   readonly reversalOf: string | null
   readonly reversedBy: string | null
