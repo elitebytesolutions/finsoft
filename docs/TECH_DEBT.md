@@ -376,44 +376,147 @@ account, for instance) — at which point `controlAccountLedger` should sum
 every AR-control account for the party, matching `customerSubledgerBalance`'s
 own query shape, rather than resolving a single role.
 
-## TD-012 · The M3-P golden-runner and adversarial adapters guess `modules/receivables`' shape
+---
 
-**What.** `tests/accounting/receivables-real-port.ts` (loaded by
-`tests/accounting/posting-scenarios-m3.spec.ts`) and
-`tests/integration/m3-adversarial/receivables-adversarial.spec.ts` each
-probe for `modules/receivables`/`apps/api/src/receivables/receivables.
-module.ts` at a guessed path and, if found, expect a guessed set of export
-names (`createInvoiceDraft`, `postInvoice`, `reverseInvoice`,
-`ReceivablesModule`, …) built by analogy with `modules/customers/index.ts`
-and `docs/design/M3/modules.md` §4's operation names, which are pseudocode
-(`PostInvoice`), not pinned TypeScript exports. `modules/receivables` has
-zero files as of this writing (M3-P's own branch carries no commits beyond
-`develop`), so none of this has ever run against real code — only against
-a hand-built fake (`tests/accounting/fixtures/fake-receivables-port.ts`,
-which implements the SAME `ReceivablesPort` interface these loaders target,
-proving the interface is usable, not that the guessed loader will connect
-to whatever M3-P actually builds).
+## TD-012 · Superseded draft revisions are kept and never read
 
-**Why it is accepted.** M3-Q's brief (docs/design/M3/README.md §3) asks
-this lane to "build their runner support so [P04-P12] execute as soon as
-M3-P's branch provides the rules," ahead of M3-P starting. Both loaders
-fail CLOSED — a path or export-name mismatch returns `null`/reports
-PENDING, never a crash or a false "available" — so the guess being wrong
-costs a follow-up PR, not a broken gate. The `ReceivablesPort` interface
-(`tests/accounting/receivables-port.ts`) they both target is the actual
-contract `golden-posting-runner.ts` depends on, and it is deliberately
-small and already exercised by the fake, so reconciling it with the real
-module should be a loader update, not a runner redesign.
+**What.** `sales_invoice_lines` and `customer_receipt_draft_allocations` are
+insert-only and revisioned (`modules/receivables`, migrations 016-017): every
+draft save inserts a whole new revision and bumps
+`sales_invoices.lines_revision` / `customer_receipts.proposals_revision`.
+Every revision before the current one stays in the table forever, with no
+`DELETE` grant and nothing that ever reads it again.
 
-**Owner.** Architecture seat (`modules/receivables`' actual export shape)
-and QA (the two loader files).
+**Why it is accepted.** Named in
+[docs/design/M3/README.md](design/M3/README.md) §10 as the cost of keeping
+both tables insert-only with no money in `jsonb` (rule 6) and no `DELETE`
+grant (rule 4) — a repository that could delete or overwrite a line revision
+would be the one financial-record code path in the system that can, which is
+a bigger risk than a few stale rows.
 
-**What would force it.** M3-P's first commits. The moment
-`modules/receivables/index.ts` or `apps/api/src/receivables/*.module.ts`
-exist, run `npx tsx tests/accounting/posting-scenarios-m3.spec.ts`'s gate
-test (or just `npm run test:accounting`) and read its console output: it
-names exactly which required export is missing, if any. Update the two
-loader files' guessed names to match, then flip P04-P12 from PENDING in
-`tests/accounting/golden-posting-registry.ts` and
-`tests/integration/m3-adversarial/receivables-adversarial.spec.ts`'s
-`MODULE_PATH`, each a reviewed, one-line-per-mismatch change.
+**Owner.** Architecture seat.
+
+**What would force it.** Draft storage becoming measurable at real tenant
+volumes — a tenant whose users repeatedly edit large draft invoices or
+receipts before posting or cancelling. At that point a periodic archival job
+(never a delete, per rule 4) for superseded revisions is the fix, not a
+change to the insert-only shape.
+
+---
+
+## TD-013 · Receipt drafts and receipt posting share `payment.receive`
+
+**What.** `POST /api/receipts` (draft), `PATCH /api/receipts/:id`,
+`POST /api/receipts/:id/post` and `POST /api/receipts/:id/cancel`
+(`modules/receivables`, `apps/api/src/receivables/receipts.controller.ts`)
+all require only `payment.receive`. Invoices already split `invoice.create`
+from `invoice.post`; the matching split for receipts (a `payment.post`
+code) does not exist in the MVP catalogue
+(`packages/permissions/src/catalog.ts`).
+
+**Why it is accepted.** Named in
+[docs/design/M3/README.md](design/M3/README.md) §10 and
+[api-contract.md](design/M3/api-contract.md) §2: adding a catalogue code
+needs seeding existing tenants' system roles, a catalogue-wide task, not a
+single lane's addition. Per this lane's own task contract: "If a needed code
+is missing, STOP and report; do not invent one."
+
+**Owner.** Architecture seat / Security seat (catalogue changes are joint).
+
+**What would force it.** The first tenant that wants a clerk to prepare
+receipts that someone else posts (maker-checker), matching PO-Q2's precedent
+from M2 for journal vouchers (`voucher.post` / `voucher.reverse` already
+split that way) — at which point `payment.post` is added to the catalogue,
+seeded into the Accountant role, and `POST /api/receipts/:id/post` switches
+to requiring it instead of `payment.receive`.
+
+---
+
+## TD-014 · `journalEntry` is `null` on a plain GET of an already-posted invoice or receipt
+
+**What.** `GET /api/invoices/:id` and `GET /api/receipts/:id`
+(`modules/receivables/application/get-invoice.ts`,
+`get-receipt.ts`) always return `journalEntry: null`, even for a `POSTED` or
+`REVERSED` document. The field is populated correctly on the **response of
+the mutation itself** — `POST /api/invoices/:id/post`,
+`POST /api/invoices/:id/reverse` and the receipt equivalents pass the entry
+straight through from `postingEngine.post` / `reversalEngine.reverseForSource`'s
+own result (`apps/api/src/receivables/invoices.controller.ts` /
+`receipts.controller.ts`) — but a later plain read has nothing to resolve it
+from.
+
+**Why it is accepted.** `modules.md` §7 is explicit that the journal entry's
+id is deliberately **not** stored a second time on the document ("a second
+pointer would be a copy that can disagree"), and it is found only through
+the kernel's `UNIQUE (tenant_id, source_type, source_id)` — a lookup no K1-K7
+capability exposes to a module for reading (as opposed to posting/reversing).
+Building one (most plausibly by filtering `@finsoft/reporting`'s
+`controlAccountLedger` for the matching `sourceId`, which already returns
+`entryId`/`entryNumber` per line) is a kernel/reporting-surface change, T3
+review, outside this lane's `packages/accounting-kernel/src/**` (K2-K4 and
+the two rules only) boundary.
+
+**Owner.** Accounting seat / Architecture seat.
+
+**What would force it.** M4's invoice/receipt detail screen, which needs
+`journalEntry` linked from a page load, not only from the post/reverse
+response it happened to be on. The fix is a K-numbered kernel or
+`@finsoft/reporting` export ("find the entry for this source"), reviewed the
+same way K5 was, not a second pointer column on the document.
+
+**Partial progress, second follow-up commit (K4, Council review of
+efb7e3f).** The RELATED but narrower gap — the source document's own number
+(not the full `{id, number}` entry) appearing on a customer's LEDGER line —
+is now closed: `journal_entries.reference` is threaded through
+`packages/database`'s ledger query, `packages/reporting`'s
+`AccountLedgerLine.sourceNumber`, and `modules/customers`'
+`CustomerLedgerLine.sourceNumber`, proven by
+`tests/integration/receivables/receivables-api.spec.ts`'s P05 test (a
+posted invoice's `GET /api/customers/:id/ledger` line carries its own INV
+number). This does **not** close TD-014 itself: a plain `GET /api/invoices/
+:id` still returns `journalEntry: null` — the ledger line's `sourceNumber`
+and an invoice's own `journalEntry` object are two different reads, and
+only the first is fixed. TD-014 stays open exactly as stated above.
+
+---
+
+## TD-015 · P04-P06/P10 must execute in the gate before anything reaches `main`
+
+**What.** `packages/accounting-kernel/src/events.ts`'s `IMPLEMENTED_EVENTS` now
+includes `SALE_POSTED` and `CUSTOMER_PAYMENT_RECEIVED`, and `modules/receivables`
+posts both for real — proven by its own integration suite
+(`tests/integration/receivables/receivables-api.spec.ts`) against the real
+HTTP API, matching the P04 (10,000.0000 invoice), P05 (6,000.0000 partial
+receipt), P06 (reversal) and P10 (half-way rounding tie) figures exactly.
+But the golden scenario files themselves — `posting-p04-service-invoice.json`,
+`posting-p05-customer-receipt.json`, `posting-p06-reversal.json` and
+`posting-p10-service-line-rounding.json` — are still `PENDING` in
+`tests/accounting/golden-posting-registry.ts`, not `EXECUTED_IN_M2`, because
+`golden-posting-runner.ts` (owned by the parallel M3-Q lane) has no path yet
+that drives a scenario through a module's `index.ts` (ADR-0028 statement 10);
+it still hardcodes `executableFrom === 'M2'` and `referenceType:
+'journal_voucher'`.
+
+**Why this is accepted only temporarily, not resolved.** This is NOT a normal
+piece of deferred debt: it is a condition on shipping. A kernel rule that is
+`IMPLEMENTED` with no golden scenario executing against it in the financial
+gate is exactly the gap docs/posting-rules/README.md §3 exists to close
+("golden first, same PR" — the rule change and its golden land together, or
+the rule is not really proven). M3-P's own integration suite is real
+coverage, but it is not the SAME reviewable, hand-computed-figures mechanism
+every other posting rule is held to, and it does not run where CI's
+financial gate looks.
+
+**Owner.** M3-Q lane (owns `tests/accounting/**` and the golden runner, per
+docs/design/M3/README.md §3).
+
+**What would force it — and must, before `main`.** M3-Q's
+`golden-posting-runner.ts` update: support for `executableFrom: "M3"`, the
+`saveDraft`/`editDraft`/`cancelDraft`/`customer` verbs the golden files
+already use, and a `post`/`reverse` path that drives
+`sales_invoice`/`customer_receipt` sources through `modules/receivables`'s
+own `index.ts` rather than `postingEngine.post` directly. Once that lands,
+P04, P05, P06 and P10 move from `PENDING` to `EXECUTED` in
+`golden-posting-registry.ts` — the Council review of efb7e3f treats this
+flip, in the financial gate, as a precondition for this feature reaching
+`main`, not an optional follow-up.

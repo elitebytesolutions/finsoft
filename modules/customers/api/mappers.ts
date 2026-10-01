@@ -90,10 +90,10 @@ function toLedgerLineDto(
     entryNumber: line.entryNumber,
     sourceType: line.sourceType as CustomerLedgerLine['sourceType'],
     sourceId: line.sourceId,
-    // K4 (referenceNumber on the entry) is an M3-P kernel addition; until
-    // that lands the entry number is the closest available "source
-    // document number" — this field is null rather than guessed.
-    sourceNumber: null,
+    // K4: the source document's own number, stored on the entry's
+    // `reference` column and threaded through packages/database's ledger
+    // query -> packages/reporting -> this module's repository.
+    sourceNumber: line.sourceNumber,
     narration: line.narration,
     debit: line.debit,
     credit: line.credit,

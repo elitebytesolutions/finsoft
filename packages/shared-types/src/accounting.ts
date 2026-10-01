@@ -62,6 +62,8 @@ export interface AccountLedgerLineDto {
   readonly narration: string
   readonly sourceType: string
   readonly sourceId: string
+  /** K4: the source document's own number (INV-…/RCT-…). Null for a JV. */
+  readonly sourceNumber: string | null
   readonly reversalOf: string | null
   readonly reversedBy: string | null
   readonly debit: string

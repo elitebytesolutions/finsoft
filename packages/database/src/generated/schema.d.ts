@@ -85,6 +85,71 @@ export interface AuditLog {
   tenant_id: string;
 }
 
+export interface CustomerReceiptAllocations {
+  amount: ColumnType<string, string, string>;
+  created_at: Generated<Timestamp>;
+  created_by: string;
+  id: Generated<string>;
+  invoice_id: string;
+  receipt_id: string;
+  status: Generated<string>;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+  updated_by: string;
+  version: Generated<number>;
+  voided_at: Timestamp | null;
+  voided_by: string | null;
+}
+
+export interface CustomerReceiptDraftAllocations {
+  amount: ColumnType<string, string, string>;
+  created_at: Generated<Timestamp>;
+  created_by: string;
+  id: Generated<string>;
+  invoice_id: string;
+  receipt_id: string;
+  revision: number;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+  updated_by: string;
+  version: Generated<number>;
+}
+
+export interface CustomerReceipts {
+  amount: ColumnType<string, string, string> | null;
+  cancelled_at: Timestamp | null;
+  cancelled_by: string | null;
+  create_fingerprint: string;
+  create_idempotency_key: string;
+  created_at: Generated<Timestamp>;
+  created_by: string;
+  customer_id: string;
+  id: Generated<string>;
+  method: string | null;
+  narration: string | null;
+  /**
+   * RCT-{FY}-{NNNNNN}, assigned by documentNumbers.next (K3) inside PostReceipt's own transaction, after validation. NULL while DRAFT/CANCELLED.
+   */
+  number: string | null;
+  post_fingerprint: string | null;
+  post_idempotency_key: string | null;
+  posted_at: Timestamp | null;
+  posted_by: string | null;
+  proposals_revision: Generated<number>;
+  receipt_date: Timestamp;
+  reference: string | null;
+  reversal_reason: string | null;
+  reverse_fingerprint: string | null;
+  reverse_idempotency_key: string | null;
+  reversed_at: Timestamp | null;
+  reversed_by: string | null;
+  status: Generated<string>;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+  updated_by: string;
+  version: Generated<number>;
+}
+
 export interface Customers {
   address: string | null;
   city: string | null;
@@ -367,6 +432,58 @@ export interface Roles {
   version: Generated<number>;
 }
 
+export interface SalesInvoiceLines {
+  created_at: Generated<Timestamp>;
+  created_by: string;
+  description: string;
+  id: Generated<string>;
+  invoice_id: string;
+  kind: Generated<string>;
+  line_net: ColumnType<string, string, string>;
+  line_no: number;
+  quantity: ColumnType<string, string, string>;
+  revision: number;
+  tenant_id: string;
+  unit_price: ColumnType<string, string, string>;
+  updated_at: Generated<Timestamp>;
+  updated_by: string;
+  version: Generated<number>;
+}
+
+export interface SalesInvoices {
+  cancelled_at: Timestamp | null;
+  cancelled_by: string | null;
+  create_fingerprint: string;
+  create_idempotency_key: string;
+  created_at: Generated<Timestamp>;
+  created_by: string;
+  customer_id: string;
+  due_date: Timestamp | null;
+  id: Generated<string>;
+  invoice_date: Timestamp;
+  lines_revision: Generated<number>;
+  narration: string | null;
+  net_amount: Generated<ColumnType<string, string, string>>;
+  /**
+   * INV-{FY}-{NNNNNN}, assigned by documentNumbers.next (K3) inside PostInvoice's own transaction, after validation. NULL while DRAFT/CANCELLED (rule 12: a rejected or rolled-back post consumes none).
+   */
+  number: string | null;
+  post_fingerprint: string | null;
+  post_idempotency_key: string | null;
+  posted_at: Timestamp | null;
+  posted_by: string | null;
+  reversal_reason: string | null;
+  reverse_fingerprint: string | null;
+  reverse_idempotency_key: string | null;
+  reversed_at: Timestamp | null;
+  reversed_by: string | null;
+  status: Generated<string>;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+  updated_by: string;
+  version: Generated<number>;
+}
+
 export interface SchemaMigrations {
   applied_at: Generated<Timestamp>;
   checksum: string;
@@ -478,6 +595,9 @@ export interface Users {
 export interface DB {
   accounts: Accounts;
   audit_log: AuditLog;
+  customer_receipt_allocations: CustomerReceiptAllocations;
+  customer_receipt_draft_allocations: CustomerReceiptDraftAllocations;
+  customer_receipts: CustomerReceipts;
   customers: Customers;
   document_sequences: DocumentSequences;
   fiscal_periods: FiscalPeriods;
@@ -489,6 +609,8 @@ export interface DB {
   refresh_tokens: RefreshTokens;
   role_permissions: RolePermissions;
   roles: Roles;
+  sales_invoice_lines: SalesInvoiceLines;
+  sales_invoices: SalesInvoices;
   schema_migrations: SchemaMigrations;
   sessions: Sessions;
   tenants: Tenants;

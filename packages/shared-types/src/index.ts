@@ -35,6 +35,28 @@ export type {
   LocalDate,
 } from './customer.ts'
 
+// M3-P: modules/receivables response types. docs/design/M3/api-contract.md §4.2, §4.3.
+export type {
+  Invoice,
+  InvoiceAllocation,
+  InvoiceCalculation,
+  InvoiceCalculationLine,
+  InvoiceLine,
+  InvoiceListItem,
+  InvoiceListPage,
+  InvoiceSettlement,
+  InvoiceStatus,
+  Receipt,
+  ReceiptAllocation,
+  ReceiptListItem,
+  ReceiptListPage,
+  ReceiptMethod,
+  ReceiptOpenInvoice,
+  ReceiptPreview,
+  ReceiptProposal,
+  ReceiptStatus,
+} from './receivables.ts'
+
 export type {
   AccountDto,
   AccountLedgerLineDto,

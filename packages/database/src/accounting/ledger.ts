@@ -28,6 +28,8 @@ export interface LedgerLineRow {
   readonly narration: string
   readonly sourceType: string
   readonly sourceId: string
+  /** K4: the source document's own number (INV-…/RCT-…), null for a JV (which has none of its own). */
+  readonly reference: string | null
   readonly reversalOf: string | null
   readonly reversedBy: string | null
   readonly debit: string
@@ -46,6 +48,7 @@ function mapLedgerLine(row: {
   narration: string
   source_type: string
   source_id: string
+  reference: string | null
   reversal_of: string | null
   reversed_by: string | null
   debit: string
@@ -63,6 +66,7 @@ function mapLedgerLine(row: {
     narration: row.narration,
     sourceType: row.source_type,
     sourceId: row.source_id,
+    reference: row.reference,
     reversalOf: row.reversal_of,
     reversedBy: row.reversed_by,
     debit: row.debit,
@@ -231,6 +235,7 @@ export async function accountLedgerLines(
       'je.narration as narration',
       'je.source_type as source_type',
       'je.source_id as source_id',
+      'je.reference as reference',
       'je.reversal_of as reversal_of',
       'je.reversed_by as reversed_by',
       'jl.debit as debit',

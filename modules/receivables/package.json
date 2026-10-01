@@ -1,0 +1,28 @@
+{
+  "name": "@finsoft/receivables",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "exports": {
+    ".": "./index.ts",
+    "./published": "./application/published.ts"
+  },
+  "dependencies": {
+    "@finsoft/accounting-kernel": "*",
+    "@finsoft/customers": "*",
+    "@finsoft/database": "*",
+    "@finsoft/shared-types": "*",
+    "@finsoft/validation": "*",
+    "kysely": "0.29.6",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "vitest": "4.1.11"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  }
+}

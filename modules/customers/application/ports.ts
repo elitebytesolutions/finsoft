@@ -114,6 +114,8 @@ export interface CustomerLedgerLineRow {
   readonly entryStatus: 'POSTED' | 'REVERSED'
   readonly sourceType: string
   readonly sourceId: string
+  /** K4: the source document's own number (INV-…/RCT-…). Null for a JV. */
+  readonly sourceNumber: string | null
   readonly narration: string
   readonly debit: string
   readonly credit: string
