@@ -6,7 +6,7 @@
   "source": "docs/posting-rules/service-sale.md",
   "governedBy": ["ADR-0005", "ADR-0011", "ADR-0014"],
   "executableFrom": "M3",
-  "status": "Specified, hand-computed. Not yet executed: needs customers and sales invoices (M3). Steps 1-2 marked \"level\": \"kernel\" (Accounting seat ruling, 2026-09-29, review of the M3-Q throwaway verify against M3-P @efb7e3f): the real modules/receivables command has no lineNet/netAmount field for a client to submit — the module always computes them itself — so SALE_AMOUNT_MISMATCH is a kernel-only defense, reachable only by calling postingEngine directly, as P03 does. No figure changed.",
+  "status": "Specified, hand-computed. Not yet executed: needs customers and sales invoices (M3). Steps 1-2 marked \"level\": \"kernel\" (Accounting seat ruling, 2026-09-29, review of the M3-Q throwaway verify against M3-P @efb7e3f): the real modules/receivables command has no lineNet/netAmount field for a client to submit — the module always computes them itself — so SALE_AMOUNT_MISMATCH is a kernel-only defense, reachable only by calling postingEngine directly, as P03 does. Steps 3, 4 and 6 ALSO marked \"level\": \"kernel\" (found flipping this scenario to executable against M3-P @2a02731): `CreateInvoiceDraftCommand`/`InvoiceLineInput` (modules/receivables/domain/invoice.ts) carry no `kind` field (SERVICE is the only line the module can ever build) and no `settlement` field (the module hard-codes CREDIT, domain/invoice.ts); a `taxAmount` key is silently dropped by this lane's own port adapter (toInvoiceLines), never reaching the module's command shape at all. All three rejections — SALE_LINE_KIND_NOT_ENABLED, SALE_SETTLEMENT_NOT_ENABLED, PAYLOAD_INVALID (unknown key) — are therefore the SAME class of kernel-only defence as steps 1-2, by the identical reasoning already ruled on; a probe against the real module confirmed all three would otherwise silently POST instead of rejecting, proving the module never receives a value it could reject. Step 5 (SALE_LINE_NON_POSITIVE) is unaffected: quantity/unitPrice ARE real InvoiceLineInput fields, and the module's own domain/invoice.ts independently enforces the same rule. No figure changed on any step.",
   "description": [
     "Line nets, computed by hand at the ONE rounding boundary (per line, half-up, 4 dp):",
     "  Line 1  1.000000 × 7500.000000 = 7500.000000  → 7500.0000",
@@ -99,6 +99,7 @@
     {
       "step": 3,
       "do": "post",
+      "level": "kernel",
       "event": "SALE_POSTED",
       "referenceType": "sales_invoice",
       "referenceId": "INV-X3",
@@ -123,6 +124,7 @@
     {
       "step": 4,
       "do": "post",
+      "level": "kernel",
       "event": "SALE_POSTED",
       "referenceType": "sales_invoice",
       "referenceId": "INV-X4",
@@ -178,6 +180,7 @@
     {
       "step": 6,
       "do": "post",
+      "level": "kernel",
       "event": "SALE_POSTED",
       "referenceType": "sales_invoice",
       "referenceId": "INV-X6",

@@ -98,11 +98,28 @@ export function loadScenario(filename: string): PostingScenario {
  * 1-5, M3 steps 6-9). Defaults to M2 — every existing M2 caller
  * (`posting-scenarios.spec.ts`, `golden-posting-registry.spec.ts`) is
  * unchanged by this parameter's addition.
+ *
+ * `'ALL'` (Accounting seat ruling 4, 2026-09-29 — "run it IN FULL against
+ * the real module... and keep the M2 subset running too"): the UNION of
+ * every `stepsExecutableFrom` subset, in step order — P08's own 1-10, not
+ * just 6-9. `entriesAfter` on P08's invoice steps (6-9) counts the THREE
+ * JOURNAL_VOUCHER_POSTED entries steps 1-3 already wrote; running the M3
+ * subset alone (found in the M3-P throwaway verify) leaves those counts
+ * unreconcilable, because they never happened in that run. `runPosting-
+ * Scenario` selects `'ALL'` only when a scenario carries BOTH an `M2` and
+ * an `M3` subset AND a receivables port was given — every other scenario's
+ * behaviour (M2-only, M3-only, no subset at all) is unchanged.
  */
 export function executableSteps(
   scenario: PostingScenario,
-  milestone: 'M2' | 'M3' = 'M2',
+  milestone: 'M2' | 'M3' | 'ALL' = 'M2',
 ): readonly Record<string, unknown>[] {
+  if (milestone === 'ALL') {
+    const subsets = scenario.stepsExecutableFrom
+    if (!subsets) return scenario.steps
+    const allowed = new Set(Object.values(subsets).flat())
+    return scenario.steps.filter((step) => allowed.has(step.step as number))
+  }
   const subset = scenario.stepsExecutableFrom?.[milestone]
   if (subset) return scenario.steps.filter((step) => subset.includes(step.step as number))
   if (scenario.executableFrom !== milestone) {
@@ -457,7 +474,9 @@ export async function runPostingScenario(
        * spell out keys it does not name.
        */
       const details = error.details ?? {}
-      expect(details, `${where}: errorDetail`).toMatchObject(exp.errorDetail as Record<string, unknown>)
+      expect(details, `${where}: errorDetail`).toMatchObject(
+        exp.errorDetail as Record<string, unknown>,
+      )
     }
   }
 
@@ -585,7 +604,19 @@ export async function runPostingScenario(
   const runsAsM3 =
     scenario.executableFrom === 'M3' ||
     (options.receivables !== undefined && scenario.stepsExecutableFrom?.M3 !== undefined)
-  const milestone: 'M2' | 'M3' = runsAsM3 ? 'M3' : 'M2'
+  /*
+   * P08 (Accounting seat ruling 4, 2026-09-29): the ONLY scenario with
+   * BOTH an `M2` and an `M3` `stepsExecutableFrom` subset. Once a
+   * receivables port is available, it runs 'ALL' ten steps together — the
+   * M2 JV steps (1-5) and the M3 invoice steps (6-9) in ONE session — so
+   * `entriesAfter` on the invoice steps counts what the golden file
+   * actually assumes: the three JV entries already posted earlier in the
+   * SAME run. `posting-scenarios.spec.ts` (M2-only, no receivables option)
+   * is untouched: `runsAsM3` is false there, so this branch never runs.
+   */
+  const hasBothSubsets =
+    scenario.stepsExecutableFrom?.M2 !== undefined && scenario.stepsExecutableFrom?.M3 !== undefined
+  const milestone: 'M2' | 'M3' | 'ALL' = runsAsM3 ? (hasBothSubsets ? 'ALL' : 'M3') : 'M2'
   for (const step of executableSteps(scenario, milestone)) {
     const where = `${scenario.id} step ${String(step.step)}`
     const verb = step.do as string
@@ -1030,6 +1061,7 @@ export async function runPostingScenario(
         'customerStatus',
         'entryStatuses',
         'journalEntryCount',
+        'postingAuditRecordCount',
         'roundingAccountBalance',
         'suspenseAccountBalance',
         'periodStatus',
@@ -1195,6 +1227,15 @@ export async function runPostingScenario(
           await act((tx) => countJournalEntries(tx, tenantId)),
           `${where}: journalEntryCount`,
         ).toBe(step.journalEntryCount)
+      }
+      if (typeof step.postingAuditRecordCount === 'number') {
+        // P08 step 10: the aggregate form of a post step's own
+        // `postingAuditRecordsAfter` (checkAfterCounts) — same audit kind
+        // ('JOURNAL_ENTRY_POSTED'), read as a total instead of a delta.
+        expect(
+          await act((tx) => countAuditRecords(tx, tenantId, 'JOURNAL_ENTRY_POSTED')),
+          `${where}: postingAuditRecordCount`,
+        ).toBe(step.postingAuditRecordCount)
       }
       if (typeof step.roundingAccountBalance === 'string') {
         expect(await roleBalance('ROUNDING'), `${where}: rounding account`).toBe(

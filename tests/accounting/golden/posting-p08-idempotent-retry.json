@@ -7,7 +7,7 @@
   "governedBy": ["ADR-0005", "NON_NEGOTIABLES rule 14", "Invariant 8"],
   "executableFrom": "M2",
   "stepsExecutableFrom": { "M2": [1, 2, 3, 4, 5], "M3": [6, 7, 8, 9, 10] },
-  "status": "Specified, hand-computed. Not yet executed: the M2 QA lane writes the runner; steps 6–10 need invoices (M3).",
+  "status": "Specified, hand-computed. Not yet executed: the M2 QA lane writes the runner; steps 6–10 need invoices (M3). Step 9's errorDetail corrected to the contract's real shape (Accounting seat ruling on P05/P06/P11's identical pattern extended here, review of the M3-Q throwaway verify against M3-P @efb7e3f): `existingEntry: \"JE-2027-000001\"` (the kernel's own SOURCE_ALREADY_POSTED detail) -> `documentNumber: \"INV-2027-000001\"` — modules/receivables/application/post-invoice.ts pre-empts the kernel at the document-status check and raises its OWN SOURCE_ALREADY_POSTED (same code, module-appropriate detail) before ever reaching postingEngine. documentNumber is not a new figure: it is step 6's own already-hand-computed INV-2027-000001. Step 10's `numbersIssued` renamed `documentNumbersIssued`, matching P11/P12's already-established runner convention (this file predates it) — a key rename only, checking the SAME numbers. Steps 1-9's figures unchanged.",
   "description": [
     "NON_NEGOTIABLES rule 14: POST, POST, POST → exactly one journal entry, one document",
     "number, one audit record.",
@@ -276,7 +276,7 @@
       "expect": {
         "outcome": "REJECTED",
         "error": "SOURCE_ALREADY_POSTED",
-        "errorDetail": { "existingEntry": "JE-2027-000001" },
+        "errorDetail": { "documentNumber": "INV-2027-000001" },
         "entriesAfter": 3
       }
     },
@@ -293,7 +293,7 @@
         ],
         "totals": { "debit": "13000.0000", "credit": "13000.0000" }
       },
-      "numbersIssued": {
+      "documentNumbersIssued": {
         "JV": ["JV-2027-000001", "JV-2027-000002"],
         "JE": ["JE-2027-000001"],
         "INV": ["INV-2027-000001"]

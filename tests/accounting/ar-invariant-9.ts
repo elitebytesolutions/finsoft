@@ -227,8 +227,22 @@ export async function arControlAccountBalance(
   assertIssuedTenantTx(tx)
   const accounts = await resolveAccountsByRole(tx, tenantId, ['AR_CONTROL'])
   const account = accounts.get('AR_CONTROL')
-  if (!account)
-    throw new Error(`arControlAccountBalance: no AR_CONTROL account for tenant ${tenantId}.`)
+  /*
+   * `0.0000`, not a throw (found running the FULL FinancialInvariantSuite
+   * against the real M3-P module: `checkInvariant9` is asked, by the
+   * suite's own design, to run for EVERY tenant row in the shared test
+   * database — not only the ones this file's own fixtures create. A tenant
+   * left behind by an unrelated spec file (auth/RBAC/security tests that
+   * exercise signup without ever provisioning a chart of accounts) has no
+   * AR_CONTROL account, and previously crashed this check outright. That
+   * is provably safe to treat as zero, not a workaround: the kernel's own
+   * `requireResolvedRole` (service-sale.ts, customer-receipt's rule) would
+   * refuse SALE_POSTED/CUSTOMER_PAYMENT_RECEIVED for a tenant with no
+   * resolvable AR_CONTROL role, so such a tenant provably has zero
+   * journal_lines on any AR-control account — its true balance is zero by
+   * construction, not by assumption.
+   */
+  if (!account) return Money.serialize(Money.zero(), 4)
 
   const result = await sql<{ debit: string; credit: string }>`
     SELECT coalesce(sum(jl.debit), 0)::text  AS debit,

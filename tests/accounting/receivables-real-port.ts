@@ -4,7 +4,12 @@ import { pathToFileURL } from 'node:url'
 import { TenantContext } from '@finsoft/database'
 import { REPO_ROOT } from '@finsoft/database/testing'
 import { customerDirectory } from '../../modules/customers/index.ts'
-import type { DocumentPostResult, DraftResult, InvoiceLine, ReceivablesPort } from './receivables-port.ts'
+import type {
+  DocumentPostResult,
+  DraftResult,
+  InvoiceLine,
+  ReceivablesPort,
+} from './receivables-port.ts'
 
 /*
  * Loads a REAL `ReceivablesPort` from `modules/receivables`, once M3-P
@@ -114,6 +119,25 @@ export async function loadReceivablesRealPort(): Promise<ReceivablesPort | null>
 
   const refToDoc = new Map<string, { readonly id: string; readonly type: DocType }>()
   const trackedIds = { sales_invoice: new Set<string>(), customer_receipt: new Set<string>() }
+  /*
+   * `postInvoice`/`postReceipt`'s own idempotency (post-invoice.ts,
+   * post-receipt.ts) fingerprints `{ version: command.expectedVersion }` —
+   * a TRUE replay must resubmit the SAME `expectedVersion` the original
+   * call used, not the document's CURRENT version. Found running P11
+   * step 16 against the real module (M3-P @efb7e3f): that step replays
+   * step 11's exact post (same idempotencyKey, same document, now
+   * long-since POSTED) to prove the kernel returns the original rather
+   * than re-validating — but `ensureReceiptDraft` always re-fetches the
+   * CURRENT version, which had since moved on, so the fingerprint no
+   * longer matched and the module threw IDEMPOTENCY_KEY_REUSED ("already
+   * used for a different request") instead of replaying. This is this
+   * TEST ADAPTER's bug, not the module's: the module is correctly
+   * detecting that the SECOND call's computed fingerprint differs from
+   * the first's, because THIS adapter built it differently. Fixed by
+   * caching the `expectedVersion` actually used, per idempotencyKey, and
+   * reusing it — never re-deriving it — for a key already seen.
+   */
+  const postedVersionByKey = new Map<string, number>()
 
   function track(ref: string, id: string, type: DocType): void {
     refToDoc.set(ref, { id, type })
@@ -201,9 +225,14 @@ export async function loadReceivablesRealPort(): Promise<ReceivablesPort | null>
         input.occurredAt,
         input.payload,
       )
+      let expectedVersion = postedVersionByKey.get(input.idempotencyKey)
+      if (expectedVersion === undefined) {
+        expectedVersion = version
+        postedVersionByKey.set(input.idempotencyKey, expectedVersion)
+      }
       const result = await uc.postInvoice({
         id,
-        expectedVersion: version,
+        expectedVersion,
         idempotencyKey: input.idempotencyKey,
         actor: actor(),
       })
@@ -247,9 +276,14 @@ export async function loadReceivablesRealPort(): Promise<ReceivablesPort | null>
         input.occurredAt,
         input.payload,
       )
+      let expectedVersion = postedVersionByKey.get(input.idempotencyKey)
+      if (expectedVersion === undefined) {
+        expectedVersion = version
+        postedVersionByKey.set(input.idempotencyKey, expectedVersion)
+      }
       const result = await uc.postReceipt({
         id,
-        expectedVersion: version,
+        expectedVersion,
         idempotencyKey: input.idempotencyKey,
         actor: actor(),
       })
