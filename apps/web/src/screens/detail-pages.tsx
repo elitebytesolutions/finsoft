@@ -28,8 +28,8 @@ import { money, moneyFromString, movementTone } from '@finsoft/ui'
 import { useAuth } from '@/lib/api/auth-context'
 import { useApiQuery } from '@/lib/api/use-api-query'
 import { useIdempotencyKey } from '@/lib/api/idempotency-key'
-import { ApiError } from '@/lib/api/types'
 import { getInvoice, reverseInvoice } from '@/lib/api/invoices-client'
+import { receivablesErrorMessage } from '@/lib/adapters/receivables-errors'
 
 function DetailField({ label, value }: { label: string; value: ReactNode }) {
   return (
@@ -636,7 +636,7 @@ function InvoiceReverseDialog({
       await reverseInvoice(invoiceId, { reason: reason.trim() }, key)
       onDone()
     } catch (err) {
-      setError(invoiceReverseErrorMessage(err))
+      setError(receivablesErrorMessage(err))
       setSubmitting(false)
     }
   }
@@ -672,28 +672,6 @@ function InvoiceReverseDialog({
   )
 }
 
-/*
- * Maps the receivables error-code table (modules/receivables/api/errors.ts) to end-user copy.
- * `INVOICE_HAS_LIVE_ALLOCATIONS` carries the PO-mandated wording (reverse the receipt first);
- * `PERIOD_CLOSED` names the reason the server gave rather than a generic failure.
- */
-export function invoiceReverseErrorMessage(err: unknown): string {
-  if (err instanceof ApiError) {
-    switch (err.serverCode) {
-      case 'invoice_has_live_allocations':
-        return 'This invoice has live receipt allocations. Reverse the receipt first, then reverse the invoice.'
-      case 'period_closed':
-        return 'The fiscal period for this invoice is closed. It cannot be reversed.'
-      case 'already_reversed':
-        return 'This invoice has already been reversed.'
-      case 'invoice_not_posted':
-        return 'Only a posted invoice can be reversed.'
-      default:
-        return err.message
-    }
-  }
-  return 'Could not reverse this invoice. Try again.'
-}
 
 function MasterDetail({ data }: { data: AppData }) {
   const { code } = useParams()
